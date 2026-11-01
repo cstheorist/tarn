@@ -17,8 +17,8 @@ import time
 LP, UP = int(sys.argv[1]), int(sys.argv[2])
 MATCH = [m.encode() for m in (sys.argv[3:] or ["tarn_autocommit", "update"])]
 REPLY = os.environ.get("TARN_FAULT_REPLY", "drop")
-if REPLY not in ("drop", "invalid-type", "stall"):
-    raise ValueError("TARN_FAULT_REPLY must be drop, invalid-type or stall")
+if REPLY not in ("drop", "invalid-type", "oversized-frame", "stall"):
+    raise ValueError("TARN_FAULT_REPLY must be drop, invalid-type, oversized-frame or stall")
 state = {"left": int(os.environ.get("TARN_FAULT_COUNT", "1"))}
 lock = threading.Lock()
 ARM_FILE = os.environ.get("TARN_PROXY_ARM_FILE")
@@ -107,6 +107,13 @@ def pump(src, dst, conn, c2s):
                     if REPLY == "invalid-type":
                         src.sendall(invalid_reply(matching_sync(data)))
                         print("proxy: injected invalid response type after execution", flush=True)
+                    if REPLY == "oversized-frame":
+                        # Above the gateway's 32 MiB frame cap; advertise only
+                        # the length and leave the socket open. This is a sent
+                        # mutation, so resource refusal must retain uncertainty.
+                        src.sendall(b'\xce' + (64 << 20).to_bytes(4, "big"))
+                        print("proxy: injected oversized frame after execution", flush=True)
+                        time.sleep(2)
                     print("proxy: swallowed the reply, closing the connection", flush=True)
                     break
             elif not conn.get("drop"):

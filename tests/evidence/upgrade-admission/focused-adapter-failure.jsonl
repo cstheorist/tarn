@@ -1,0 +1,17 @@
+{"event": "prepare_attempt_started", "txid": "upgrade-admission-1", "attempt": 0, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-1", "node": "127.0.0.1:3851", "result": {"state": "aborted", "reply": ["no", 1205, "Vinyl write exceeds the current pressure burst allowance"]}}
+{"event": "prepare_refusal_cleanup_started", "txid": "upgrade-admission-1"}
+{"event": "prepare_refusal_cleanup_verified", "txid": "upgrade-admission-1", "evidence": [{"node": "127.0.0.1:3851", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "aborted", "locks": 0, "range_locks": 0}}, {"node": "127.0.0.1:3861", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "none", "locks": 0, "range_locks": 0}}]}
+{"event": "prepare_attempt_started", "txid": "upgrade-admission-1-admission-1", "attempt": 1, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-1-admission-1", "node": "127.0.0.1:3851", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-1-admission-1", "node": "127.0.0.1:3861", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "durable_YES_before_restart", "txid": "upgrade-admission-1-admission-1"}
+s1.2 is running
+Traceback (most recent call last):
+  File "<stdin>", line 18, in <module>
+  File "/tmp/tarn205-source/tests/rolling_upgrade.py", line 356, in prepare_admission_controls
+    self.storage(follower, "new")
+  File "<stdin>", line 15, in restart
+  File "/usr/lib/python3.11/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['bash', '/tmp/tarn205-source/scripts/cluster.sh', 'restart', '-d', '/tmp/tarn205-cluster', 's1.2']' returned non-zero exit status 1.

@@ -1,0 +1,155 @@
+{
+  "format": "tarn-integrity-evidence-v1",
+  "runtime_source_revision": "2438499",
+  "harness_revision": "f07b7b6",
+  "environment": {
+    "host": "macOS-27.0.1-arm64-arm-64bit",
+    "gateway_sha256": "40da5b8837b172a995aa0669320a0ca702774c3b08be1ab117320cf0b18bd9d8",
+    "native_sha256": "b6c66b102c2f843babda7fb9f537abce496e42e8d2d68425bea4d9d70c417602",
+    "gateway_profile": "ordinary host dev, Rust 1.98.1, RUST_MIN_STACK=16777216, two worker threads",
+    "native_profile": "normal Linux ARM64 cargo build --release --locked -p tarn-storage on current unchanged storage source",
+    "storage_profile": "Tarantool 3.9.0-0-g8b9a0f59a9, two RF1 shards, WAL fsync, memtx 128 MiB, vinyl memory 64 MiB and cache zero, owned Docker container 2 CPUs / 1.5 GiB",
+    "references": "MySQL 8.4.4; MariaDB 10.11.19; exact versions in reports",
+    "limitations": "Local compiler OOMs on shared 8 GiB VM are retained, including MySQL reference killed during pressure. Native module compiles normally. Host gateway correctness does not substitute for Linux release/default-stack CI or a performance/failover result. Initial Lua fixture requested a nonexistent module path and actually used Lua fallback; this is explicitly the Lua control, confirmed by a live false native witness."
+  },
+  "studies": [
+    {
+      "path": "tests/evidence/integrity/local-lua-mysql-r2.json",
+      "sha256": "ca7143f92c2d1b243812b49a973cf1f3b4d51bb4f4505c6e49f3c601fd5b2c71",
+      "completed": true,
+      "profile": "lua/mysql",
+      "scope": "host development gateway, 16 MiB worker stack; two Docker RF1/fsync shards; exact correctness controls, no release/default-stack/performance/failover claim"
+    },
+    {
+      "path": "tests/evidence/integrity/local-lua-mariadb-r2.json",
+      "sha256": "00563eca5fdff0085899ad66e8d9b2cb9326823accc6c58035d0d61acdf78e66",
+      "completed": true,
+      "profile": "lua/mariadb",
+      "scope": "host development gateway, 16 MiB worker stack; two Docker RF1/fsync shards; exact correctness controls, no release/default-stack/performance/failover claim"
+    },
+    {
+      "path": "tests/evidence/integrity/local-native-mysql.json",
+      "sha256": "cce2ef42d7b572bf2ed4e7955a72d81afdb6ba93f7346118af8c200a2faefa0d",
+      "completed": true,
+      "profile": "native/mysql",
+      "scope": "host development gateway, 16 MiB worker stack; two Docker RF1/fsync shards; exact correctness controls, no release/default-stack/performance/failover claim"
+    },
+    {
+      "path": "tests/evidence/integrity/local-native-mariadb.json",
+      "sha256": "263b0cb2c9f2fb59998e7f17e44d9a87952c915b5a7a392ab035e15d6eb4f3a3",
+      "completed": true,
+      "profile": "native/mariadb",
+      "scope": "host development gateway, 16 MiB worker stack; two Docker RF1/fsync shards; exact correctness controls, no release/default-stack/performance/failover claim"
+    },
+    {
+      "path": "tests/evidence/integrity/local-vinyl-mysql.json",
+      "sha256": "569f662606baaf4960c3fe0727792942f5e559fc61c15837a5bf047815661783",
+      "completed": true,
+      "profile": "vinyl/mysql",
+      "scope": "host development gateway, 16 MiB worker stack; two Docker RF1/fsync shards; exact correctness controls, no release/default-stack/performance/failover claim"
+    },
+    {
+      "path": "tests/evidence/integrity/local-vinyl-mariadb.json",
+      "sha256": "8c33a0055b747d8bfdc036fe57efc399551e9c99b859d0af9628faaf104ef0dd",
+      "completed": true,
+      "profile": "vinyl/mariadb",
+      "scope": "host development gateway, 16 MiB worker stack; two Docker RF1/fsync shards; exact correctness controls, no release/default-stack/performance/failover claim"
+    },
+    {
+      "path": "tests/evidence/integrity/local-lua-mysql.json",
+      "sha256": "e7661a8fa2ab01500eaa6559cad1ebf72900541522f1cee560a3ec29139b8c95",
+      "completed": false,
+      "scope": "Initial strict error equality exposed the retained ALTER NULL numeric/state differences. Schemas and rows were unchanged. Later contract records exact per-system errors; product behavior was not changed."
+    },
+    {
+      "path": "tests/evidence/integrity/local-lua-mariadb.json",
+      "sha256": "898f0e04c46f0c53a856569b74d354b5d6183c8820e67b8f68e285c6ce915b69",
+      "completed": false,
+      "scope": "Initial strict error equality exposed the retained ALTER NULL numeric/state differences. Schemas and rows were unchanged. Later contract records exact per-system errors; product behavior was not changed."
+    },
+    {
+      "path": "tests/evidence/integrity/ci-initial-native-mysql.json",
+      "sha256": "14236a5d53cf12ddd8e6916d66a86383ce4186c29cda543763f103ac62dfd6ec",
+      "completed": false,
+      "scope": "Normal Linux release initial-head CI reached the same declared ALTER numeric/SQLSTATE mismatch; later runtime/fault steps were skipped. Retain as a failure, not a green full run."
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "tests/evidence/integrity/local-lua-storage-verified.json",
+      "sha256": "e08634bfd07be7dd5e7738b215fe9132abb19d7a14a7188f24083b2f58351dd5"
+    },
+    {
+      "path": "tests/evidence/integrity/local-native-storage-before.json",
+      "sha256": "62c24d261783eaff069fc21ddcc2a2335d7d662d2fb97d107693f19d660492ee"
+    },
+    {
+      "path": "tests/evidence/integrity/local-native-storage-after.json",
+      "sha256": "3934376863a3ddd8f4ceaa88ae62bbb56f623fefa76cc7928596ad580d56bbb4"
+    },
+    {
+      "path": "tests/evidence/integrity/mysql-reference-probe.json",
+      "sha256": "6a8fb5fe392812ff0ec2c44e9600662291d57c5b1efdb96140e01297d464f019"
+    },
+    {
+      "path": "tests/evidence/integrity/mariadb-reference-probe.json",
+      "sha256": "0f400b6904db226405912e929ac624396646c17778e5af0a641f95233d51c3cc"
+    },
+    {
+      "path": "tests/evidence/integrity/compiler-memory-events.txt",
+      "sha256": "07d24e248f0bced83f5207628b8a2c05826259f7c43c573bd3e6b36e928bbc19"
+    },
+    {
+      "path": "tests/evidence/integrity/linux-build.log",
+      "sha256": "867c57d74e88189179c029fb26183e1200e5c1fd9dae88a9186cb06aee55ddac"
+    },
+    {
+      "path": "tests/evidence/integrity/linux-build-5g.log",
+      "sha256": "4d749bc8a14147444343c75eea3bbb6a8f83753ef5f2a3878f0517fe4812d3fb"
+    },
+    {
+      "path": "tests/evidence/integrity/linux-build-cached.log",
+      "sha256": "4d1688771956da5ab33059cc4723348d21c65a72bfe5a394de2e5c5d661796f0"
+    },
+    {
+      "path": "tests/evidence/integrity/linux-build-dev.log",
+      "sha256": "65cdb9f7b11db9ed6bf92f6640c8c5e65d517686ee644c8bb96f1183f28402a6"
+    },
+    {
+      "path": "tests/evidence/integrity/linux-build-dev-lowmem.log",
+      "sha256": "820495600f3faec4569f0cb3a313a6470b802f2b2be0ad80f80e5ced1b7dab74"
+    },
+    {
+      "path": "tests/evidence/integrity/linux-build-dev-sql-lowmem.log",
+      "sha256": "e80dc66d159f11674be6bfa0579d5691310725dc7527636db2bd02fb0a02c254"
+    },
+    {
+      "path": "tests/evidence/integrity/host-integrity.log",
+      "sha256": "3e00f0f0e032683c9b737ce346b29106605c1c2f70273e035a1c6ede57025f07"
+    },
+    {
+      "path": "tests/evidence/integrity/clippy.log",
+      "sha256": "6df019810579de155fbf3918e2fc94d5f0bf21cae3ea8afb72086fd6ef6930ab"
+    },
+    {
+      "path": "tests/evidence/integrity/local-vinyl-difftest.log",
+      "sha256": "8d37edf7839ede79a7a0080ce34d8c925e71d2d872132991bb5d0116c062f09f"
+    },
+    {
+      "path": "tests/evidence/integrity/local-vinyl-dump.log",
+      "sha256": "113139056c32ca37b209d3e2ea556120e6c96f093d557764824e5f40c5ca43fa"
+    },
+    {
+      "path": "tests/evidence/integrity/ci-initial-failure.txt",
+      "sha256": "e1f1f5a6a3266359839494f2994397e9df90ba7261900644e0df1de4f890cea3"
+    },
+    {
+      "path": "tests/evidence/integrity/ci-integrated-startup-failure.txt",
+      "sha256": "c9dbd7a2446f16fd236ef3e23b18fa20d9dd0596197c95bb9f80983d22a91e03"
+    }
+  ],
+  "ci_initial": "https://github.com/cstheorist/tarn/actions/runs/40922484589",
+  "ci_corrected_contract": "https://github.com/cstheorist/tarn/actions/runs/40924677141",
+  "ci_integrated_startup_failure": "https://github.com/cstheorist/tarn/actions/runs/40927561808",
+  "ci_integrated_startup_scope": "Integrity, ordinary/Vinyl suites, pressure and mutation/RPC faults passed; bucket-count fixture started the gateway after a port-only storage restart and encountered read-only recovery. Later topology/RF3 steps were skipped. Bounded PID/normal writable metadata readiness now precedes gateway startup; no production health fence is changed."
+}

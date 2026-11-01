@@ -1,0 +1,47 @@
+{
+  "scope": "October 30 review follow-up; prior sources and failures are retained, not relabelled as validation of this correction.",
+  "review_parent": "31a81b5d8e8efaaa57c49768722936e23372e336",
+  "review": "https://github.com/cstheorist/tarn/pull/194#discussion_r4423859483",
+  "oracle": {
+    "image": "mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7",
+    "version": "8.4.13",
+    "observations": {
+      "SELECT @@warning_count+0": {
+        "value": 1,
+        "subsequent_SHOW_WARNINGS": [],
+        "subsequent_warning_count": 0
+      },
+      "SET @saved=@@warning_count": {
+        "saved": 1,
+        "subsequent_SHOW_WARNINGS": [],
+        "subsequent_warning_count": 0
+      },
+      "INSERT IGNORE diagnostic reference": {
+        "captures_prior_count": true,
+        "publishes_only_new_warnings": true
+      }
+    }
+  },
+  "ci_failure": {
+    "run": "https://github.com/cstheorist/tarn/actions/runs/41058335751",
+    "job": 124072010020,
+    "log_sha256": "ff363d9e39fcc45d0662e725b1e3f6824475689a87685e91f26a469b3868c3fb",
+    "description": "Lua RF3 clock_protocol: all three memtx unavailable-prefix checks passed; a subsequent positive recovery path raised TimedOut at tarn_fresh.lua:198 before its overwrite-conflict assertion. The 150 ms negative-control barrier deadline was still configured. Engine RF3 copy-control timeouts are expected and their assertions passed.",
+    "change": "Keep the 150 ms negative controls. After resuming the follower, restore the production 5 s barrier deadline and observe a drained queue before the single positive write and validation. Preserve the original borrowed transaction and never replay the write."
+  },
+  "local_RF3_controls": {
+    "mode": "Lua, RF3 quorum2 fsync; original and corrected fixtures each run in three fresh owned process sets",
+    "original": [
+      22,
+      22,
+      22
+    ],
+    "corrected": [
+      22,
+      22,
+      22
+    ],
+    "failure_reproduced_locally": false,
+    "boundary": "Successful reruns do not explain the host scheduling delay in the failed CI; the correction explicitly separates fault timing from positive recovery admission."
+  }
+}

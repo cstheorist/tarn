@@ -1,0 +1,582 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/40929412807",
+  "scope": "Pre-warning-fix 21-contract source: INSERT IGNORE silently omits 1062 warnings in both protocols/all modes. Corrected bounded paged-snapshot controls pass. Original failures are not overwritten by later fixes.",
+  "rows": [
+    {
+      "artifact": "contracts-memtx-disabled-40929412807",
+      "source": "90f22f1eba7f522d9950cdb41be3f8fbff17b0c0",
+      "result_sha256": "6e4697147a859c5f72ca986a00bc30b229ed262c72815ca147fa8731cc700378",
+      "manifest_sha256": "a108f84af1f7c9e268a4cd667432cfcf4f2267f32160602b6232d9f360b6f95e",
+      "checks": 46,
+      "failures": 2,
+      "failed_cases": [
+        {
+          "id": "warnings_errors",
+          "prepared": false,
+          "classification": "equivalent",
+          "results": [],
+          "passed": false,
+          "error": "AssertionError((1, [], [1054, '42S22']))"
+        },
+        {
+          "id": "warnings_errors",
+          "prepared": true,
+          "classification": "equivalent",
+          "results": [],
+          "passed": false,
+          "error": "AssertionError((1, [], [1054, '42S22']))"
+        }
+      ],
+      "snapshot_controls": [
+        {
+          "id": "rc_paged_snapshot",
+          "prepared": false,
+          "classification": "difference",
+          "results": [
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 185.207591326,
+                  "end": 185.493551546,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 185.495028313,
+                  "end": 185.580385943,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 185.581948642,
+                  "end": 185.671669134,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            },
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 185.940615156,
+                  "end": 186.016057522,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 186.048425104,
+                  "end": 186.110045859,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 186.111493401,
+                  "end": 186.176055928,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            }
+          ],
+          "passed": true
+        },
+        {
+          "id": "rc_paged_snapshot",
+          "prepared": true,
+          "classification": "difference",
+          "results": [
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 196.724918518,
+                  "end": 196.821600286,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 197.957019256,
+                  "end": 198.05273588,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 198.054278622,
+                  "end": 198.187908195,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            },
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 198.498083351,
+                  "end": 198.565737754,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 199.725849603,
+                  "end": 199.798587051,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 199.800355278,
+                  "end": 199.904308667,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            }
+          ],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "artifact": "contracts-memtx-enabled-40929412807",
+      "source": "90f22f1eba7f522d9950cdb41be3f8fbff17b0c0",
+      "result_sha256": "8477cce9f8e61163c95331afe718d3f0e9593497bfc961dbd6989a5d29c2247d",
+      "manifest_sha256": "a108f84af1f7c9e268a4cd667432cfcf4f2267f32160602b6232d9f360b6f95e",
+      "checks": 46,
+      "failures": 2,
+      "failed_cases": [
+        {
+          "id": "warnings_errors",
+          "prepared": false,
+          "classification": "equivalent",
+          "results": [],
+          "passed": false,
+          "error": "AssertionError((1, [], [1054, '42S22']))"
+        },
+        {
+          "id": "warnings_errors",
+          "prepared": true,
+          "classification": "equivalent",
+          "results": [],
+          "passed": false,
+          "error": "AssertionError((1, [], [1054, '42S22']))"
+        }
+      ],
+      "snapshot_controls": [
+        {
+          "id": "rc_paged_snapshot",
+          "prepared": false,
+          "classification": "difference",
+          "results": [
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 70.076962387,
+                  "end": 70.314649404,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 70.316139866,
+                  "end": 70.421214444,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 70.422681863,
+                  "end": 70.521776474,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            },
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 70.825555716,
+                  "end": 70.902987404,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 70.941740973,
+                  "end": 71.003325194,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 71.00474286,
+                  "end": 71.069910448,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            }
+          ],
+          "passed": true
+        },
+        {
+          "id": "rc_paged_snapshot",
+          "prepared": true,
+          "classification": "difference",
+          "results": [
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 81.863215144,
+                  "end": 81.960734039,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 83.105245864,
+                  "end": 83.212416951,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 83.213896021,
+                  "end": 83.344740186,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            },
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 83.67909785,
+                  "end": 83.74643429,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 84.92419082,
+                  "end": 84.995272075,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 84.996749453,
+                  "end": 85.100393492,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            }
+          ],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "artifact": "contracts-vinyl-disabled-40929412807",
+      "source": "90f22f1eba7f522d9950cdb41be3f8fbff17b0c0",
+      "result_sha256": "97c0e0342329b29facfd06febd3ede973f53cf51b39fdb9868934b339825780d",
+      "manifest_sha256": "a108f84af1f7c9e268a4cd667432cfcf4f2267f32160602b6232d9f360b6f95e",
+      "checks": 46,
+      "failures": 2,
+      "failed_cases": [
+        {
+          "id": "warnings_errors",
+          "prepared": false,
+          "classification": "equivalent",
+          "results": [],
+          "passed": false,
+          "error": "AssertionError((1, [], [1054, '42S22']))"
+        },
+        {
+          "id": "warnings_errors",
+          "prepared": true,
+          "classification": "equivalent",
+          "results": [],
+          "passed": false,
+          "error": "AssertionError((1, [], [1054, '42S22']))"
+        }
+      ],
+      "snapshot_controls": [
+        {
+          "id": "rc_paged_snapshot",
+          "prepared": false,
+          "classification": "difference",
+          "results": [
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 185.760489823,
+                  "end": 186.12141807,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 186.12281314,
+                  "end": 186.241769637,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 186.243215601,
+                  "end": 186.350370408,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            },
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 186.607300086,
+                  "end": 186.678635731,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 186.710584229,
+                  "end": 186.774680796,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 186.776085102,
+                  "end": 186.838204895,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            }
+          ],
+          "passed": true
+        },
+        {
+          "id": "rc_paged_snapshot",
+          "prepared": true,
+          "classification": "difference",
+          "results": [
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 197.196040666,
+                  "end": 197.306780178,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 198.433579746,
+                  "end": 198.558278208,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 198.559746803,
+                  "end": 198.667553184,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            },
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 198.971592415,
+                  "end": 199.0384385,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 200.201851827,
+                  "end": 200.26947422,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 200.270887163,
+                  "end": 200.373340893,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            }
+          ],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "artifact": "contracts-vinyl-enabled-40929412807",
+      "source": "90f22f1eba7f522d9950cdb41be3f8fbff17b0c0",
+      "result_sha256": "8f24f9488c5d36b825095e2b33eca88006760f47c36e24a87a0e2780ff3b6296",
+      "manifest_sha256": "a108f84af1f7c9e268a4cd667432cfcf4f2267f32160602b6232d9f360b6f95e",
+      "checks": 46,
+      "failures": 2,
+      "failed_cases": [
+        {
+          "id": "warnings_errors",
+          "prepared": false,
+          "classification": "equivalent",
+          "results": [],
+          "passed": false,
+          "error": "AssertionError((1, [], [1054, '42S22']))"
+        },
+        {
+          "id": "warnings_errors",
+          "prepared": true,
+          "classification": "equivalent",
+          "results": [],
+          "passed": false,
+          "error": "AssertionError((1, [], [1054, '42S22']))"
+        }
+      ],
+      "snapshot_controls": [
+        {
+          "id": "rc_paged_snapshot",
+          "prepared": false,
+          "classification": "difference",
+          "results": [
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 74.377823389,
+                  "end": 74.782286812,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 74.783757801,
+                  "end": 74.896252128,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 74.897755548,
+                  "end": 75.018889691,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            },
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 75.290030929,
+                  "end": 75.366034554,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 75.39868732,
+                  "end": 75.459798839,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 75.461267113,
+                  "end": 75.52822012,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            }
+          ],
+          "passed": true
+        },
+        {
+          "id": "rc_paged_snapshot",
+          "prepared": true,
+          "classification": "difference",
+          "results": [
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 86.326759449,
+                  "end": 86.456412246,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 87.596452541,
+                  "end": 87.719345115,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 87.720901875,
+                  "end": 87.830995896,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            },
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 88.143675947,
+                  "end": 88.212490848,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 89.383932947,
+                  "end": 89.454487219,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 89.45597484,
+                  "end": 89.560169794,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            }
+          ],
+          "passed": true
+        }
+      ]
+    }
+  ]
+}

@@ -396,8 +396,35 @@ class T:
         q(c, "DROP TABLE IF EXISTS ec_online")
         q(c, "CREATE TABLE ec_online (tenant INT NOT NULL,id INT NOT NULL,n INT,tag VARCHAR(20),"
              "PRIMARY KEY(tenant,id)) PARTITION BY KEY(tenant) ENGINE=memtx")
-        expected = {(tenant, identity): [0, "seed"] for tenant in range(1, 17) for identity in range(128)}
-        for tenant in range(1, 17):
+        # An earlier movement suite may leave the first fixed tenant keys
+        # on one shard. Bind the seed to the current confirmed bucket map,
+        # then independently check the actual native rows below.
+        from movetest import bucket_of
+        maps = [rpc(node, "tarn_buckets", []) for node in nodes]
+        count = maps[0][1]
+        assert count > 0 and all(m[0] == "ok" and m[1] == count
+                                 and all(note[1] == "sent" for note in m[4]) for m in maps), maps
+        owners = {}
+        for shard, m in enumerate(maps):
+            for lo, hi in m[3]:
+                for bucket in range(lo, hi + 1):
+                    assert bucket not in owners, (bucket, maps)
+                    owners[bucket] = shard
+        assert len(owners) == count, "copy fixture requires a complete stable bucket map"
+        for shard, m in enumerate(maps):
+            assert all(owners[note[0]] != shard for note in m[4]), maps
+        selected = [[], []]
+        for tenant in range(1, count * 64 + 1):
+            shard = owners[bucket_of(tenant, count)]
+            if len(selected[shard]) < 8:
+                selected[shard].append(tenant)
+            if all(len(keys) == 8 for keys in selected):
+                break
+        assert all(len(keys) == 8 for keys in selected), ("no bounded two-shard tenant seed", selected)
+        tenants = sorted(key for keys in selected for key in keys)
+        print(f"    copy fixture tenants by current shard: {selected}")
+        expected = {(tenant, identity): [0, "seed"] for tenant in tenants for identity in range(128)}
+        for tenant in tenants:
             q(c, "INSERT INTO ec_online VALUES " + ",".join(f"({tenant},{identity},0,'seed')" for identity in range(128)))
 
         for engine in ("vinyl", "memtx"):
@@ -647,22 +674,33 @@ class T:
 
     def test_dump(self):
         """A mysqldump file (executable comments, SET with variables, LOCK
-        TABLES, DISABLE KEYS, INVISIBLE indexes, foreign keys, table
-        options) loads without errors."""
+        TABLES, DISABLE KEYS, INVISIBLE indexes and table options) loads
+        after explicitly removing an unsupported foreign-key declaration."""
         c = self.c(db=None)
         q(c, "DROP DATABASE IF EXISTS ddl_dump")
         q(c, "CREATE DATABASE ddl_dump")
         path = os.path.join(HERE, "data", "mysql8_dump.sql")
+        original = open(path).read()
+        declaration = (",\n  CONSTRAINT `fk_rails_61ac11da2b` FOREIGN KEY (`account_id`) "
+                       "REFERENCES `accounts` (`id`)")
+        assert original.count(declaration) == 1
+        # This known fixture is migrated deliberately; the server never strips
+        # arbitrary constraints from a dump or accepts them as enforcement.
+        migrated = original.replace(declaration, "")
+        q(c, "USE ddl_dump")
+        self.check(code(lambda: q(c, "CREATE TABLE unsupported_fk (id INT PRIMARY KEY, p INT, "
+                                  "FOREIGN KEY(p) REFERENCES accounts(id))")) == 1235,
+                   "unmodified foreign-key declarations are refused")
         cli = shutil.which("mysql") or shutil.which("mariadb")
         host, port = self.servers[0].split(":")
         if cli:
-            r = subprocess.run([cli, "-h", host, "-P", port, "-u", "sb", "ddl_dump"], stdin=open(path),
+            r = subprocess.run([cli, "-h", host, "-P", port, "-u", "sb", "ddl_dump"], input=migrated,
                                capture_output=True, text=True)
             self.check(r.returncode == 0 and not r.stderr.strip(), f"mysql client: {r.stderr.strip()[:400]}")
         else:
             m = self.c(db="ddl_dump", multi=True)
             cur = m.cursor()
-            cur.execute(open(path).read())
+            cur.execute(migrated)
             while cur.nextset():
                 pass
         d = self.c(db="ddl_dump")
@@ -673,7 +711,7 @@ class T:
         self.check("KEY `index_accounts_on_created_at` (`created_at`) COMMENT 'for reports'" in create,
                    f"index comment kept: {create}")
         create = q(d, "SHOW CREATE TABLE users")[0][1]
-        self.check("CONSTRAINT `fk_rails_61ac11da2b` FOREIGN KEY" in create, f"foreign key kept: {create}")
+        self.check("FOREIGN KEY" not in create, f"explicitly migrated schema: {create}")
         # AUTO_INCREMENT=4 in the dump: the next generated id is 4
         q(d, "INSERT INTO accounts (name, created_at, updated_at) VALUES ('new', NOW(), NOW())")
         self.check(q(d, "SELECT LAST_INSERT_ID()")[0][0] == 4, "AUTO_INCREMENT table option")
@@ -973,7 +1011,9 @@ class T:
         w = warnings(a)
         self.check(w == [("Warning", 1105, f"{DB}.tt_line: tarn:parent=tt_orders: table {DB}.tt_orders does not exist (yet)")],
                    f"missing parent: {w}")
-        self.check(q(a, "SELECT @@warning_count")[0][0] == 1 and len(warnings(a)) == 1, "SHOW WARNINGS keeps them")
+        self.check(warnings(a) == w, "SHOW WARNINGS keeps them")
+        self.check(q(a, "SELECT @@warning_count")[0][0] == 1, "warning_count reads the previous total")
+        self.check(warnings(a) == [], "SELECT warning_count clears diagnostics, as in MySQL")
         q(a, "SELECT 1")
         self.check(warnings(a) == [], "the next statement clears them")
         q(a, "SET tarn_tree_checks = DEFAULT")
@@ -1142,10 +1182,9 @@ class T:
         self.check(not churn_errors, f"schema changes: {churn_errors[:5]}")
 
     def test_index_build_ahead(self):
-        """ADD INDEX on a vinyl table builds the index before it fences the
-        table's writes: writes go on during the build and wait only for the
-        short switch at the end. (A memtx table builds behind the fence, at
-        memory speed: there only the outcome is checked.)"""
+        """ADD INDEX on a vinyl table completes BUILD before it fences writes.
+        A held BUILD reply witnesses acknowledged writes on every shard.
+        Memtx builds behind the fence; there only the outcome is checked."""
         c = self.c()
         q(c, "DROP TABLE IF EXISTS bigt")
         q(c, "CREATE TABLE bigt (id INT PRIMARY KEY, k INT, v INT, pad VARCHAR(100))")
@@ -1170,24 +1209,102 @@ class T:
                     errors.append(str(e))
                 lat.append((t0, time.time()))
 
+        nodes = self.args.kv.split(",") if vinyl and self.args.kv else []
+        installed, ddl_errors = [], []
+        ddl_finished = threading.Event()
+
+        def alter():
+            connection = self.c(read_timeout=30)
+            try:
+                q(connection, "ALTER TABLE bigt ADD INDEX kk (k)")
+            except Exception as error:
+                ddl_errors.append(repr(error))
+            finally:
+                connection.close()
+                ddl_finished.set()
+
+        if nodes:
+            from lazytest import ev
         t = threading.Thread(target=writer, daemon=True)
-        t.start()
-        time.sleep(0.5)
-        a0 = time.time()
-        q(c, "ALTER TABLE bigt ADD INDEX kk (k)")
-        a1 = time.time()
-        time.sleep(0.2)
-        done.set()
-        t.join(30)
+        ddl = threading.Thread(target=alter, daemon=True)
+        a0, a1 = time.monotonic(), time.monotonic()
+        try:
+            for node in nodes:
+                ev(node, """assert(tarn.cfg.test_hooks and not __index_build_review)
+local h={old=tarn_alter_build, reached=false, release=false}; __index_build_review=h
+function tarn_alter_build(name,a,gen)
+ local r=h.old(name,a,gen)
+ if name=='ddltest.bigt' and r[1]=='ok' and #(a.builds or {})>0 then
+  local sp=assert(box.space[name]); h.built=true
+  for _,b in ipairs(a.builds) do h.built=h.built and sp.index[b[1]]~=nil end
+  h.no_drop_hold=box.space._tarn_meta:get{'hold:'..sp.id}==nil
+  h.key=require('key_def').new(sp.index[0].parts):extract_key(sp.index[0]:min())[1]
+  h.reached=true
+  local deadline=require('clock').monotonic()+15
+  while not h.release and require('clock').monotonic()<deadline do require('fiber').sleep(.01) end
+  h.timed_out=not h.release
+ end
+ return r
+end
+return true""")
+                installed.append(node)
+            t.start()
+            time.sleep(0.5)
+            a0 = time.time()
+            ddl.start()
+            if nodes:
+                # Hold the real completed BUILD before its PREPARE reply.
+                # No generic yield hook is held: native writes remain enabled.
+                deadline = time.monotonic() + 10
+                witnesses = []
+                for node in nodes:
+                    state = None
+                    while time.monotonic() < deadline and not ddl_finished.is_set():
+                        state = ev(node, "local h=assert(__index_build_review); return {reached=h.reached,built=h.built,no_drop_hold=h.no_drop_hold,key=h.key}")
+                        if state['reached']:
+                            break
+                        time.sleep(.01)
+                    assert state and state['reached'] and state['built'] and state['no_drop_hold'], (node,state,ddl_errors)
+                    witnesses.append(state)
+                for state in witnesses:
+                    for _ in range(10):
+                        q(c, "UPDATE bigt SET v=v+1 WHERE id=%s", (state['key'],))
+                        assert not ddl_finished.is_set(), "write completed after the held BUILD phase ended"
+                    assert q(c, "SELECT v FROM bigt WHERE id=%s", (state['key'],))[0][0] >= 10
+                assert not ddl_finished.is_set(), ddl_errors
+                print(f"    completed BUILD before PREPARE and ten acknowledged writes on each of {len(nodes)} shards")
+            for node in installed:
+                ev(node, "__index_build_review.release=true; return true")
+            ddl.join(30)
+            a1 = time.time()
+            assert not ddl.is_alive() and not ddl_errors, ddl_errors
+        finally:
+            cleanup_errors = []
+            for node in installed:
+                try:
+                    ev(node, "local h=__index_build_review; if h then h.release=true; tarn_alter_build=h.old end; return true")
+                except Exception as error:
+                    cleanup_errors.append((node, repr(error)))
+            if ddl.ident is not None:
+                ddl.join(30)
+            done.set()
+            if t.ident is not None:
+                t.join(30)
+            for node in installed:
+                try:
+                    state = ev(node, "local h=__index_build_review; __index_build_review=nil; return {timed_out=h and h.timed_out or false}")
+                    self.check(not state['timed_out'], "build witness released before its safety deadline")
+                except Exception as error:
+                    cleanup_errors.append((node, repr(error)))
+            self.check(not cleanup_errors, f"every build witness restored: {cleanup_errors}")
         within = sum(1 for (s0, s1) in lat if a0 <= s0 and s1 <= a1)
         worst = max((s1 - s0 for (s0, s1) in lat if s0 <= a1 and s1 >= a0), default=0.0)
         print(f"    ADD INDEX on {rows} {'vinyl' if vinyl else 'memtx'} rows: {a1 - a0:.2f} s; "
-              f"{within} writes during it, the slowest overlapping one {worst * 1000:.0f} ms")
-        self.check(not errors, f"writes during the index build: {errors[:3]}")
+              f"{within} writes during it, the slowest overlapping one {worst * 1000:.0f} ms "
+              "(observational; includes the controlled BUILD hold when enabled)")
+        self.check(not errors and not t.is_alive(), f"writes during the index build: {errors[:3]}")
         if vinyl:
             self.check(within >= 10, f"writes went on during the index build ({within})")
-            self.check(worst < max(0.3, (a1 - a0) / 2),
-                       f"no write waited for the build ({worst:.2f} s of {a1 - a0:.2f} s)")
         self.check(q(c, "SELECT COUNT(*) FROM bigt WHERE k = 7919")[0][0] == 1, "the new index answers")
         q(c, "DROP TABLE bigt")
 
@@ -1371,9 +1488,11 @@ class T:
               f"SUM(x) {sums[1]} (acknowledged {st['x']})")
         kinds = {}
         for e in st["errors"]:
-            kinds.setdefault(e[:90], 0)
-            kinds[e[:90]] += 1
-        for e, n in sorted(kinds.items(), key=lambda x: -x[1])[:10]:
+            kinds.setdefault(e, 0)
+            kinds[e] += 1
+        # Preserve the actual storage cause; an ALTER prefix alone cannot
+        # distinguish a known refusal from an unresolved effect.
+        for e, n in sorted(kinds.items(), key=lambda x: -x[1]):
             print(f"      error x{n}: {e}")
         self.check(not st["errors"], f"{len(st['errors'])} errors")
         self.check(st["ddl"] >= 8 or self.args.no_ddl, "schema changes ran")

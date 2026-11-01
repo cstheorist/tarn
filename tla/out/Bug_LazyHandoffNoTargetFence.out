@@ -1,13 +1,14 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=33791 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 41 and seed -7523424390994650548 with 1 worker on 2 cores with 1820MB heap and 64MB offheap memory [pid: 859] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /work/tla/LazyHandoff.tla
-Parsing file /tmp/tlc-2736214389261469157/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-2736214389261469157/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-2736214389261469157/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-2736214389261469157/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-2736214389261469157/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-2736214389261469157/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-2736214389261469157/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 15 and seed -4950450070613150354 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 1838] (Linux 6.18.44-fc-v185 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-177/tla/LazyHandoff.tla
+Parsing file /tmp/tlc-7869635991020556442/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-7869635991020556442/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-7869635991020556442/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-7869635991020556442/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-7869635991020556442/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-7869635991020556442/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-7869635991020556442/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,13 +20,12 @@ Semantic processing of module LazyHandoff
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module LazyHandoff
-Starting... (2026-10-27 05:29:26)
+Starting... (2026-10-30 08:05:59)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-27 05:29:26.
+Finished computing initial states: 1 distinct state generated at 2026-10-30 08:06:00.
 Error: Invariant DrainedProjection is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
-/\ rowVersion = 0
 /\ source = "S"
 /\ newWritten = FALSE
 /\ pending2 = TRUE
@@ -45,7 +45,6 @@ State 1: <Initial predicate>
 /\ targetPhase = "active"
 
 State 2: <DeliverTwo line 32, col 5 to line 35, col 108 of module LazyHandoff>
-/\ rowVersion = 0
 /\ source = "S"
 /\ newWritten = FALSE
 /\ pending2 = FALSE
@@ -65,7 +64,6 @@ State 2: <DeliverTwo line 32, col 5 to line 35, col 108 of module LazyHandoff>
 /\ targetPhase = "active"
 
 State 3: <FenceSource line 37, col 5 to line 39, col 115 of module LazyHandoff>
-/\ rowVersion = 0
 /\ source = "S"
 /\ newWritten = FALSE
 /\ pending2 = FALSE
@@ -84,8 +82,7 @@ State 3: <FenceSource line 37, col 5 to line 39, col 115 of module LazyHandoff>
 /\ lost = FALSE
 /\ targetPhase = "active"
 
-State 4: <MoveSource line 41, col 5 to line 47, col 67 of module LazyHandoff>
-/\ rowVersion = 0
+State 4: <MoveSource line 41, col 5 to line 46, col 67 of module LazyHandoff>
 /\ source = "R"
 /\ newWritten = FALSE
 /\ pending2 = FALSE
@@ -104,8 +101,7 @@ State 4: <MoveSource line 41, col 5 to line 47, col 67 of module LazyHandoff>
 /\ lost = FALSE
 /\ targetPhase = "active"
 
-State 5: <WriteNew line 57, col 5 to line 60, col 80 of module LazyHandoff>
-/\ rowVersion = 3
+State 5: <WriteNew line 56, col 5 to line 59, col 80 of module LazyHandoff>
 /\ source = "R"
 /\ newWritten = TRUE
 /\ pending2 = FALSE
@@ -124,8 +120,7 @@ State 5: <WriteNew line 57, col 5 to line 60, col 80 of module LazyHandoff>
 /\ lost = FALSE
 /\ targetPhase = "active"
 
-State 6: <BeginTargetMove line 73, col 5 to line 76, col 92 of module LazyHandoff>
-/\ rowVersion = 3
+State 6: <BeginTargetMove line 72, col 5 to line 75, col 92 of module LazyHandoff>
 /\ source = "R"
 /\ newWritten = TRUE
 /\ pending2 = FALSE
@@ -144,8 +139,7 @@ State 6: <BeginTargetMove line 73, col 5 to line 76, col 92 of module LazyHandof
 /\ lost = FALSE
 /\ targetPhase = "sending"
 
-State 7: <FenceTarget line 97, col 5 to line 102, col 92 of module LazyHandoff>
-/\ rowVersion = 3
+State 7: <FenceTarget line 96, col 5 to line 101, col 92 of module LazyHandoff>
 /\ source = "R"
 /\ newWritten = TRUE
 /\ pending2 = FALSE
@@ -164,8 +158,7 @@ State 7: <FenceTarget line 97, col 5 to line 102, col 92 of module LazyHandoff>
 /\ lost = FALSE
 /\ targetPhase = "fenced"
 
-State 8: <BeginBatch line 78, col 5 to line 81, col 113 of module LazyHandoff>
-/\ rowVersion = 3
+State 8: <BeginBatch line 77, col 5 to line 80, col 113 of module LazyHandoff>
 /\ source = "R"
 /\ newWritten = TRUE
 /\ pending2 = FALSE
@@ -184,8 +177,7 @@ State 8: <BeginBatch line 78, col 5 to line 81, col 113 of module LazyHandoff>
 /\ lost = FALSE
 /\ targetPhase = "fenced"
 
-State 9: <FinalCheck line 83, col 5 to line 87, col 122 of module LazyHandoff>
-/\ rowVersion = 3
+State 9: <FinalCheck line 82, col 5 to line 86, col 122 of module LazyHandoff>
 /\ source = "R"
 /\ newWritten = TRUE
 /\ pending2 = FALSE
@@ -204,8 +196,7 @@ State 9: <FinalCheck line 83, col 5 to line 87, col 122 of module LazyHandoff>
 /\ lost = FALSE
 /\ targetPhase = "fenced"
 
-State 10: <CommitBatch line 89, col 5 to line 95, col 100 of module LazyHandoff>
-/\ rowVersion = 3
+State 10: <CommitBatch line 88, col 5 to line 94, col 100 of module LazyHandoff>
 /\ source = "R"
 /\ newWritten = TRUE
 /\ pending2 = FALSE
@@ -224,8 +215,7 @@ State 10: <CommitBatch line 89, col 5 to line 95, col 100 of module LazyHandoff>
 /\ lost = FALSE
 /\ targetPhase = "fenced"
 
-State 11: <FlipTarget line 104, col 5 to line 109, col 98 of module LazyHandoff>
-/\ rowVersion = 3
+State 11: <FlipTarget line 103, col 5 to line 108, col 98 of module LazyHandoff>
 /\ source = "R"
 /\ newWritten = TRUE
 /\ pending2 = FALSE
@@ -246,5 +236,5 @@ State 11: <FlipTarget line 104, col 5 to line 109, col 98 of module LazyHandoff>
 
 339 states generated, 136 distinct states found, 25 states left on queue.
 The depth of the complete state graph search is 11.
-Finished in 00s at (2026-10-27 05:29:26)
-Trace exploration spec path: ./LazyHandoff_TTrace_1793078966.tla
+Finished in 01s at (2026-10-30 08:06:00)
+Trace exploration spec path: ./LazyHandoff_TTrace_1793361959.tla

@@ -16,12 +16,16 @@
 
 mod admission;
 mod client;
+mod connections;
 pub mod iproto;
 pub mod mp;
+mod responses;
 
 pub use admission::{AdmissionStats, Budget, Limits};
 pub use client::{Client, Response, ServerInfo, Stats};
+pub use connections::{ConnectionBudget, ConnectionStats, TrafficStats};
 pub use errcode::*;
+pub use responses::{ResponseBudget, ResponseStats};
 
 use std::time::Duration;
 
@@ -37,6 +41,8 @@ pub struct Opts {
     /// Bound on TCP connect + greeting + `IPROTO_ID` + `IPROTO_AUTH`.
     /// `Duration::ZERO` means no limit.
     pub connect_timeout: Duration,
+    /// Retire a connection before reserving an oversized response frame.
+    pub max_response_bytes: usize,
     /// Hard limits for this physical connection, including abandoned callers.
     pub request_limits: Limits,
     /// Lifetime from enqueue to exact terminal reply or physical retirement.
@@ -46,6 +52,14 @@ pub struct Opts {
     pub admission: Vec<Budget>,
     /// Application-defined scope ID for cached connection observations.
     pub observation_scope: Option<u32>,
+    /// Optional gateway-wide physical socket budget, charged before connect.
+    pub connections: Option<ConnectionBudget>,
+    /// Discovery for an existing transaction's completion may use the reserve.
+    pub completion_connection: bool,
+    /// Optional shared encoded-response budget, including retained Bytes.
+    pub responses: Option<ResponseBudget>,
+    /// Largest accepted frame (including length prefix); checked before reserve.
+    pub response_frame_bytes: usize,
 }
 
 impl Opts {
@@ -56,10 +70,15 @@ impl Opts {
             user: None,
             password: None,
             connect_timeout: Duration::from_secs(5),
+            max_response_bytes: iproto::BODY_LEN_MAX,
             request_limits: Limits::default(),
             request_timeout: Duration::from_secs(120),
             admission: Vec::new(),
             observation_scope: None,
+            connections: None,
+            completion_connection: false,
+            responses: None,
+            response_frame_bytes: iproto::BODY_LEN_MAX + 9,
         }
     }
 }
@@ -71,6 +90,7 @@ impl std::fmt::Debug for Opts {
             .field("user", &self.user)
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .field("connect_timeout", &self.connect_timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
             .field("request_limits", &self.request_limits)
             .field("request_timeout", &self.request_timeout)
             .field("admission", &self.admission)

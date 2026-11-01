@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "run": "https://github.com/cstheorist/tarn/actions/runs/40936508661",
+  "head": "4af5c267cfe6d75a5956d1c5512e23f992d0dcc4",
+  "merge_source": "3df5803d0ea1f6f768401b220e33d01890836e83",
+  "passed": ["Format and clippy", "Verus: 140 verified, zero errors", "All 270 TLA+ configurations", "Workspace unit/IPROTO tests", "Native allocation units", "Native and Lua storage protocol tests", "File backup smoke controls", "Decision placement and lost PREPARE/coordinator crash controls"],
+  "failed_step": "SQL differential tests against MariaDB 10.11",
+  "differential_cases": 1076,
+  "failures": [
+    {"statement": "INSERT INTO ciu VALUES (1, 3, 'a@X.ORG')", "expected": [1062, "23000"], "actual": [1180, "40003"]},
+    {"statement": "UPDATE ciu SET email = 'B@X.org' WHERE t = 1 AND id = 1", "expected": [1062, "23000"], "actual": [1180, "40003"]}
+  ],
+  "cause": "A valid MessagePack string in the Tarantool duplicate diagnostic contained non-UTF8 collation bytes; the general SQL Value decoder classified it as Bin. Validating Value::Str incorrectly rejected this known database error.",
+  "correction": "Use exact MessagePack read_str/read_uint readers for mutation envelopes. Accept raw bytes in the string diagnostic, reject SQL-value coercions such as boolean counts/codes, and retain exact envelope/cardinality checks. Add parser regressions and both collated duplicate statements to every real-client outcome run.",
+  "other_workflow": {"url": "https://github.com/cstheorist/tarn/actions/runs/40936508598", "result": "All four RF3/fsync storage variants passed their 96 case records and 864 per-key admission outcomes at this source. This does not erase the differential failures."}
+}

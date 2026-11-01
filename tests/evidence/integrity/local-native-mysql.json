@@ -1,0 +1,1723 @@
+{
+  "format": "tarn-integrity-results-v1",
+  "settings": {
+    "tarn": "host.docker.internal:64022",
+    "ref": "tarn-issue179-mysql:3306",
+    "reference": "mysql",
+    "kv": "127.0.0.1:3311,127.0.0.1:3321",
+    "output": "/out/local-native-mysql.json"
+  },
+  "source_revision": "2438499+contract-test-correction",
+  "source_sha256": {
+    "crates/tarn-sql/src/admin.rs": "6f7a71fcc35eebd036a270b38bb718529b399812cb0c1f15550c5c38042d3fb9",
+    "crates/tarn-sql/src/alter.rs": "fb10e8c9506419d70058a5a1758f8864c1ede61188ed75d7bd7bd3952f34f759",
+    "crates/tarn-sql/src/buckets.rs": "fb145be59f5387ad9d3107ada80161afb10166ad4da7484913f9493d7fcb7ba1",
+    "crates/tarn-sql/src/catalog.rs": "a7e6bc4cfff9075ea8453f83a2c77e0735d1e82c69352da0896ac02549904dda",
+    "crates/tarn-sql/src/cluster.rs": "59ee130082c0996465e152d442c4b54b029d5313d2f90a005ba064f71554cd5a",
+    "crates/tarn-sql/src/cluster_fallback_tests.rs": "c716a44e00ce72a87359bb5677fcc165ab07d7f63f0ac8c75db2576bd27f502f",
+    "crates/tarn-sql/src/collation.rs": "0f2e1f8c474ba6bc315f8b11f485b388e2c2c70a60a06c467dcc09e397e341c8",
+    "crates/tarn-sql/src/collation_data.rs": "f4b65e6e8051ad3e93d238109d004d83bbf645627980ea4f7ecb5085103385b1",
+    "crates/tarn-sql/src/complex.rs": "e5f6d52f899616d2833ea8575364c6e74a84ec7ab8833105e8f07f1dc20d73f7",
+    "crates/tarn-sql/src/exec.rs": "4d9d10840abdd52ca31fa8eeb6d668b6f2f76b771b97eb55a57aa5490ff9a256",
+    "crates/tarn-sql/src/expr.rs": "e8635b2d790291844027ee746d489a25e897d12c58c31c7a9de1b9e96a9849ec",
+    "crates/tarn-sql/src/integrity.rs": "6935405910560cf1f27fe67f340d80150f36fafc8c8caf9a7a2a328be84cedad",
+    "crates/tarn-sql/src/lazy.rs": "03f6af06e2897a59703b7e8088415a90bf45330ff78ebf7006e05f92da4c2b4f",
+    "crates/tarn-sql/src/lib.rs": "3fb97ffb516a07524eb79ecc7dba764a65caec7d49d6989aa4526cd172792506",
+    "crates/tarn-sql/src/lint.rs": "f9ada6476f45f533277771f1e81fbe98a135808ea667970d5956110195c4aacc",
+    "crates/tarn-sql/src/members.rs": "d78eceba4c01dd217d0a652e393b6e3273a54aff12528593148e5a67eaf3d316",
+    "crates/tarn-sql/src/mpw.rs": "c0f19ea9c28c9834ed1bcf6c786d87a61ff90279e41f8e29eeb0027f3cb4de0e",
+    "crates/tarn-sql/src/normalize.rs": "051fd437a20b7ae3d3d2c3c9e355fe98c21490abc514684a8bc07e785a098744",
+    "crates/tarn-sql/src/observe.rs": "2932d5bad7741949b67acc5302ee414de432d129befd38ec7d6d2afd1a7e20f0",
+    "crates/tarn-sql/src/placement.rs": "f662f245d420a3cf244780492f108ee9da5c21b98f36f6b2cb7c177f12c91c5d",
+    "crates/tarn-sql/src/plan.rs": "aebf2efec3c519fa8b9e7c3a9b062659713c888268e48ca5e4e65561ffe869fe",
+    "crates/tarn-sql/src/planner.rs": "e998e3afc62d3b002a8387566e127a97cb11d81cb3df5d3a610d85b23895bed9",
+    "crates/tarn-sql/src/prep.rs": "76372c05ab2fae86ff9dc9de70443473ab64edf0b6c2e5d0c5d8b5c755753d70",
+    "crates/tarn-sql/src/rebalance.rs": "9385abb4427ff5bb7fea521d287e2047cb3d955c3ed700612d9a05af97573500",
+    "crates/tarn-sql/src/route.rs": "a2b3068ed416646a9f709db11aed8da39adf8453ee7473fb27e06ff32de1ddd5",
+    "crates/tarn-sql/src/rpcs.rs": "43326346eff57f085767db262c517b187d933341c1e78d067fbbf6e1a42885c1",
+    "crates/tarn-sql/src/session.rs": "5c9072d2ff45bb0fa9e23a8d4438b4d538f79c5a884135c5ec2ebd3176e5c5e1",
+    "crates/tarn-sql/src/txn.rs": "f6b4f30078aef4a6c1116374a300a2a879ee941348bb20623a021d32d32b840d",
+    "crates/tarn-sql/src/types.rs": "bece40f900e504a3c694977ac78dd480dafd514517523ffde7956cc92529e347",
+    "crates/tarn-sql/src/vinyl.rs": "4408b46b4a04987fdb3fc9e35c9ad3e3d8322e132e649b1805b1dd3ca49ff38f",
+    "tests/sql/integritytest.py": "c96b65a1696d1cfe292ec61d0279a12831fb67297b083611f7fffb535a19a8de",
+    "tests/sql/data/integrity-contract.json": "f4b0d6a8e687e2b46d4ad02d03d83b5b5ed0024e790bb79971cbf0d4eef58078"
+  },
+  "manifest_sha256": "f4b0d6a8e687e2b46d4ad02d03d83b5b5ed0024e790bb79971cbf0d4eef58078",
+  "completed": true,
+  "versions": {
+    "tarn": [
+      [
+        "8.0.40-tarn-0.1"
+      ]
+    ],
+    "reference": [
+      [
+        "8.4.4"
+      ]
+    ]
+  },
+  "declarations": [
+    {
+      "id": "create_fk",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "create_fk_cascade",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "create_fk_restrict",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "create_fk_null",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "create_inline_reference",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "create_partition_fk",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "error": 1506,
+        "state": "HY000"
+      }
+    },
+    {
+      "id": "create_check",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "create_column_check",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "create_check_not_enforced",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "create_enum",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "create_set",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    },
+    {
+      "id": "alter_fk",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 2
+      }
+    },
+    {
+      "id": "alter_check",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 2
+      }
+    },
+    {
+      "id": "alter_check_enforced",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "error": 3821,
+        "state": "HY000"
+      }
+    },
+    {
+      "id": "alter_check_not_enforced",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "error": 3821,
+        "state": "HY000"
+      }
+    },
+    {
+      "id": "alter_enum",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 2
+      }
+    },
+    {
+      "id": "alter_set",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 2
+      }
+    },
+    {
+      "id": "alter_inline_check",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 2
+      }
+    },
+    {
+      "id": "alter_combined",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 2
+      }
+    },
+    {
+      "id": "alter_combined_type",
+      "tarn": [
+        {
+          "path": "text",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "binary",
+          "error": 1235,
+          "state": "42000"
+        },
+        {
+          "path": "named",
+          "error": 1235,
+          "state": "42000"
+        }
+      ],
+      "reference": {
+        "ok": 0
+      }
+    }
+  ],
+  "tarn_writes": [
+    {
+      "sql": "INSERT INTO e VALUES(1,NULL,1),(2,NULL,2),(3,7,3)",
+      "outcome": {
+        "ok": 3
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(4,8,4),(5,7,5)",
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "UPDATE e SET u=7 WHERE id IN(1,2)",
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(6,6,NULL)",
+      "outcome": {
+        "error": 1048,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "UPDATE e SET n=NULL WHERE id=1",
+      "outcome": {
+        "error": 1048,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(8,7,80) ON DUPLICATE KEY UPDATE n=n+1",
+      "outcome": {
+        "ok": 2
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO e VALUES(8,7,8),(9,9,9)",
+      "outcome": {
+        "ok": 1
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ]
+      ]
+    },
+    {
+      "sql": "BEGIN",
+      "outcome": {
+        "ok": 0
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(11,11,11)",
+      "outcome": {
+        "ok": 1
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ]
+      ]
+    },
+    {
+      "sql": "SAVEPOINT s",
+      "outcome": {
+        "ok": 0
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(12,12,12)",
+      "outcome": {
+        "ok": 1
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          12,
+          12,
+          12
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(13,7,13)",
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          12,
+          12,
+          12
+        ]
+      ]
+    },
+    {
+      "sql": "ROLLBACK TO SAVEPOINT s",
+      "outcome": {
+        "ok": 0
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ]
+      ]
+    },
+    {
+      "sql": "COMMIT",
+      "outcome": {
+        "ok": 0
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ]
+      ]
+    },
+    {
+      "binary_values": [
+        14,
+        14,
+        14
+      ],
+      "outcome": {
+        "ok": 1
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          14,
+          14,
+          14
+        ]
+      ]
+    },
+    {
+      "binary_values": [
+        15,
+        7,
+        15
+      ],
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          14,
+          14,
+          14
+        ]
+      ]
+    },
+    {
+      "binary_values": [
+        16,
+        16,
+        null
+      ],
+      "outcome": {
+        "error": 1048,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          14,
+          14,
+          14
+        ]
+      ]
+    },
+    {
+      "sql": "ALTER TABLE validation_rows ADD UNIQUE KEY uq(u)",
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          1,
+          null
+        ],
+        [
+          2,
+          1,
+          2
+        ]
+      ]
+    },
+    {
+      "sql": "ALTER TABLE validation_rows MODIFY n INT NOT NULL",
+      "outcome": {
+        "error": 1265,
+        "state": "HY000"
+      },
+      "rows": [
+        [
+          1,
+          1,
+          null
+        ],
+        [
+          2,
+          1,
+          2
+        ]
+      ]
+    }
+  ],
+  "reference_writes": [
+    {
+      "sql": "INSERT INTO e VALUES(1,NULL,1),(2,NULL,2),(3,7,3)",
+      "outcome": {
+        "ok": 3
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(4,8,4),(5,7,5)",
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "UPDATE e SET u=7 WHERE id IN(1,2)",
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(6,6,NULL)",
+      "outcome": {
+        "error": 1048,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "UPDATE e SET n=NULL WHERE id=1",
+      "outcome": {
+        "error": 1048,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          3
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(8,7,80) ON DUPLICATE KEY UPDATE n=n+1",
+      "outcome": {
+        "ok": 2
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO e VALUES(8,7,8),(9,9,9)",
+      "outcome": {
+        "ok": 1
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ]
+      ]
+    },
+    {
+      "sql": "BEGIN",
+      "outcome": {
+        "ok": 0
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(11,11,11)",
+      "outcome": {
+        "ok": 1
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ]
+      ]
+    },
+    {
+      "sql": "SAVEPOINT s",
+      "outcome": {
+        "ok": 0
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(12,12,12)",
+      "outcome": {
+        "ok": 1
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          12,
+          12,
+          12
+        ]
+      ]
+    },
+    {
+      "sql": "INSERT INTO e VALUES(13,7,13)",
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          12,
+          12,
+          12
+        ]
+      ]
+    },
+    {
+      "sql": "ROLLBACK TO SAVEPOINT s",
+      "outcome": {
+        "ok": 0
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ]
+      ]
+    },
+    {
+      "sql": "COMMIT",
+      "outcome": {
+        "ok": 0
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ]
+      ]
+    },
+    {
+      "binary_values": [
+        14,
+        14,
+        14
+      ],
+      "outcome": {
+        "ok": 1
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          14,
+          14,
+          14
+        ]
+      ]
+    },
+    {
+      "binary_values": [
+        15,
+        7,
+        15
+      ],
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          14,
+          14,
+          14
+        ]
+      ]
+    },
+    {
+      "binary_values": [
+        16,
+        16,
+        null
+      ],
+      "outcome": {
+        "error": 1048,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          null,
+          1
+        ],
+        [
+          2,
+          null,
+          2
+        ],
+        [
+          3,
+          7,
+          4
+        ],
+        [
+          9,
+          9,
+          9
+        ],
+        [
+          11,
+          11,
+          11
+        ],
+        [
+          14,
+          14,
+          14
+        ]
+      ]
+    },
+    {
+      "sql": "ALTER TABLE validation_rows ADD UNIQUE KEY uq(u)",
+      "outcome": {
+        "error": 1062,
+        "state": "23000"
+      },
+      "rows": [
+        [
+          1,
+          1,
+          null
+        ],
+        [
+          2,
+          1,
+          2
+        ]
+      ]
+    },
+    {
+      "sql": "ALTER TABLE validation_rows MODIFY n INT NOT NULL",
+      "outcome": {
+        "error": 1138,
+        "state": "22004"
+      },
+      "rows": [
+        [
+          1,
+          1,
+          null
+        ],
+        [
+          2,
+          1,
+          2
+        ]
+      ]
+    }
+  ],
+  "concurrent": {
+    "tarn": {
+      "trials": [
+        {
+          "error": 1062,
+          "state": "23000"
+        },
+        {
+          "ok": 1
+        }
+      ],
+      "exact_rows": [
+        [
+          22,
+          77,
+          22
+        ]
+      ]
+    },
+    "reference": {
+      "trials": [
+        {
+          "error": 1062,
+          "state": "23000"
+        },
+        {
+          "ok": 1
+        }
+      ],
+      "exact_rows": [
+        [
+          22,
+          77,
+          22
+        ]
+      ]
+    }
+  },
+  "legacy": {
+    "before": "CREATE TABLE `legacy_rows` (\n  `id` int NOT NULL,\n  `v` text DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `kv` (`v`),\n  CONSTRAINT `legacy_fk` FOREIGN KEY (`v`) REFERENCES `p` (`id`)\n) ENGINE=memtx DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* TARN LEGACY_UNENFORCED: foreign keys are metadata only; CHECK/ENUM/SET history unknown; inspect SHOW TARN INTEGRITY */\n/*!50100 PARTITION BY KEY (`id`) */",
+    "after": "CREATE TABLE `legacy_rows` (\n  `id` int NOT NULL,\n  `v` text DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `kv` (`v`)\n) ENGINE=memtx DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* TARN LEGACY_UNENFORCED: foreign keys are metadata only; CHECK/ENUM/SET history unknown; inspect SHOW TARN INTEGRITY */\n/*!50100 PARTITION BY KEY (`id`) */",
+    "inspection": [
+      "legacy_rows",
+      "LEGACY_UNENFORCED",
+      0,
+      "UNKNOWN_CHECK_ENUM_SET",
+      "NOT_CERTIFIED"
+    ]
+  }
+}

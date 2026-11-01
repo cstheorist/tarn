@@ -1,0 +1,72 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 26 and seed 6442493826236362322 with 1 worker on 16 cores with 981MB heap and 64MB offheap memory [pid: 38166] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue135/tla/TypedRead.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17158395598658823265/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17158395598658823265/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17158395598658823265/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17158395598658823265/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17158395598658823265/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17158395598658823265/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17158395598658823265/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module TypedRead
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module TypedRead
+Starting... (2026-10-28 14:57:45)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Computed 32 initial states...
+Computed 64 initial states...
+Computed 128 initial states...
+Computed 256 initial states...
+Computed 512 initial states...
+Finished computing initial states: 1024 distinct states generated at 2026-10-28 14:57:45.
+Error: Invariant CompleteOnly is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ out = {}
+/\ pos = 1
+/\ live = <<-1, -1>>
+/\ own = <<-1, -1>>
+/\ complete = FALSE
+/\ covered = {}
+/\ phase = "idle"
+/\ snap = <<-1, -1>>
+/\ written = {}
+
+State 2: <Start line 25, col 10 to line 26, col 73 of module TypedRead>
+/\ out = {}
+/\ pos = 1
+/\ live = <<-1, -1>>
+/\ own = <<-1, -1>>
+/\ complete = FALSE
+/\ covered = {}
+/\ phase = "reading"
+/\ snap = <<-1, -1>>
+/\ written = {}
+
+State 3: <Refuse line 40, col 11 to line 43, col 70 of module TypedRead>
+/\ out = {}
+/\ pos = 1
+/\ live = <<-1, -1>>
+/\ own = <<-1, -1>>
+/\ complete = TRUE
+/\ covered = {}
+/\ phase = "done"
+/\ snap = <<-1, -1>>
+/\ written = {}
+
+2066 states generated, 2065 distinct states found, 1039 states left on queue.
+The depth of the complete state graph search is 3.
+Finished in 00s at (2026-10-28 14:57:45)
+Trace exploration spec path: ./TypedRead_TTrace_1793213865.tla

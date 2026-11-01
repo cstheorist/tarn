@@ -1,0 +1,636 @@
+{
+  "schema": 1,
+  "run": 41101928521,
+  "workflow_head": "952623f9fdbe24fb1a377974c56d1de9b167c573",
+  "audit": "Actual ELF hashes, all recorded compiled/fixture Git blobs, build/manifest/result joins, every retained trial log hash, crash scan, runtime/JIT/native mode and original ledger checks independently reconciled.",
+  "scope": "Fifteen bounded functional failover trials. No observed crash or unexpected RC error; not a crash cause/fix, all-path correctness proof, performance comparison, or full current-main qualification. Original unknown outcomes and serializable-bank error counts remain visible.",
+  "builds": {
+    "current": {
+      "source_commit": "952623f9fdbe24fb1a377974c56d1de9b167c573",
+      "compiled_sources_verified": 94,
+      "binaries": {
+        "tarn-server": "8c803e5fa9ffed0db1f293a7f157192c3dde5ba479515ae0712833879a51dca5",
+        "libtarn_storage.so": "5eaef434f9fdce412c00aca9adf249cf2ad90bf1a38b0420cc4ffe12e73d2716"
+      },
+      "source_status": "",
+      "receipt_sha256": "d30e42e4f8a1b66ddf7034cb3e924034407c9d65953a432535873ac3fc707068"
+    },
+    "observed": {
+      "source_commit": "420bde9fa9393c847cf022d4230b233c49b01fa7",
+      "compiled_sources_verified": 74,
+      "binaries": {
+        "tarn-server": "305df46a4cf4306a2c589c7ee8183640e3fc099c4388221efd01230aac987e6c",
+        "libtarn_storage.so": "bdb2245373175131316a8e6bda8d7c5fc404315fd82b16cacb94cb7f0b9aaa4c"
+      },
+      "source_status": "",
+      "receipt_sha256": "a3637549e3b4e286420e1c2be5481d9eba06d3eb1fe01b5b1f130879e7bd04f0"
+    }
+  },
+  "lanes": [
+    {
+      "artifact": "gc-current-memtx-native-on-41101928521",
+      "source_commit": "952623f9fdbe24fb1a377974c56d1de9b167c573",
+      "engine": "memtx",
+      "mode": "native",
+      "jit": "on",
+      "runtime": {
+        "os": "Linux",
+        "arch": "x64",
+        "version": "3.9.0-0-g8b9a0f5",
+        "status": [
+          true,
+          "SSE3",
+          "SSE4.1",
+          "BMI2",
+          "fold",
+          "cse",
+          "dce",
+          "fwd",
+          "dse",
+          "narrow",
+          "loop",
+          "abc",
+          "sink",
+          "fuse"
+        ],
+        "gc64": false,
+        "jit": "LuaJIT 2.1.0-beta3"
+      },
+      "runtime_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "actual_core_files": [],
+      "fixture_sources_verified": 263,
+      "manifest_sha256": "c03e5df7405853a948955a624f45c66af3933a071a901b92577d2561708203b9",
+      "build_receipt_sha256": "d30e42e4f8a1b66ddf7034cb3e924034407c9d65953a432535873ac3fc707068",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "elapsed_seconds": 59.02690813700001,
+          "serializable_bank": {
+            "commits": 9923,
+            "conflicts": 3034,
+            "audits": 36,
+            "other_errors": 4354,
+            "unknown_commits": 14,
+            "unknown_committed": 0,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 11893,
+            "unknown": 320
+          },
+          "read_committed_bank": {
+            "commits": 3950,
+            "deadlocks": 23,
+            "lock_timeouts": 0,
+            "unknown": 4,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "b9c164281c38c6bb313cabbecf15a137edd567d67ac4ced8f0167b651c5a3881"
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "elapsed_seconds": 57.38859851199999,
+          "serializable_bank": {
+            "commits": 9723,
+            "conflicts": 2948,
+            "audits": 44,
+            "other_errors": 4548,
+            "unknown_commits": 15,
+            "unknown_committed": 0,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 11405,
+            "unknown": 348
+          },
+          "read_committed_bank": {
+            "commits": 4485,
+            "deadlocks": 58,
+            "lock_timeouts": 0,
+            "unknown": 2,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "1787b14070baad79b0d1f407078b94980caf75d9572557cf6ab9dde958811d25"
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "elapsed_seconds": 57.02825905899999,
+          "serializable_bank": {
+            "commits": 10170,
+            "conflicts": 2818,
+            "audits": 48,
+            "other_errors": 3950,
+            "unknown_commits": 4,
+            "unknown_committed": 0,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 11493,
+            "unknown": 301
+          },
+          "read_committed_bank": {
+            "commits": 4242,
+            "deadlocks": 38,
+            "lock_timeouts": 0,
+            "unknown": 4,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "b0ec20b032ec4444579a6f72d3e3913d44ccd80071b4f2f67519fef1a32c3d69"
+        }
+      ]
+    },
+    {
+      "artifact": "gc-current-vinyl-native-on-41101928521",
+      "source_commit": "952623f9fdbe24fb1a377974c56d1de9b167c573",
+      "engine": "vinyl",
+      "mode": "native",
+      "jit": "on",
+      "runtime": {
+        "os": "Linux",
+        "arch": "x64",
+        "version": "3.9.0-0-g8b9a0f5",
+        "status": [
+          true,
+          "SSE3",
+          "SSE4.1",
+          "BMI2",
+          "fold",
+          "cse",
+          "dce",
+          "fwd",
+          "dse",
+          "narrow",
+          "loop",
+          "abc",
+          "sink",
+          "fuse"
+        ],
+        "gc64": false,
+        "jit": "LuaJIT 2.1.0-beta3"
+      },
+      "runtime_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "actual_core_files": [],
+      "fixture_sources_verified": 263,
+      "manifest_sha256": "737f0d9d35b45abf23e26224f18b49691408b805d6f7b42b1781b19edb90ec66",
+      "build_receipt_sha256": "d30e42e4f8a1b66ddf7034cb3e924034407c9d65953a432535873ac3fc707068",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "elapsed_seconds": 55.59303384100001,
+          "serializable_bank": {
+            "commits": 11137,
+            "conflicts": 3214,
+            "audits": 32,
+            "other_errors": 11564,
+            "unknown_commits": 5,
+            "unknown_committed": 0,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 13328,
+            "unknown": 714
+          },
+          "read_committed_bank": {
+            "commits": 5191,
+            "deadlocks": 64,
+            "lock_timeouts": 4,
+            "unknown": 4,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "99e5950943a6eab317e38632dc844ee14ed78dce1d0b21d209bcff88b30af446"
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "elapsed_seconds": 55.441064865,
+          "serializable_bank": {
+            "commits": 10963,
+            "conflicts": 3188,
+            "audits": 40,
+            "other_errors": 13912,
+            "unknown_commits": 6,
+            "unknown_committed": 2,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 12307,
+            "unknown": 789
+          },
+          "read_committed_bank": {
+            "commits": 5082,
+            "deadlocks": 44,
+            "lock_timeouts": 4,
+            "unknown": 5,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "feecf4e47a394ba76efdfb77525ecc8d44fbfd737cf7422272d020069e10f259"
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "elapsed_seconds": 55.099563254,
+          "serializable_bank": {
+            "commits": 10804,
+            "conflicts": 3311,
+            "audits": 24,
+            "other_errors": 11059,
+            "unknown_commits": 18,
+            "unknown_committed": 1,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 12863,
+            "unknown": 808
+          },
+          "read_committed_bank": {
+            "commits": 5631,
+            "deadlocks": 38,
+            "lock_timeouts": 0,
+            "unknown": 2,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "09f5c53abbe52734407cbc8a9e75abde2d43d0db93b4698799d9e4ddf54ac4e3"
+        }
+      ]
+    },
+    {
+      "artifact": "gc-observed-vinyl-lua-on-41101928521",
+      "source_commit": "420bde9fa9393c847cf022d4230b233c49b01fa7",
+      "engine": "vinyl",
+      "mode": "lua",
+      "jit": "on",
+      "runtime": {
+        "os": "Linux",
+        "arch": "x64",
+        "version": "3.9.0-0-g8b9a0f5",
+        "status": [
+          true,
+          "SSE3",
+          "SSE4.1",
+          "BMI2",
+          "fold",
+          "cse",
+          "dce",
+          "fwd",
+          "dse",
+          "narrow",
+          "loop",
+          "abc",
+          "sink",
+          "fuse"
+        ],
+        "gc64": false,
+        "jit": "LuaJIT 2.1.0-beta3"
+      },
+      "runtime_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "actual_core_files": [],
+      "fixture_sources_verified": 82,
+      "manifest_sha256": "b032a073c2e6277334d2edc60db98d2919de2425688ced2d8f98698fe0b24324",
+      "build_receipt_sha256": "a3637549e3b4e286420e1c2be5481d9eba06d3eb1fe01b5b1f130879e7bd04f0",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "elapsed_seconds": 53.47330962399997,
+          "serializable_bank": {
+            "commits": 25223,
+            "conflicts": 7882,
+            "audits": 109,
+            "other_errors": 2274,
+            "unknown_commits": 9,
+            "unknown_committed": 0,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 28847,
+            "unknown": 467
+          },
+          "read_committed_bank": {
+            "commits": 11277,
+            "deadlocks": 50,
+            "lock_timeouts": 4,
+            "unknown": 5,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "6bdc4d80ef4c687ad11edfd8af29625d4e77d69b29fb0719ee03277757fe3eb7"
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "elapsed_seconds": 53.32763284600003,
+          "serializable_bank": {
+            "commits": 29930,
+            "conflicts": 9586,
+            "audits": 129,
+            "other_errors": 804,
+            "unknown_commits": 8,
+            "unknown_committed": 1,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 34559,
+            "unknown": 160
+          },
+          "read_committed_bank": {
+            "commits": 13643,
+            "deadlocks": 81,
+            "lock_timeouts": 0,
+            "unknown": 3,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "e7ae045adb063707c2183ec44394f79c0161ad63d956bfa69c3b92ca886a9ac2"
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "elapsed_seconds": 53.165924081000014,
+          "serializable_bank": {
+            "commits": 29871,
+            "conflicts": 9551,
+            "audits": 113,
+            "other_errors": 773,
+            "unknown_commits": 3,
+            "unknown_committed": 1,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 33384,
+            "unknown": 174
+          },
+          "read_committed_bank": {
+            "commits": 12122,
+            "deadlocks": 69,
+            "lock_timeouts": 0,
+            "unknown": 4,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "2b103b05bb86ff8932249dbcf8e705c61514da073092551257713c392fe50314"
+        }
+      ]
+    },
+    {
+      "artifact": "gc-observed-vinyl-native-off-41101928521",
+      "source_commit": "420bde9fa9393c847cf022d4230b233c49b01fa7",
+      "engine": "vinyl",
+      "mode": "native",
+      "jit": "off",
+      "runtime": {
+        "os": "Linux",
+        "arch": "x64",
+        "version": "3.9.0-0-g8b9a0f5",
+        "status": [
+          false,
+          "SSE3",
+          "SSE4.1",
+          "BMI2",
+          "fold",
+          "cse",
+          "dce",
+          "fwd",
+          "dse",
+          "narrow",
+          "loop",
+          "abc",
+          "sink",
+          "fuse"
+        ],
+        "gc64": false,
+        "jit": "LuaJIT 2.1.0-beta3"
+      },
+      "runtime_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "actual_core_files": [],
+      "fixture_sources_verified": 82,
+      "manifest_sha256": "22725c00ca7945a981014e6814edd7c78f00eb681e2ccccc4cd08b31c558a152",
+      "build_receipt_sha256": "a3637549e3b4e286420e1c2be5481d9eba06d3eb1fe01b5b1f130879e7bd04f0",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "elapsed_seconds": 58.242402246999994,
+          "serializable_bank": {
+            "commits": 3505,
+            "conflicts": 1100,
+            "audits": 11,
+            "other_errors": 3293,
+            "unknown_commits": 14,
+            "unknown_committed": 1,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 4261,
+            "unknown": 380
+          },
+          "read_committed_bank": {
+            "commits": 1552,
+            "deadlocks": 18,
+            "lock_timeouts": 12,
+            "unknown": 3,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "76a5a5558fda4adaf3b3b9008adda9e7d7bcd2ba2556d6b08568f324eca71119"
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "elapsed_seconds": 57.798428485,
+          "serializable_bank": {
+            "commits": 6744,
+            "conflicts": 2316,
+            "audits": 26,
+            "other_errors": 1851,
+            "unknown_commits": 17,
+            "unknown_committed": 1,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 7965,
+            "unknown": 359
+          },
+          "read_committed_bank": {
+            "commits": 3181,
+            "deadlocks": 31,
+            "lock_timeouts": 5,
+            "unknown": 2,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "41f945cbd9554b6715f3df4196d265dd42bf7190d179037bbdf9c6435fe3d0bc"
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "elapsed_seconds": 57.260557653000006,
+          "serializable_bank": {
+            "commits": 6316,
+            "conflicts": 2015,
+            "audits": 26,
+            "other_errors": 1040,
+            "unknown_commits": 2,
+            "unknown_committed": 1,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 7291,
+            "unknown": 212
+          },
+          "read_committed_bank": {
+            "commits": 2967,
+            "deadlocks": 25,
+            "lock_timeouts": 1,
+            "unknown": 1,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "f4b99cee3c8f70150466d425f0a11dc5db5598b4a85e351a413672fc291130e3"
+        }
+      ]
+    },
+    {
+      "artifact": "gc-observed-vinyl-native-on-41101928521",
+      "source_commit": "420bde9fa9393c847cf022d4230b233c49b01fa7",
+      "engine": "vinyl",
+      "mode": "native",
+      "jit": "on",
+      "runtime": {
+        "os": "Linux",
+        "arch": "x64",
+        "version": "3.9.0-0-g8b9a0f5",
+        "status": [
+          true,
+          "SSE3",
+          "SSE4.1",
+          "BMI2",
+          "fold",
+          "cse",
+          "dce",
+          "fwd",
+          "dse",
+          "narrow",
+          "loop",
+          "abc",
+          "sink",
+          "fuse"
+        ],
+        "gc64": false,
+        "jit": "LuaJIT 2.1.0-beta3"
+      },
+      "runtime_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "actual_core_files": [],
+      "fixture_sources_verified": 82,
+      "manifest_sha256": "0d72e03bf0e4cfd5ef7b8c24149619b72e1cd697d4b604ca6d1bb82c9e96dc78",
+      "build_receipt_sha256": "a3637549e3b4e286420e1c2be5481d9eba06d3eb1fe01b5b1f130879e7bd04f0",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "elapsed_seconds": 56.95084860099999,
+          "serializable_bank": {
+            "commits": 18098,
+            "conflicts": 5802,
+            "audits": 90,
+            "other_errors": 741,
+            "unknown_commits": 8,
+            "unknown_committed": 3,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 20745,
+            "unknown": 176
+          },
+          "read_committed_bank": {
+            "commits": 8209,
+            "deadlocks": 66,
+            "lock_timeouts": 0,
+            "unknown": 1,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "8340aae01fb3ccb00794951a7fe786e6fb145228354ce3b7be85defc5d9fb7f9"
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "elapsed_seconds": 56.90586688299999,
+          "serializable_bank": {
+            "commits": 17336,
+            "conflicts": 5669,
+            "audits": 64,
+            "other_errors": 658,
+            "unknown_commits": 7,
+            "unknown_committed": 2,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 19998,
+            "unknown": 155
+          },
+          "read_committed_bank": {
+            "commits": 7940,
+            "deadlocks": 60,
+            "lock_timeouts": 0,
+            "unknown": 2,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "9ca994c4d618e1cea5823aaa67fe053d7ecc488dd89101f51e71f778114cdde7"
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "elapsed_seconds": 57.21503908599999,
+          "serializable_bank": {
+            "commits": 17806,
+            "conflicts": 5548,
+            "audits": 83,
+            "other_errors": 784,
+            "unknown_commits": 3,
+            "unknown_committed": 0,
+            "final_sum": 64000
+          },
+          "counters": {
+            "acknowledged": 20369,
+            "unknown": 173
+          },
+          "read_committed_bank": {
+            "commits": 7772,
+            "deadlocks": 57,
+            "lock_timeouts": 0,
+            "unknown": 2,
+            "other_errors": 0
+          },
+          "exact_ledger_and_acknowledgement_checks": true,
+          "logs_verified": 12,
+          "result_sha256": "8e392b130287867a5683e56f4121976e5e22064c4bf7f2f6445858e72381bd49"
+        }
+      ]
+    }
+  ]
+}

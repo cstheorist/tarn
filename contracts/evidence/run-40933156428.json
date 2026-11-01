@@ -1,0 +1,371 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/40933156428",
+  "head": "3e341a95f752be6d542582dc7d27be13e61da9b9",
+  "scope": "26 registered histories in text and binary prepared data modes plus CLIENT_FOUND_ROWS controls. Four RF3 engine/native configurations. Does not classify unregistered SQL. Later main integration requires separate validation.",
+  "rows": [
+    {
+      "artifact": "contracts-memtx-disabled-40933156428",
+      "source": "efaca4b2639caae8df45917deac086d4ff4322dd",
+      "result_sha256": "b1e5a4b92e745d9ad0cd70fcb49d9d2666f4720518628849388da57c8e07706e",
+      "runtime_sha256": "14cb637335ea30777b3c40eaa3c22651b23fc43430f10e2223ccf35646ff3ced",
+      "manifest_sha256": "2d3e700b7b671807a9932e4a497896494353bb3ac4f1394d5f8bfbc2f6408a5a",
+      "checks": 56,
+      "failures": 0,
+      "connections": [
+        [
+          {
+            "version": "8.0.40-tarn-0.1",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "SERIALIZABLE",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 3908109,
+            "connector": "9.5.0",
+            "prepared": false
+          },
+          {
+            "version": "8.4.13",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "REPEATABLE-READ",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 406563341,
+            "connector": "9.5.0",
+            "prepared": false
+          }
+        ],
+        [
+          {
+            "version": "8.0.40-tarn-0.1",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "SERIALIZABLE",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 3908109,
+            "connector": "9.5.0",
+            "prepared": true
+          },
+          {
+            "version": "8.4.13",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "REPEATABLE-READ",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 406563341,
+            "connector": "9.5.0",
+            "prepared": true
+          }
+        ]
+      ],
+      "leaders": 2,
+      "runtime_failures": [],
+      "native_leaders": [
+        false,
+        false
+      ]
+    },
+    {
+      "artifact": "contracts-memtx-enabled-40933156428",
+      "source": "efaca4b2639caae8df45917deac086d4ff4322dd",
+      "result_sha256": "df1bf15c5a4d6254bfbcae3fc521b98c1cfdb7e5bcefa00de6458fe4372f96f5",
+      "runtime_sha256": "d6358a471c346b7d032cfa5d0341001e28186e2b593f9160db1e3a250e03abc0",
+      "manifest_sha256": "2d3e700b7b671807a9932e4a497896494353bb3ac4f1394d5f8bfbc2f6408a5a",
+      "checks": 56,
+      "failures": 0,
+      "connections": [
+        [
+          {
+            "version": "8.0.40-tarn-0.1",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "SERIALIZABLE",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 3908109,
+            "connector": "9.5.0",
+            "prepared": false
+          },
+          {
+            "version": "8.4.13",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "REPEATABLE-READ",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 406563341,
+            "connector": "9.5.0",
+            "prepared": false
+          }
+        ],
+        [
+          {
+            "version": "8.0.40-tarn-0.1",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "SERIALIZABLE",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 3908109,
+            "connector": "9.5.0",
+            "prepared": true
+          },
+          {
+            "version": "8.4.13",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "REPEATABLE-READ",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 406563341,
+            "connector": "9.5.0",
+            "prepared": true
+          }
+        ]
+      ],
+      "leaders": 2,
+      "runtime_failures": [],
+      "native_leaders": [
+        {
+          "validations_to_lua": 31,
+          "commits_to_lua": 8,
+          "served": 222,
+          "to_lua": 19,
+          "validations": 0,
+          "commits": 4,
+          "ready": 1,
+          "fallbacks": {
+            "read": {
+              "page": 19
+            },
+            "commit": {
+              "freshness": 8
+            },
+            "validate": {
+              "freshness": 31
+            },
+            "write": {
+              "row_lock": 2
+            }
+          },
+          "writes": 48,
+          "writes_to_lua": 2
+        },
+        {
+          "validations_to_lua": 27,
+          "commits_to_lua": 0,
+          "served": 26,
+          "to_lua": 19,
+          "validations": 0,
+          "commits": 2,
+          "ready": 1,
+          "fallbacks": {
+            "read": {
+              "page": 19
+            },
+            "validate": {
+              "freshness": 27
+            }
+          },
+          "writes": 30,
+          "writes_to_lua": 0
+        }
+      ]
+    },
+    {
+      "artifact": "contracts-vinyl-disabled-40933156428",
+      "source": "efaca4b2639caae8df45917deac086d4ff4322dd",
+      "result_sha256": "d13c8dc8fb9f673bf84d5ffba8d6a64c09d345e79d438301e7d6e75c8539bd66",
+      "runtime_sha256": "258954752d39c23158a3c102be781f34822c04115dd8987cfe57ab49d4eef2b8",
+      "manifest_sha256": "2d3e700b7b671807a9932e4a497896494353bb3ac4f1394d5f8bfbc2f6408a5a",
+      "checks": 56,
+      "failures": 0,
+      "connections": [
+        [
+          {
+            "version": "8.0.40-tarn-0.1",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "SERIALIZABLE",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 3908109,
+            "connector": "9.5.0",
+            "prepared": false
+          },
+          {
+            "version": "8.4.13",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "REPEATABLE-READ",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 406563341,
+            "connector": "9.5.0",
+            "prepared": false
+          }
+        ],
+        [
+          {
+            "version": "8.0.40-tarn-0.1",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "SERIALIZABLE",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 3908109,
+            "connector": "9.5.0",
+            "prepared": true
+          },
+          {
+            "version": "8.4.13",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "REPEATABLE-READ",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 406563341,
+            "connector": "9.5.0",
+            "prepared": true
+          }
+        ]
+      ],
+      "leaders": 2,
+      "runtime_failures": [],
+      "native_leaders": [
+        false,
+        false
+      ]
+    },
+    {
+      "artifact": "contracts-vinyl-enabled-40933156428",
+      "source": "efaca4b2639caae8df45917deac086d4ff4322dd",
+      "result_sha256": "b7e8911fa31b9f21d56ab35d874ee877047badf0e2e0f32b50073e2b68f2fb80",
+      "runtime_sha256": "f3f45ccf71fb7663bed3eb5b344ad01e87cc473a265408883be4c82b48bb3fc3",
+      "manifest_sha256": "2d3e700b7b671807a9932e4a497896494353bb3ac4f1394d5f8bfbc2f6408a5a",
+      "checks": 56,
+      "failures": 0,
+      "connections": [
+        [
+          {
+            "version": "8.0.40-tarn-0.1",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "SERIALIZABLE",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 3908109,
+            "connector": "9.5.0",
+            "prepared": false
+          },
+          {
+            "version": "8.4.13",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "REPEATABLE-READ",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 406563341,
+            "connector": "9.5.0",
+            "prepared": false
+          }
+        ],
+        [
+          {
+            "version": "8.0.40-tarn-0.1",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "SERIALIZABLE",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 3908109,
+            "connector": "9.5.0",
+            "prepared": true
+          },
+          {
+            "version": "8.4.13",
+            "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+            "character_set_connection": "utf8mb4",
+            "collation_connection": "utf8mb4_bin",
+            "time_zone": "+00:00",
+            "transaction_isolation": "REPEATABLE-READ",
+            "autocommit": 1,
+            "max_error_count": 64,
+            "client_flags": 406563341,
+            "connector": "9.5.0",
+            "prepared": true
+          }
+        ]
+      ],
+      "leaders": 2,
+      "runtime_failures": [],
+      "native_leaders": [
+        {
+          "validations_to_lua": 32,
+          "commits_to_lua": 0,
+          "served": 0,
+          "to_lua": 0,
+          "validations": 0,
+          "commits": 0,
+          "ready": 1,
+          "fallbacks": {
+            "validate": {
+              "freshness": 32
+            }
+          },
+          "writes": 0,
+          "writes_to_lua": 0
+        },
+        {
+          "validations_to_lua": 28,
+          "commits_to_lua": 0,
+          "served": 0,
+          "to_lua": 0,
+          "validations": 0,
+          "commits": 0,
+          "ready": 1,
+          "fallbacks": {
+            "validate": {
+              "freshness": 28
+            }
+          },
+          "writes": 0,
+          "writes_to_lua": 0
+        }
+      ]
+    }
+  ]
+}

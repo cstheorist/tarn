@@ -1,0 +1,14 @@
+{
+  "observation": "docker inspect during the stopped Vinyl SQL run, before restarting the owned reference",
+  "container": "tarn-issue176-mysql",
+  "image": "mysql:8.4.4",
+  "memory_bytes": 805306368,
+  "observed_state": {
+    "Status": "exited",
+    "OOMKilled": true,
+    "ExitCode": 137,
+    "StartedAt": "2026-10-30T14:53:59.799646461Z",
+    "FinishedAt": "2026-10-30T15:00:48.978163545Z"
+  },
+  "recovery": "Raised only this owned reference to 1536 MiB and restarted; no Tarn limits changed by this action."
+}

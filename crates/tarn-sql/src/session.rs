@@ -8,7 +8,7 @@ use crate::collation::Collation;
 use crate::exec::{self, matching_rows, run_select, shard_of_row, ReadMode, NEED_TXN};
 use crate::expr::{now_string, EvalCtx, Expr};
 use crate::lint;
-use crate::mpw::{lua_status, Mp, Rd};
+use crate::mpw::{Mp, Rd};
 use crate::normalize::{normalize, Mode};
 use crate::plan::*;
 use crate::planner::{self, PlanCtx};
@@ -30,6 +30,7 @@ pub enum Output {
     Rows {
         columns: Arc<[Column]>,
         rows: Vec<Vec<Value>>,
+        resource_guard: Option<tarn_common::ResourceGuard>,
     },
 }
 
@@ -43,38 +44,8 @@ impl Output {
     }
 }
 
-fn autocommit_count(data: &[u8]) -> SqlResult<u64> {
-    let mut rd = Rd::new(data);
-    if rd.array()? != 1 {
-        return Err(crate::mpw::proto("invalid autocommit acknowledgement"));
-    }
-    let fields = rd.array()?;
-    if !matches!(fields, 2 | 3) || rd.value()? != Value::str("ok") {
-        return Err(crate::mpw::proto("invalid autocommit acknowledgement"));
-    }
-    let n = match rd.value()? {
-        Value::UInt(n) => n,
-        Value::Int(n) if n >= 0 => n as u64,
-        _ => return Err(crate::mpw::proto("invalid write count")),
-    };
-    // Lua and the native writer may return the last affected tuple. It
-    // is optional metadata, not an additional result or acknowledgement.
-    if fields == 3 {
-        if !matches!(rd.buf.first(), Some(0x90..=0x9f | 0xdc | 0xdd | 0xc0)) {
-            return Err(crate::mpw::proto("invalid autocommit last tuple"));
-        }
-        rd.skip()?;
-    }
-    if !rd.buf.is_empty() {
-        return Err(crate::mpw::proto("trailing autocommit acknowledgement"));
-    }
-    Ok(n)
-}
-
 fn autocommit_ack(data: &[u8], shard: u32) -> SqlResult<u64> {
-    // The request has already run. A broken success envelope cannot prove
-    // a rollback, and must never enter the statement's retry path.
-    autocommit_count(data).map_err(|e| crate::mpw::ambiguous(shard, &e))
+    crate::mpw::write_reply(data, shard)
 }
 
 fn known_write_rollback(code: u16) -> bool {
@@ -98,7 +69,7 @@ pub struct Prepared {
     diagnostic: Option<crate::observe::Descriptor>,
     pub n_params: usize,
     pub columns: Arc<[Column]>,
-    plan: Option<(u64, Stmt)>,
+    plan: Option<((u64, Option<u64>), Stmt)>,
     admin: Option<Admin>,
     /// Statement with subqueries/UNION: the parsed template (placeholders
     /// ?1..?N), bound and run through `run_complex` at execute time.
@@ -106,6 +77,7 @@ pub struct Prepared {
 }
 
 pub struct Session {
+    retained: crate::budget::Account,
     pub cluster: Arc<Cluster>,
     pub db: Option<String>,
     pub user: String,
@@ -145,6 +117,8 @@ pub struct Session {
     client_collation: String,
     /// Warnings and notes of the last statement (SHOW WARNINGS).
     warnings: Vec<Warning>,
+    omitted_warnings: usize,
+    warning_bytes: u64,
     lazy_history: crate::lazy::History,
     lazy_read_your_writes: bool,
     lazy_consistency: crate::lazy::Consistency,
@@ -157,6 +131,40 @@ pub struct Warning {
     pub level: &'static str,
     pub code: u16,
     pub message: String,
+}
+
+/// Keep diagnostic storage bounded while preserving the full warning count.
+struct DmlWarnings {
+    messages: Vec<Warning>,
+    total: usize,
+    retained: crate::budget::Account,
+}
+
+impl DmlWarnings {
+    fn new(pool: &Arc<crate::budget::Pool>, available: u64) -> Self {
+        Self {
+            messages: Vec::new(),
+            total: 0,
+            retained: pool.account(available),
+        }
+    }
+
+    fn duplicate(&mut self, bytes: u64, error: impl FnOnce() -> SqlError) -> SqlResult<()> {
+        if self.messages.len() < admin::MAX_ERROR_COUNT {
+            // Both admissions precede formatting and COMMIT. Failed attempts
+            // drop this account; a successful one transfers it without refusal.
+            self.retained.charge(bytes)?;
+            crate::budget::charge(bytes)?;
+            let error = error();
+            self.messages.push(Warning {
+                level: "Warning",
+                code: error.code,
+                message: error.message,
+            });
+        }
+        self.total += 1;
+        Ok(())
+    }
 }
 
 /// A finding of the tree checks as a warning or error message.
@@ -184,7 +192,7 @@ pub(crate) const MAX_RETRIES: usize = 20;
 
 /// The mark (`Client::mark`) of a connection to a shard without the native
 /// autocommit procedure.
-const MARK_NO_NATIVE_WRITE: u32 = 1;
+pub(crate) const MARK_NO_NATIVE_WRITE: u32 = 1;
 
 /// Statements that met a stale catalog: a table definition an ALTER TABLE
 /// replaced (1412; the shards refuse writes made with it while the ALTER
@@ -396,6 +404,29 @@ fn cols(names: &[(&str, ColumnType)]) -> Arc<[Column]> {
     names.iter().map(|(n, t)| Column::new(n, *t)).collect::<Vec<_>>().into()
 }
 
+fn analyze_columns() -> Arc<[Column]> {
+    cols(&[
+        ("Table", ColumnType::VarString),
+        ("Op", ColumnType::VarString),
+        ("Msg_type", ColumnType::VarString),
+        ("Msg_text", ColumnType::VarString),
+    ])
+}
+
+fn statistics_columns() -> Arc<[Column]> {
+    cols(&[
+        ("Table", ColumnType::VarString),
+        ("Index", ColumnType::VarString),
+        ("Prefix_parts", ColumnType::LongLong),
+        ("Estimated_table_rows", ColumnType::Double),
+        ("Sample_rows", ColumnType::LongLong),
+        ("Observed_distinct", ColumnType::LongLong),
+        ("Estimated_distinct", ColumnType::Double),
+        ("Age_ms", ColumnType::LongLong),
+        ("Generation", ColumnType::LongLong),
+    ])
+}
+
 fn like_ci(s: &str, pat: &Option<String>) -> bool {
     match pat {
         None => true,
@@ -410,6 +441,7 @@ impl Session {
             (g.isolation, g.lock_wait_timeout)
         };
         Session {
+            retained: cluster.resources.account(cluster.cfg.resources.query_bytes),
             db: None,
             user: "root".into(),
             conn_id,
@@ -431,6 +463,8 @@ impl Session {
             collation_connection: cluster.cfg.default_collation.clone(),
             client_collation: cluster.cfg.default_collation.clone(),
             warnings: Vec::new(),
+            omitted_warnings: 0,
+            warning_bytes: 0,
             lazy_history: crate::lazy::History::default(),
             lazy_read_your_writes: false,
             lazy_consistency: crate::lazy::Consistency::default(),
@@ -442,7 +476,7 @@ impl Session {
     /// Number of warnings and notes of the last statement (the count OK and
     /// EOF packets carry).
     pub fn warning_count(&self) -> u16 {
-        self.warnings.len().min(u16::MAX as usize) as u16
+        (self.warnings.len() + self.omitted_warnings).min(u16::MAX as usize) as u16
     }
 
     pub fn warnings(&self) -> &[Warning] {
@@ -470,15 +504,20 @@ impl Session {
     }
 
     fn session_vars(&self) -> admin::SessionVars<'_> {
+        let globals = self.cluster.globals.lock();
         admin::SessionVars {
             autocommit: self.autocommit,
             db: self.db.as_deref(),
             isolation: self.isolation,
+            global_isolation: globals.isolation,
+            global_lock_wait_timeout: globals.lock_wait_timeout,
+            next_isolation: self.next_isolation,
+            active_mode: self.txn.as_ref().map(|t| t.mode),
             lock_wait_timeout: self.lock_wait_timeout,
             overrides: Some(&self.sys_vars),
             collation_connection: &self.collation_connection,
             collation_server: &self.cluster.cfg.default_collation,
-            warning_count: self.warnings.len(),
+            warning_count: self.warnings.len() + self.omitted_warnings,
         }
     }
 
@@ -554,8 +593,22 @@ impl Session {
     async fn set_var(&mut self, scope: VarScope, name: &str, rhs: &str) -> SqlResult<()> {
         if let Some(user) = name.strip_prefix('@') {
             let v = self.eval_set_value(rhs, false).await?.unwrap_or(Value::Null);
-            self.user_vars.insert(user.to_string(), v);
+            self.set_user_value(user.to_string(), v)?;
             return Ok(());
+        }
+        // Unsupported GLOBAL assignments must not mutate session behavior
+        // (notably sql_mode) or report an unimplemented server default.
+        if scope == VarScope::Global
+            && !name.starts_with("tarn_")
+            && !matches!(
+                name,
+                "transaction_isolation" | "tx_isolation" | "innodb_lock_wait_timeout"
+            )
+        {
+            return Err(SqlError::unsupported(format!(
+                "SET GLOBAL {} (no mutable server default)",
+                name
+            )));
         }
         if name == "names" {
             // SET NAMES charset [COLLATE collation]
@@ -595,7 +648,7 @@ impl Session {
                 "character_set_connection",
                 "character_set_results",
             ] {
-                self.sys_vars.insert(v.into(), Value::str(&cs));
+                self.set_system_value(v.into(), Value::str(&cs))?;
             }
             self.collation_connection = co;
             return Ok(());
@@ -607,6 +660,58 @@ impl Session {
         }
         let text = value.as_ref().map(|v| v.to_string()).unwrap_or_default();
         match name {
+            "max_error_count" => {
+                if value.is_none() || value.as_ref().and_then(Value::as_i64) == Some(admin::MAX_ERROR_COUNT as i64) {
+                    return Ok(());
+                }
+                return Err(SqlError::unsupported("max_error_count values other than 64"));
+            }
+            "tarn_isolation_contract" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(
+                        1228,
+                        "HY000",
+                        "tarn_isolation_contract is a SESSION variable",
+                    ));
+                }
+                if text.eq_ignore_ascii_case("MYSQL") {
+                    return Err(SqlError::unsupported(
+                        "exact MySQL isolation; use Tarn's documented isolation contract (REPEATABLE READ is strictly serializable)",
+                    ));
+                }
+                if value.is_none() || text.eq_ignore_ascii_case("TARN") {
+                    return Ok(());
+                }
+                return Err(SqlError::new(
+                    1231,
+                    "42000",
+                    "tarn_isolation_contract accepts TARN; exact MYSQL is unsupported",
+                ));
+            }
+            "tarn_effective_isolation" | "tarn_next_isolation" | "tarn_active_isolation" => {
+                return Err(SqlError::new(
+                    1238,
+                    "HY000",
+                    format!("Variable '{}' is a read only variable", name),
+                ));
+            }
+            "tarn_legacy_integrity" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(
+                        1228,
+                        "HY000",
+                        "tarn_legacy_integrity is a SESSION variable",
+                    ));
+                }
+                let policy = match value.as_ref() {
+                    None => "REJECT",
+                    Some(Value::Str(v)) if v.eq_ignore_ascii_case(b"ALLOW") => "ALLOW",
+                    Some(Value::Str(v)) if v.eq_ignore_ascii_case(b"REJECT") => "REJECT",
+                    _ => return Err(admin::bad_value(name, &text)),
+                };
+                self.sys_vars.insert(name.into(), Value::str(policy));
+                return Ok(());
+            }
             "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" | "tarn_lazy_consistency" => {
                 if scope == VarScope::Global {
                     return Err(SqlError::new(
@@ -628,7 +733,7 @@ impl Session {
                     self.lazy_wait_timeout = crate::lazy::wait_seconds(value.as_ref())?;
                     Value::Int(self.lazy_wait_timeout as i64)
                 };
-                self.sys_vars.insert(name.to_string(), v);
+                self.set_system_value(name.to_string(), v)?;
                 return Ok(());
             }
             n if n.starts_with("character_set_") && n != "character_set_system" => {
@@ -685,7 +790,7 @@ impl Session {
                     }
                     Some(_) => {
                         let v = admin::TreeChecks::parse(&text).ok_or_else(|| admin::bad_value(name, &text))?;
-                        self.sys_vars.insert(name.to_string(), Value::str(v.name()));
+                        self.set_system_value(name.to_string(), Value::str(v.name()))?;
                     }
                 }
                 return Ok(());
@@ -700,14 +805,17 @@ impl Session {
         }
         if scope == VarScope::Global {
             // Only the variables typed above have server-wide defaults.
-            return Ok(());
+            return Err(SqlError::unsupported(format!(
+                "SET GLOBAL {} (no mutable server default)",
+                name
+            )));
         }
         match value {
             None => {
                 self.sys_vars.remove(name);
             }
             Some(v) => {
-                self.sys_vars.insert(name.to_string(), v);
+                self.set_system_value(name.to_string(), v)?;
             }
         }
         Ok(())
@@ -747,14 +855,48 @@ impl Session {
 
     pub async fn query(&mut self, sql: &str) -> SqlResult<Output> {
         let cluster = self.cluster.clone();
-        crate::observe::track(&cluster.stats.query_digests, self.query_inner(sql)).await
+        let query = crate::budget::current().unwrap_or_else(|| self.cluster.resources.query());
+        crate::budget::scope(query.clone(), async {
+            let result = crate::observe::track(&cluster.stats.query_digests, async {
+                crate::budget::charge((sql.len() as u64).saturating_mul(128).saturating_add(4096))?;
+                crate::budget::work(sql.len() as u64)?;
+                Box::pin(self.query_budgeted(sql)).await
+            })
+            .await;
+            self.finish_budgeted(result, &query)
+        })
+        .await
     }
 
-    async fn query_inner(&mut self, sql: &str) -> SqlResult<Output> {
-        self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
-        if !admin::reads_diagnostics(sql) {
-            self.warnings.clear();
+    fn finish_budgeted(
+        &mut self,
+        mut result: SqlResult<Output>,
+        query: &Arc<crate::budget::Query>,
+    ) -> SqlResult<Output> {
+        if result.as_ref().is_err_and(crate::budget::is_exhausted) {
+            if let Some(txn) = self.txn.take() {
+                txn.rollback(&self.cluster);
+            }
         }
+        if let Ok(Output::Rows { resource_guard, .. }) = &mut result {
+            *resource_guard = Some(query.guard());
+        }
+        result
+    }
+
+    async fn query_budgeted(&mut self, sql: &str) -> SqlResult<Output> {
+        self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
+        let sql = crate::prep::expand_comments(sql);
+        let captured;
+        let sql = if admin::reads_diagnostics(&sql) {
+            sql.as_ref()
+        } else {
+            // Release old message ownership before this statement can admit
+            // new diagnostics. The captured scalars survive stale-plan retries.
+            captured = admin::capture_diagnostics(&sql, self.warnings.len() + self.omitted_warnings);
+            self.clear_warnings();
+            captured.as_deref().unwrap_or(&sql)
+        };
         // A statement outside any transaction that met a table definition an
         // ALTER TABLE replaced (1412) took no effect: re-plan and run it
         // again with the new catalog.
@@ -867,15 +1009,48 @@ impl Session {
             ));
         }
         for (v, x) in vars.iter().zip(row) {
-            self.user_vars.insert(v.clone(), x);
+            self.set_user_value(v.clone(), x)?;
         }
         Ok(Output::ok(1))
     }
 
     pub fn prepare(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
+        let query = self.cluster.resources.query();
+        crate::budget::scope_sync(query, || {
+            let old = self.retained.used();
+            self.retained.resize(
+                old.saturating_add((sql.len() as u64).saturating_mul(128))
+                    .saturating_add(4096),
+            )?;
+            let result = self.prepare_budgeted(id, sql);
+            if result.is_err() {
+                self.retained.resize(old)?;
+            }
+            result
+        })
+    }
+
+    fn prepare_budgeted(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
         let sql = crate::prep::expand_comments(sql);
         let sql: &str = &sql;
         if let Some(a) = admin::recognize(sql)? {
+            let columns = match &a {
+                Admin::Analyze(text) => {
+                    let catalog = self.cluster.catalog();
+                    let ctx = PlanCtx {
+                        statistics: None,
+                        catalog: &catalog,
+                        db: self.db.as_deref(),
+                        params: &[],
+                        conn_coll: &self.collation_connection,
+                        default_coll: &self.cluster.cfg.default_collation,
+                    };
+                    planner::analyze_target(text, &ctx)?;
+                    analyze_columns()
+                }
+                Admin::ShowTarnStatistics => statistics_columns(),
+                _ => Arc::from(Vec::new()),
+            };
             self.prepared.insert(
                 id,
                 Prepared {
@@ -883,13 +1058,13 @@ impl Session {
                     diagnostic: matches!(a, Admin::Commit)
                         .then(|| crate::observe::Descriptor::new(self.db.as_deref(), "COMMIT")),
                     n_params: 0,
-                    columns: Arc::from(Vec::new()),
+                    columns: columns.clone(),
                     plan: None,
                     admin: Some(a),
                     complex: None,
                 },
             );
-            return Ok((0, Arc::from(Vec::new())));
+            return Ok((0, columns));
         }
         if crate::prep::has_var_refs(sql) {
             return Err(SqlError::unsupported("variables in prepared statements"));
@@ -918,7 +1093,7 @@ impl Session {
             Stmt::Explain { .. } => vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
             _ => Arc::from(Vec::new()),
         };
-        let version = self.cluster.catalog().version;
+        let version = self.plan_version(&stmt);
         let diagnostic = if matches!(
             stmt,
             Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
@@ -944,27 +1119,45 @@ impl Session {
 
     pub async fn execute(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         let cluster = self.cluster.clone();
-        crate::observe::track(&cluster.stats.query_digests, self.execute_inner(id, params)).await
+        let query = crate::budget::current().unwrap_or_else(|| self.cluster.resources.query());
+        crate::budget::scope(query.clone(), async {
+            let result = crate::observe::track(&cluster.stats.query_digests, async {
+                crate::budget::charge(crate::budget::row_bytes(params).saturating_mul(4))?;
+                self.execute_budgeted(id, params).await
+            })
+            .await;
+            self.finish_budgeted(result, &query)
+        })
+        .await
     }
 
-    async fn execute_inner(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
+    async fn execute_budgeted(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         match self.prepared.get(&id).and_then(|p| p.diagnostic.clone()) {
             Some(diagnostic) => crate::observe::describe(diagnostic),
             None => crate::observe::disable(),
         }
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
+        // Prepared administration has the same execution-time diagnostic
+        // inputs as text SQL. Capture before releasing the old messages,
+        // once per EXECUTE (not PREPARE or a stale-plan retry).
+        let captured = self.prepared.get(&id).and_then(|p| {
+            (p.admin.is_some() && !admin::reads_diagnostics(&p.template))
+                .then(|| admin::capture_diagnostics(&p.template, self.warnings.len() + self.omitted_warnings))
+                .flatten()
+        });
+        let captured_admin = captured.as_deref().map(admin::recognize).transpose()?.flatten();
         if !self
             .prepared
             .get(&id)
-            .is_some_and(|p| matches!(p.admin, Some(Admin::ShowWarnings { .. })))
+            .is_some_and(|p| matches!(&p.admin, Some(Admin::ShowWarnings { .. }) | Some(Admin::SelectVars(_))))
         {
-            self.warnings.clear();
+            self.clear_warnings();
         }
         let rp = self.restart_point();
         let mut retry = StaleRetry::new(self.lock_wait_timeout);
         loop {
             retry.start(&self.cluster);
-            let r = self.execute_once(id, params).await;
+            let r = self.execute_once(id, params, captured_admin.as_ref()).await;
             match retry.again(&self.cluster, &r, rp.can_retry()).await? {
                 Stale::Retry => self.restart(&rp),
                 Stale::Done => return r,
@@ -973,7 +1166,7 @@ impl Session {
         }
     }
 
-    async fn execute_once(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
+    async fn execute_once(&mut self, id: u32, params: &[Value], captured_admin: Option<&Admin>) -> SqlResult<Output> {
         if let Some(c) = self.prepared.get(&id).and_then(|p| p.complex.clone()) {
             if params.len() != self.prepared[&id].n_params {
                 return Err(SqlError::new(
@@ -996,12 +1189,11 @@ impl Session {
                     "Incorrect arguments to mysqld_stmt_execute",
                 ));
             }
-            let version = self.cluster.catalog().version;
             let stmt = match &p.plan {
-                Some((v, s)) if *v == version => Some(s.clone()),
+                Some((v, s)) if *v == self.plan_version(s) => Some(s.clone()),
                 _ => None,
             };
-            (p.admin.clone(), stmt)
+            (captured_admin.or(p.admin.as_ref()).cloned(), stmt)
         };
         if let Some(a) = admin {
             return self.run_admin(a).await;
@@ -1013,12 +1205,33 @@ impl Session {
                 let template = self.prepared[&id].template.clone();
                 self.plan_cached(&template, params)?
             }
+            Some(Stmt::Select(p))
+                if !params.is_empty()
+                    && matches!(&p.source,Source::Join { left, .. } if matches!(left.as_ref(),Source::Table(_)))
+                    && p.project.iter().all(|e| matches!(e, Expr::Col(_) | Expr::Lit(_)))
+                    && p.agg.is_none()
+                    && p.limit.is_none()
+                    && !p.distinct
+                    && p.source.tables().iter().all(|a| {
+                        self.cluster
+                            .statistics
+                            .snapshot(self.cluster.catalog().version)
+                            .tables
+                            .contains_key(&a.table.space_id)
+                    }) =>
+            {
+                // The projection's metadata is independent of parameters.
+                // Use the shared type-keyed cache so bound integer predicates
+                // can use hints, while unbound/noninteger plans stay conservative.
+                let template = self.prepared[&id].template.clone();
+                self.plan_cached(&template, params)?
+            }
             Some(s) => s,
             None => {
                 // catalog changed since PREPARE: re-plan
                 let template = self.prepared[&id].template.clone();
                 let s = self.plan_cached(&template, &[])?;
-                let version = self.cluster.catalog().version;
+                let version = self.plan_version(&s);
                 self.prepared.get_mut(&id).unwrap().plan = Some((version, s.clone()));
                 s
             }
@@ -1028,6 +1241,52 @@ impl Session {
 
     pub fn close(&mut self, id: u32) {
         self.prepared.remove(&id);
+        let _ = self.retained.resize(self.retained_size());
+    }
+
+    fn retained_size(&self) -> u64 {
+        let vars = self
+            .user_vars
+            .iter()
+            .chain(self.sys_vars.iter())
+            .fold(0u64, |n, (k, v)| {
+                n.saturating_add((256 + k.len() as u64 + crate::budget::value_bytes(v)).saturating_mul(8))
+            });
+        let plans = self.prepared.values().fold(0u64, |n, p| {
+            n.saturating_add(4096 + (p.template.len() as u64).saturating_mul(128))
+        });
+        self.sql_prepared.iter().fold(
+            vars.saturating_add(plans).saturating_add(self.warning_bytes),
+            |n, (name, (sql, _))| n.saturating_add(4096 + (name.len() as u64 + sql.len() as u64).saturating_mul(128)),
+        )
+    }
+
+    fn set_user_value(&mut self, name: String, value: Value) -> SqlResult<()> {
+        let old = self
+            .user_vars
+            .get(&name)
+            .map_or(0, |v| (256 + name.len() as u64 + crate::budget::value_bytes(v)) * 8);
+        let desired = self
+            .retained_size()
+            .saturating_sub(old)
+            .saturating_add((256 + name.len() as u64 + crate::budget::value_bytes(&value)) * 8);
+        self.retained.resize(self.retained.used().max(desired))?;
+        drop(self.user_vars.insert(name, crate::budget::own_value(value)));
+        self.retained.resize(desired)
+    }
+
+    fn set_system_value(&mut self, name: String, value: Value) -> SqlResult<()> {
+        let old = self
+            .sys_vars
+            .get(&name)
+            .map_or(0, |v| (256 + name.len() as u64 + crate::budget::value_bytes(v)) * 8);
+        let desired = self
+            .retained_size()
+            .saturating_sub(old)
+            .saturating_add((256 + name.len() as u64 + crate::budget::value_bytes(&value)) * 8);
+        self.retained.resize(self.retained.used().max(desired))?;
+        drop(self.sys_vars.insert(name, crate::budget::own_value(value)));
+        self.retained.resize(desired)
     }
 
     pub fn disconnect(&mut self) {
@@ -1073,7 +1332,9 @@ impl Session {
             return Ok(p.stmt.clone());
         }
         let catalog = self.cluster.catalog();
+        let statistics = self.cluster.statistics.snapshot(catalog.version);
         let ctx = PlanCtx {
+            statistics: Some(&statistics),
             catalog: &catalog,
             db: self.db.as_deref(),
             params,
@@ -1081,6 +1342,11 @@ impl Session {
             default_coll: &self.cluster.cfg.default_collation,
         };
         let stmt = planner::plan(template, &ctx)?;
+        let cache_guard = tarn_common::ResourceMemory::reserve(
+            self.cluster.resources.clone(),
+            4096 + (template.len() as u64 + key.len() as u64).saturating_mul(128),
+        )
+        .ok();
         if matches!(
             stmt,
             Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
@@ -1089,17 +1355,30 @@ impl Session {
             if let Some(diagnostic) = &diagnostic {
                 crate::observe::describe(diagnostic.clone());
             }
-            self.cluster.cache_plan(
-                &db,
-                &key,
-                Arc::new(CachedPlan {
-                    version: catalog.version,
-                    stmt: stmt.clone(),
-                    diagnostic,
-                }),
-            );
+            if let Some(cache_guard) = cache_guard {
+                self.cluster.cache_plan(
+                    &db,
+                    &key,
+                    Arc::new(CachedPlan {
+                        resource_guard: cache_guard,
+                        statistics_generation: stmt.uses_statistics().then_some(statistics.generation),
+                        version: catalog.version,
+                        stmt: stmt.clone(),
+                        diagnostic,
+                    }),
+                );
+            }
         }
         Ok(stmt)
+    }
+
+    fn plan_version(&self, stmt: &Stmt) -> (u64, Option<u64>) {
+        let v = self.cluster.catalog().version;
+        (
+            v,
+            stmt.uses_statistics()
+                .then(|| self.cluster.statistics.snapshot(v).generation),
+        )
     }
 
     // ---- dispatch -------------------------------------------------------------
@@ -1147,6 +1426,7 @@ impl Session {
         )?;
         let text = serde_json::to_string(&value).map_err(|e| SqlError::internal(e.to_string()))?;
         Ok(Output::Rows {
+            resource_guard: None,
             columns: vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
             rows: vec![vec![Value::str(&text)]],
         })
@@ -1220,7 +1500,14 @@ impl Session {
                     }
                 }
             };
-            return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+            return self.finish_txn_stmt(
+                txn,
+                res.map(|rows| Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                }),
+            );
         }
         if self.lazy_read_context().strong_reason(p).is_none() {
             if self.lazy_read_your_writes && !self.lazy_history.catch_up(&self.cluster, self.lazy_wait_timeout).await {
@@ -1234,7 +1521,11 @@ impl Session {
             if let Some(rows) = crate::lazy::select(&self.cluster, p, &cx).await? {
                 self.cluster.stats.lazy_reads.fetch_add(1, Ordering::Relaxed);
                 self.found_rows = rows.len() as u64;
-                return Ok(Output::Rows { columns, rows });
+                return Ok(Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                });
             }
         }
         if crate::lazy::eligible(p) {
@@ -1250,7 +1541,11 @@ impl Session {
                 run_select(&self.cluster, &mut mode, p, &cx).await?
             };
             self.found_rows = rows.len() as u64;
-            return Ok(Output::Rows { columns, rows });
+            return Ok(Output::Rows {
+                columns,
+                rows,
+                resource_guard: None,
+            });
         }
         // Autocommit: one lock-aware storage read if the plan allows it,
         // otherwise an implicit read-only transaction (validated at the end).
@@ -1260,7 +1555,11 @@ impl Session {
             match run_select(&self.cluster, &mut mode, p, &cx).await {
                 Ok(rows) => {
                     self.found_rows = rows.len() as u64;
-                    return Ok(Output::Rows { columns, rows });
+                    return Ok(Output::Rows {
+                        columns,
+                        rows,
+                        resource_guard: None,
+                    });
                 }
                 Err(e) if e.code == NEED_TXN => {}
                 Err(e) => return Err(e),
@@ -1284,7 +1583,11 @@ impl Session {
             match res {
                 Ok(rows) => {
                     self.found_rows = rows.len() as u64;
-                    return Ok(Output::Rows { columns, rows });
+                    return Ok(Output::Rows {
+                        columns,
+                        rows,
+                        resource_guard: None,
+                    });
                 }
                 Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
@@ -1320,7 +1623,14 @@ impl Session {
             if let Ok(rows) = &res {
                 self.found_rows = rows.len() as u64;
             }
-            return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+            return self.finish_txn_stmt(
+                txn,
+                res.map(|rows| Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                }),
+            );
         }
         let mut txn = self.new_txn(false);
         let res = {
@@ -1331,7 +1641,11 @@ impl Session {
             Ok(rows) => {
                 self.commit_tracked(txn).await?;
                 self.found_rows = rows.len() as u64;
-                Ok(Output::Rows { columns, rows })
+                Ok(Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                })
             }
             Err(e) => {
                 txn.rollback(&self.cluster);
@@ -1357,7 +1671,7 @@ impl Session {
     /// a conflict ends the transaction (as a MySQL deadlock does).
     pub(crate) fn finish_txn_stmt(&mut self, txn: Txn, res: SqlResult<Output>) -> SqlResult<Output> {
         match res {
-            Err(e) if e.code == 1213 || e.code == 1412 || txn.doomed.is_some() => {
+            Err(e) if e.code == 1213 || e.code == 1412 || crate::budget::is_exhausted(&e) || txn.doomed.is_some() => {
                 txn.rollback(&self.cluster);
                 Err(e)
             }
@@ -1371,17 +1685,42 @@ impl Session {
     // ---- DML -------------------------------------------------------------------
 
     async fn run_dml(&mut self, stmt: &Stmt, params: &[Value]) -> SqlResult<Output> {
+        let table = match stmt {
+            Stmt::Insert(p) => &p.table,
+            Stmt::Update(p) => &p.access.table,
+            Stmt::Delete(p) => &p.access.table,
+            _ => unreachable!("DML target"),
+        };
+        if !table.current_integrity_policy() {
+            let legacy_allowed =
+                matches!(self.sys_vars.get("tarn_legacy_integrity"), Some(Value::Str(v)) if v.as_ref() == b"ALLOW");
+            crate::integrity::check_write(table, legacy_allowed)?;
+        }
         let now = now_string();
         if self.txn_needed() {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
+            if let Err(error) = txn.snapshot_charge() {
+                txn.rollback(&self.cluster);
+                return Err(error);
+            }
             let snapshot = txn.writes.clone();
+            let mut warnings = DmlWarnings::new(
+                &self.cluster.resources,
+                self.cluster
+                    .cfg
+                    .resources
+                    .query_bytes
+                    .saturating_sub(self.retained.used()),
+            );
             let res = match check_defs(&txn, stmt_tables(stmt)) {
                 Err(e) => Err(e),
-                Ok(()) => self.dml_in_txn(&mut txn, stmt, params, &now, None).await,
+                Ok(()) => self.dml_in_txn(&mut txn, stmt, params, &now, None, &mut warnings).await,
             };
             if res.is_err() {
                 txn.writes = snapshot; // statement atomicity
+            } else {
+                self.note_dml_warnings(warnings);
             }
             let res = res.map(|(n, id)| self.dml_output(n, id));
             return self.finish_txn_stmt(txn, res);
@@ -1401,7 +1740,18 @@ impl Session {
         let mut attempt = 0;
         loop {
             let mut txn = self.new_txn(false);
-            let res = match self.dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref()).await {
+            let mut warnings = DmlWarnings::new(
+                &self.cluster.resources,
+                self.cluster
+                    .cfg
+                    .resources
+                    .query_bytes
+                    .saturating_sub(self.retained.used()),
+            );
+            let res = match self
+                .dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref(), &mut warnings)
+                .await
+            {
                 Ok(r) => self.commit_tracked(txn).await.map(|_| r),
                 Err(e) => {
                     txn.rollback(&self.cluster);
@@ -1409,7 +1759,10 @@ impl Session {
                 }
             };
             match res {
-                Ok((n, id)) => return Ok(self.dml_output(n, id)),
+                Ok((n, id)) => {
+                    self.note_dml_warnings(warnings);
+                    return Ok(self.dml_output(n, id));
+                }
                 Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
@@ -1429,6 +1782,31 @@ impl Session {
             affected,
             last_insert_id: insert_id.unwrap_or(0),
             info: String::new(),
+        }
+    }
+
+    fn clear_warnings(&mut self) {
+        self.warnings.clear();
+        self.omitted_warnings = 0;
+        let retained = self.retained.used() - self.warning_bytes;
+        self.retained.resize(retained).expect("shrinking diagnostic ownership");
+        self.warning_bytes = 0;
+    }
+
+    fn note_dml_warnings(&mut self, warnings: DmlWarnings) {
+        self.warning_bytes += warnings.retained.used();
+        self.retained.absorb(warnings.retained);
+        self.omitted_warnings += warnings.total - warnings.messages.len();
+        for warning in warnings.messages {
+            self.note_warning(warning);
+        }
+    }
+
+    fn note_warning(&mut self, warning: Warning) {
+        if self.warnings.len() < admin::MAX_ERROR_COUNT {
+            self.warnings.push(warning);
+        } else {
+            self.omitted_warnings += 1;
         }
     }
 
@@ -1589,20 +1967,15 @@ impl Session {
             // Lazy sources require Lua capture. Avoid a predictable extra
             // native call; the shard also enforces capture exclusions for
             // stale gateways that do not yet know this metadata.
-            let result = if matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy() {
-                self.cluster
-                    .call_native_or_lua_once(
-                        shard,
-                        "tarn_storage.ts_autocommit",
-                        "tarn_autocommit",
-                        &writes.0,
-                        MARK_NO_NATIVE_WRITE,
-                    )
-                    .await
-            } else {
-                self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await
-            };
-            let d = match result {
+            let result = crate::budget::autocommit(
+                &self.cluster,
+                shard,
+                matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy(),
+                &writes.0,
+                self.lock_wait_timeout,
+            )
+            .await;
+            let (d, _wire) = match result {
                 Ok(d) => d,
                 Err(e) => {
                     if table.has_lazy() {
@@ -1624,17 +1997,8 @@ impl Session {
                     return Err(e);
                 }
             }
-            match lua_status(&d) {
-                Ok(_) => {
-                    let n = match autocommit_ack(&d, self.cluster.shards[shard].id) {
-                        Ok(n) => n,
-                        Err(e) => {
-                            if table.has_lazy() {
-                                self.lazy_history.uncertain();
-                            }
-                            return Err(e);
-                        }
-                    };
+            match autocommit_ack(&d, self.cluster.shards[shard].id) {
+                Ok(n) => {
                     if table.has_lazy() {
                         self.lazy_history.touch(wb.iter().copied());
                     }
@@ -2008,7 +2372,7 @@ impl Session {
             )
             .await?;
             txn.mark_begun(shard);
-            txn.note_point(shard, g.table.space_id, 0, key, bucket);
+            txn.note_point(shard, g.table.space_id, 0, key, bucket)?;
             rows.into_iter().next()
         };
         let Some(entry) = entry else { return Ok(None) };
@@ -2055,7 +2419,7 @@ impl Session {
         )
         .await?;
         txn.mark_begun(shard);
-        txn.note_point(shard, t.space_id, 0, pk.to_vec(), bucket);
+        txn.note_point(shard, t.space_id, 0, pk.to_vec(), bucket)?;
         Ok(rows.into_iter().next())
     }
 
@@ -2066,6 +2430,7 @@ impl Session {
         params: &[Value],
         now: &str,
         pre: Option<&(Vec<Row>, Option<u64>)>,
+        warnings: &mut DmlWarnings,
     ) -> SqlResult<(u64, Option<u64>)> {
         let cx = self.cx(params, now);
         match stmt {
@@ -2175,7 +2540,24 @@ impl Session {
                             self.stage(txn, w, pk_row.as_ref()).await?;
                             affected += 1 + deleted + pk_row.is_some() as u64;
                         }
-                        Some(_) if p.ignore => {}
+                        Some(_) if p.ignore => {
+                            let idx = if pk_row.is_some() {
+                                t.pk()
+                            } else {
+                                &t.indexes[uniq[0].0]
+                            };
+                            let bytes = idx
+                                .cols
+                                .iter()
+                                .fold(256 + idx.name.len() as u64, |n, &c| {
+                                    n.saturating_add(crate::budget::value_bytes(&row[c]))
+                                })
+                                .saturating_mul(8);
+                            warnings.duplicate(bytes, || {
+                                let shown: Vec<String> = idx.cols.iter().map(|&c| row[c].to_string()).collect();
+                                SqlError::dup_key(&shown.join("-"), &idx.name)
+                            })?;
+                        }
                         Some(_) => {
                             return Err(match (&pk_row, uniq.first()) {
                                 (Some(_), _) | (None, None) => {
@@ -2398,7 +2780,7 @@ impl Session {
             for (((l, _), r), b) in pending.into_iter().zip(results).zip(buckets) {
                 let (r, _) = r?;
                 txn.mark_begun(l.2);
-                txn.note_point(l.2, t.space_id, l.3, l.4.clone(), b);
+                txn.note_point(l.2, t.space_id, l.3, l.4.clone(), b)?;
                 place(&mut out, l.0, l.1, r.into_iter().next());
             }
         }
@@ -2487,7 +2869,7 @@ impl Session {
                 )
                 .await?;
                 txn.mark_begun(shard);
-                txn.note_point(shard, t.space_id, id, key, bucket);
+                txn.note_point(shard, t.space_id, id, key, bucket)?;
                 stored.push(rows.into_iter().next());
             }
         }
@@ -2768,11 +3150,13 @@ impl Session {
     }
 
     fn note_tree(&mut self, found: Vec<lint::Finding>) {
-        self.warnings.extend(found.iter().map(|f| Warning {
-            level: f.level.name(),
-            code: lint::CODE,
-            message: tree_message(f),
-        }));
+        for f in &found {
+            self.note_warning(Warning {
+                level: f.level.name(),
+                code: lint::CODE,
+                message: tree_message(f),
+            });
+        }
     }
 
     // ---- session statements --------------------------------------------------
@@ -2784,7 +3168,13 @@ impl Session {
             self.cluster.refresh_if_newer().await?;
         }
         let catalog = self.cluster.catalog();
-        let rows_out = |columns: Arc<[Column]>, rows: Vec<Vec<Value>>| Ok(Output::Rows { columns, rows });
+        let rows_out = |columns: Arc<[Column]>, rows: Vec<Vec<Value>>| {
+            Ok(Output::Rows {
+                columns,
+                rows,
+                resource_guard: None,
+            })
+        };
         match a {
             Admin::Begin { .. } => {
                 self.implicit_commit().await?;
@@ -2848,6 +3238,8 @@ impl Session {
                 if let Some(t) = self.txn.as_mut() {
                     // A savepoint of the same name is replaced.
                     t.savepoints.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
+                    t.snapshot_charge()?;
+                    t.savepoint_name_charge(name.len())?;
                     t.savepoints.push((name, t.writes.clone()));
                 }
                 Ok(Output::ok(0))
@@ -2862,6 +3254,7 @@ impl Session {
                     .ok_or_else(missing)?;
                 // Undo the writes since the savepoint; keep the row locks and
                 // the read set (as InnoDB keeps the locks).
+                t.snapshot_charge()?;
                 t.writes = t.savepoints[i].1.clone();
                 t.savepoints.truncate(i + 1);
                 Ok(Output::ok(0))
@@ -2880,6 +3273,7 @@ impl Session {
             Admin::Prepare { name, source } => {
                 // A failed PREPARE leaves no statement of that name, as in MySQL.
                 self.sql_prepared.remove(&name);
+                let _ = self.retained.resize(self.retained_size());
                 let text = match source {
                     admin::PrepareSource::Text(s) => s,
                     admin::PrepareSource::Var(v) => match self.user_vars.get(&v) {
@@ -2906,6 +3300,8 @@ impl Session {
                     return Err(SqlError::parse("You have an error in your SQL syntax: empty statement"));
                 }
                 let n = crate::prep::count_markers(&text);
+                let additional = 4096 + (name.len() as u64 + text.len() as u64).saturating_mul(128);
+                self.retained.charge(additional)?;
                 self.sql_prepared.insert(name, (text, n));
                 Ok(Output::Ok {
                     affected: 0,
@@ -2943,6 +3339,73 @@ impl Session {
                 )),
             },
             Admin::Noop => Ok(Output::ok(0)),
+            Admin::Analyze(sql) => {
+                // As in MariaDB, ANALYZE is an implicit-commit statement.
+                self.cluster.refresh_if_newer().await?;
+                let catalog = self.cluster.catalog();
+                let ctx = PlanCtx {
+                    statistics: None,
+                    catalog: &catalog,
+                    db: self.db.as_deref(),
+                    params: &[],
+                    conn_coll: &self.collation_connection,
+                    default_coll: &self.cluster.cfg.default_collation,
+                };
+                let t = planner::analyze_target(&sql, &ctx)?;
+                self.implicit_commit().await?;
+                let _collector = self.cluster.statistics.collecting.try_lock().map_err(|_| {
+                    SqlError::new(1205, "HY000", "ANALYZE collector is already running on this gateway")
+                })?;
+                let stats = crate::statistics::collect(&self.cluster, &t).await?;
+                self.cluster.refresh_if_newer().await?;
+                if self.cluster.catalog().version != catalog.version {
+                    return Err(SqlError::new(
+                        1412,
+                        "HY000",
+                        "Table definition changed during ANALYZE; retry",
+                    ));
+                }
+                self.cluster.statistics.publish(catalog.version, vec![stats]);
+                rows_out(
+                    analyze_columns(),
+                    vec![vec![
+                        Value::str(&format!("{}.{}", t.db, t.name)),
+                        Value::str("analyze"),
+                        Value::str("status"),
+                        Value::str("OK"),
+                    ]],
+                )
+            }
+            Admin::ShowTarnStatistics => {
+                let snapshot = self.cluster.statistics.snapshot(catalog.version);
+                let mut tables: Vec<_> = snapshot.tables.values().collect();
+                tables.sort_by_key(|t| t.space);
+                let mut rows = Vec::new();
+                for s in tables {
+                    let t = catalog.all().find(|t| t.space_id == s.space);
+                    let Some(t) = t else { continue };
+                    for p in s.prefixes.iter().map(Some).chain(s.prefixes.is_empty().then_some(None)) {
+                        let index = t
+                            .indexes
+                            .iter()
+                            .find(|i| p.is_some_and(|p| i.id == p.index))
+                            .map(|i| i.name.as_str())
+                            .unwrap_or("");
+                        rows.push(vec![
+                            Value::str(&format!("{}.{}", t.db, t.name)),
+                            if p.is_some() { Value::str(index) } else { Value::Null },
+                            Value::UInt(p.map_or(0, |p| p.parts as u64)),
+                            Value::Float(s.rows),
+                            Value::UInt(s.sampled as u64),
+                            p.map_or(Value::Null, |p| Value::UInt(p.observed_distinct as u64)),
+                            p.map_or(Value::Null, |p| Value::Float(p.distinct)),
+                            Value::UInt(s.collected.elapsed().as_millis().min(u64::MAX as u128) as u64),
+                            Value::UInt(snapshot.generation),
+                        ]);
+                    }
+                }
+                rows_out(statistics_columns(), rows)
+            }
             Admin::LockTables => {
                 self.implicit_commit().await?;
                 Ok(Output::ok(0))
@@ -2955,7 +3418,13 @@ impl Session {
                 let mut columns = Vec::new();
                 let mut row = Vec::new();
                 for (alias, var) in &vars {
-                    let v = admin::system_var(var, &self.session_vars()).unwrap_or(Value::Null);
+                    let v = admin::system_var(var, &self.session_vars()).ok_or_else(|| {
+                        SqlError::new(
+                            1193,
+                            "HY000",
+                            format!("Unknown system variable '{}'", admin::sysvar_name(var)),
+                        )
+                    })?;
                     let ty = match &v {
                         Value::Int(_) | Value::UInt(_) => ColumnType::LongLong,
                         _ => ColumnType::VarString,
@@ -2963,6 +3432,9 @@ impl Session {
                     columns.push(Column::new(alias, ty));
                     row.push(v);
                 }
+                // SELECT @@warning_count reads the previous total, then
+                // clears the message list. SHOW WARNINGS preserves it.
+                self.clear_warnings();
                 rows_out(columns.into(), vec![row])
             }
             Admin::ShowDatabases { like } => {
@@ -2980,6 +3452,40 @@ impl Session {
                     }
                 }
                 rows_out(cols(&[(&name, ColumnType::VarString)]), rows)
+            }
+            Admin::ShowTarnIntegrity { db } => {
+                let db = self.resolve_db(db)?;
+                let rows = catalog
+                    .tables_in(&db)
+                    .iter()
+                    .map(|t| {
+                        vec![
+                            Value::str(&t.name),
+                            Value::str(if t.current_integrity_policy() {
+                                "REJECT_UNSUPPORTED_V1"
+                            } else {
+                                "LEGACY_UNENFORCED"
+                            }),
+                            Value::UInt(t.foreign_keys.len() as u64),
+                            Value::str(if t.current_integrity_policy() {
+                                "SUPPORTED_DECLARATIONS_ONLY"
+                            } else {
+                                "UNKNOWN_CHECK_ENUM_SET"
+                            }),
+                            Value::str("NOT_CERTIFIED"),
+                        ]
+                    })
+                    .collect();
+                rows_out(
+                    cols(&[
+                        ("Table", ColumnType::VarString),
+                        ("Declaration_policy", ColumnType::VarString),
+                        ("Legacy_foreign_keys", ColumnType::LongLong),
+                        ("Historical_declarations", ColumnType::VarString),
+                        ("Data_validation", ColumnType::VarString),
+                    ]),
+                    rows,
+                )
             }
             Admin::ShowTables { db, full, like } => {
                 let db = self.resolve_db(db)?;
@@ -3091,11 +3597,16 @@ impl Session {
                     .collect();
                 rows_out(cols(&c), rows)
             }
-            Admin::ShowVariables { like } => {
+            Admin::ShowVariables { global, like } => {
                 let mut rows = Vec::new();
                 for name in admin::SHOWN_VARIABLES {
-                    if like_ci(name, &like) {
-                        let v = admin::system_var(name, &self.session_vars()).unwrap_or(Value::Null);
+                    if like_ci(name, &like) && !(global && name.starts_with("tarn_")) {
+                        let scoped = if global {
+                            format!("global.{name}")
+                        } else {
+                            name.to_string()
+                        };
+                        let v = admin::system_var(&scoped, &self.session_vars()).unwrap_or(Value::Null);
                         rows.push(vec![Value::str(name), Value::Str(v.to_text().unwrap_or_default())]);
                     }
                 }
@@ -3132,6 +3643,7 @@ impl Session {
                     "Distributed_commits",
                     "Commit_errors",
                     "Total_us",
+                    "Storage_rows",
                 ] {
                     columns.push(Column::new(name, ColumnType::LongLong));
                 }
@@ -3540,6 +4052,11 @@ impl Session {
             ("Tarn_cross_shard_deadlocks", s.deadlocks.load(Ordering::Relaxed)),
             ("Tarn_deadlock_detector_calls", s.deadlock_calls.load(Ordering::Relaxed)),
             ("Tarn_storage_counts", s.storage_counts.load(Ordering::Relaxed)),
+            ("Tarn_storage_reductions", s.storage_reductions.load(Ordering::Relaxed)),
+            (
+                "Tarn_storage_projections",
+                s.storage_projections.load(Ordering::Relaxed),
+            ),
             ("Tarn_rows_read", s.rows_read.load(Ordering::Relaxed)),
             ("Tarn_storage_reads", s.storage_reads.load(Ordering::Relaxed)),
             ("Tarn_path_estimates", s.path_estimates.load(Ordering::Relaxed)),
@@ -3559,6 +4076,17 @@ impl Session {
             ),
             ("Tarn_lazy_session_strong_fallback", self.lazy_history.strong as u64),
         ];
+        let resources = self.cluster.resources.stats();
+        stats.extend([
+            ("Tarn_resource_bytes", resources[0]),
+            ("Tarn_resource_peak_bytes", resources[1]),
+            ("Tarn_resource_work", resources[2]),
+            ("Tarn_resource_peak_work", resources[3]),
+            ("Tarn_resource_queries", resources[4]),
+            ("Tarn_resource_refusals", resources[5]),
+            ("Tarn_resource_read_deadlines", resources[6]),
+            ("Tarn_topk_scans", self.cluster.stats.topk_scans.load(Ordering::Relaxed)),
+        ]);
         stats.extend(s.query_digests.counters());
         stats.extend(crate::rpcs::counters(&self.cluster));
         stats.retain(|(n, _)| like_ci(n, like));
@@ -3579,6 +4107,7 @@ impl Session {
                 .map(|(n, v)| vec![Value::str(&n), Value::str(&v)]),
         );
         Output::Rows {
+            resource_guard: None,
             columns: cols(&[
                 ("Variable_name", ColumnType::VarString),
                 ("Value", ColumnType::VarString),
@@ -3837,6 +4366,9 @@ fn show_create(t: &TableDef) -> String {
     if !t.comment.is_empty() {
         s.push_str(&format!(" COMMENT='{}'", sql_str(&t.comment)));
     }
+    if !t.current_integrity_policy() {
+        s.push_str(crate::integrity::LEGACY_NOTICE);
+    }
     if t.shard_key.iter().all(|&c| !t.columns[c].hidden) {
         s.push_str(&format!("\n/*!50100 PARTITION BY KEY ({}) */", sk.join(",")));
     }
@@ -3856,31 +4388,67 @@ mod tests {
     use super::*;
 
     #[test]
+    fn duplicate_diagnostics_admit_before_formatting_and_keep_retained_ownership() {
+        let pool = crate::budget::Pool::new(crate::budget::Limits {
+            query_bytes: 1000,
+            server_bytes: 2000,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut session = pool.account(1000);
+        session.charge(600).unwrap();
+        let query = pool.query();
+        let mut warnings = DmlWarnings::new(&pool, 400);
+        crate::budget::scope_sync(query.clone(), || {
+            warnings.duplicate(300, || SqlError::dup_key("x", "PRIMARY")).unwrap();
+            assert!(crate::budget::is_exhausted(
+                &warnings
+                    .duplicate(101, || {
+                        panic!("refused diagnostics must not format or reach commit")
+                    })
+                    .unwrap_err()
+            ));
+        });
+        assert_eq!((warnings.total, warnings.messages.len()), (1, 1));
+        // Completing a query releases temporary bytes, while its retained
+        // diagnostic owner survives. Publication performs no admission.
+        drop(query);
+        assert_eq!(pool.stats()[0], 900);
+        session.absorb(warnings.retained);
+        assert_eq!((session.used(), pool.stats()[0]), (900, 900));
+        assert!(session.charge(101).is_err());
+        session.resize(600).unwrap();
+        assert_eq!(pool.stats()[0], 600);
+        drop(session);
+        assert_eq!(pool.stats()[0], 0);
+    }
+
+    #[test]
     fn autocommit_ack_requires_exact_count_and_terminal_envelope() {
         let mut ok = Mp::new();
         ok.arr(1).arr(2).str("ok").uint(2);
-        assert_eq!(autocommit_count(&ok.0).unwrap(), 2);
+        assert_eq!(autocommit_ack(&ok.0, 1).unwrap(), 2);
         for value in [Value::Null, Value::Float(2.0), Value::str("2"), Value::Int(-1)] {
             let mut bad = Mp::new();
             bad.arr(1).arr(2).str("ok").val(&value);
-            assert!(autocommit_count(&bad.0).is_err());
+            assert!(autocommit_ack(&bad.0, 1).is_err());
         }
         let mut row = Mp::new();
         row.arr(1).arr(3).str("ok").uint(1).arr(2).uint(1).str("雪");
-        assert_eq!(autocommit_count(&row.0).unwrap(), 1);
+        assert_eq!(autocommit_ack(&row.0, 1).unwrap(), 1);
         let mut none = Mp::new();
         none.arr(1).arr(3).str("ok").uint(0).nil();
-        assert_eq!(autocommit_count(&none.0).unwrap(), 0);
+        assert_eq!(autocommit_ack(&none.0, 1).unwrap(), 0);
         for fields in [1, 3, 4] {
             let mut bad = Mp::new();
             bad.arr(1).arr(fields).str("ok");
             if fields >= 3 {
                 bad.uint(2).str("unexpected metadata");
             }
-            assert!(autocommit_count(&bad.0).is_err());
+            assert!(autocommit_ack(&bad.0, 1).is_err());
         }
         ok.nil();
-        assert!(autocommit_count(&ok.0).is_err());
+        assert!(autocommit_ack(&ok.0, 1).is_err());
         let ambiguous = autocommit_ack(&ok.0, 7).unwrap_err();
         assert_eq!(ambiguous.code, 1180);
         assert_eq!(&ambiguous.sqlstate, b"40003");
@@ -3934,6 +4502,7 @@ mod tests {
     fn show_create_control_strings_round_trip() {
         let cat = crate::catalog::Catalog::new(1, vec!["db".into()], vec![]);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("db"),
             params: &[],
@@ -3971,5 +4540,28 @@ mod tests {
             .iter()
             .all(|ix| ix.comment.as_bytes() == value.as_bytes()));
         assert_eq!(show_create(&reloaded).as_bytes(), ddl.as_bytes());
+    }
+
+    #[test]
+    fn schema_output_exposes_legacy_integrity_without_certifying_rows() {
+        let cat = crate::catalog::Catalog::new(1, vec!["db".into()], vec![]);
+        let ctx = PlanCtx {
+            statistics: None,
+            catalog: &cat,
+            db: Some("db"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = planner::plan("CREATE TABLE t(id INT PRIMARY KEY)", &ctx).unwrap()
+        else {
+            panic!()
+        };
+        assert!(!show_create(&def).contains("LEGACY_UNENFORCED"));
+        def.integrity_policy = 0;
+        assert!(show_create(&def).contains("LEGACY_UNENFORCED"));
+        // Unknown future provenance cannot become a current certificate.
+        def.integrity_policy = 2;
+        assert!(show_create(&def).contains("LEGACY_UNENFORCED"));
     }
 }

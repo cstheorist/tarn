@@ -1,0 +1,51 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling libc v0.2.191
+   Compiling syn v3.0.9
+   Compiling syn v2.0.119
+   Compiling generic-array v0.14.7
+   Compiling thiserror v2.0.21
+   Compiling parking_lot_core v0.9.12
+   Compiling thiserror-impl v2.0.21
+   Compiling verus_syn v0.0.0-2026-09-06-0133
+   Compiling verus_prettyplease v0.0.0-2026-09-06-0133
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling tracing-attributes v0.1.31
+   Compiling errno v0.3.14
+   Compiling signal-hook-registry v1.4.8
+   Compiling tracing v0.1.44
+   Compiling digest v0.10.7
+   Compiling parking_lot v0.12.5
+   Compiling synstructure v0.13.2
+   Compiling tokio-macros v2.7.2
+   Compiling mio v1.2.4
+   Compiling socket2 v0.6.5
+   Compiling cpufeatures v0.2.17
+   Compiling verus_builtin_macros v0.0.0-2026-09-20-0158
+   Compiling object v0.39.1
+   Compiling sha1 v0.10.7
+   Compiling tokio v1.54.1
+   Compiling verus_state_machines_macros v0.0.0-2026-09-06-0133
+   Compiling tarn-common v0.1.0 (/work/crates/tarn-common)
+   Compiling vstd v0.0.0-2026-10-04-0306
+   Compiling serde_derive v1.0.229
+   Compiling serde v1.0.229
+   Compiling ar_archive_writer v0.5.3
+   Compiling psm v0.1.32
+   Compiling tarn-verified v0.1.0 (/work/crates/tarn-verified)
+   Compiling tarn-iproto v0.1.0 (/work/crates/tarn-iproto)
+   Compiling futures-macro v0.3.34
+   Compiling futures-util v0.3.34
+   Compiling stacker v0.1.25
+   Compiling recursive-proc-macro-impl v0.1.1
+   Compiling serde_json v1.0.154
+   Compiling recursive v0.1.1
+   Compiling futures-executor v0.3.34
+   Compiling getrandom v0.2.17
+   Compiling sqlparser_derive v0.6.0
+   Compiling sqlparser v0.63.0
+error: could not compile `sqlparser` (lib)
+
+Caused by:
+  process didn't exit successfully: `/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/rustc --crate-name sqlparser --edition=2021 /out/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlparser-0.63.0/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C opt-level=3 -C linker-plugin-lto -C codegen-units=4 -C debuginfo=1 --forbid=unsafe_code --cfg 'feature="default"' --cfg 'feature="recursive"' --cfg 'feature="recursive-protection"' --cfg 'feature="sqlparser_derive"' --cfg 'feature="std"' --cfg 'feature="visitor"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("bigdecimal", "default", "derive-dialect", "json_example", "recursive", "recursive-protection", "serde", "serde_json", "sqlparser_derive", "std", "visitor"))' -C metadata=d2587faaa49251d1 -C extra-filename=-9a9e802f6f1613f1 --out-dir /out/target/release/deps -L dependency=/out/target/release/deps --extern log=/out/target/release/deps/liblog-270d946a7e302133.rmeta --extern recursive=/out/target/release/deps/librecursive-4480c52d6d05aeb6.rmeta --extern sqlparser_derive=/out/target/release/deps/libsqlparser_derive-55e69549fe32b018.so --cap-lints allow -L native=/out/target/release/build/psm-a8f678198dbc0532/out` (signal: 9, SIGKILL: kill)

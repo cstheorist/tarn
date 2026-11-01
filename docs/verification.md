@@ -12,7 +12,30 @@ kind of mistake:
 What each layer found, and how the findings were fixed, is described in the
 [design document](design.md#23-what-tlc-found) (§2.3, §2.4, §2.5, §2.8 and §2.9).
 
+## Resource ownership
+
+`QueryBudget.tla` checks two concurrent queries sharing an admission cap,
+wire ownership after caller cancellation, result ownership through output
+flush, validation before successful output, and refusal only before a DML
+commit decision. Three negative controls remove wire ownership, release
+results before delivery, or refuse after decision; each violates its
+corresponding invariant. `TarnCommit`'s execution/commit boundary is unchanged.
+
+The Rust resource meter and heap implementation are ordinary tested Rust,
+not Verus-proved allocation bounds. The model abstracts allocation units and
+RPC completion; it does not prove the concrete multipliers, Tokio scheduling,
+allocator RSS, or socket/kernel behavior. The live and differential controls
+and measured boundaries are recorded in [SQL resource limits](resources.md).
+
 ## TLA+ model
+
+The [rolling-upgrade contract](upgrades.md) admits connections before the
+existing protocol actions. Its runtime/disk-format checks and exact-version
+compatibility matrix are tested by `tests/rolling_upgrade.sh`, including
+durable prepared state, real leader handoffs, DDL, moves, lazy delivery and
+rollback under RF3/fsync with memtx and vinyl. These checks do not change
+the modeled commit actions or prove compatibility with arbitrary historical
+or future code. Native fallback retains the handback contract below.
 
 `tla/TarnCommit.tla` specifies the protocol: shards, keys with owners, three
 transactions with fixed read and write sets, direct (non-SQL) readers, and
@@ -429,8 +452,8 @@ index shortcut.
   and ADD assignments at the same version. Authoritative retirement permits
   obsolete ACKs; a missing/not-ready destination does not.
 * `LazyHandoff.tla`: one base bucket moves from S to R, including when
-  empty. S fences/drains and ACK-flushes before counter/live-version copy
-  and transfer. The variable `oldSourceRemoved` removes **S**, not R:
+  empty. S fences/drains and ACK-flushes before the counter copy and
+  transfer (no per-row version travels with it since issue #177). The variable `oldSourceRemoved` removes **S**, not R:
   `pending2` belongs to S; a subsequent `pending3` belongs to R and remains
   deliverable after S is removed. Removing a current receiver requires
   another instance of the same source-drain protocol. Independently, one
@@ -458,12 +481,14 @@ index shortcut.
 The source completion prefix is `counter` when its pending outbox is empty,
 otherwise `min(pending sequence) - 1`, sampled together in one native
 read-confirmed view. All assignments at a sequence remain pending until
-ACKed. Sequence-zero baseline work can therefore report a signed completed
-prefix of -1; counters stay unsigned. Creating another index incarnation
-can enqueue baseline sequence zero even when the shared source counter is
-already positive, so this global completion frontier is not monotonic
-across bootstrap. It may conservatively delay another ready index's barrier;
-per-incarnation target floors remain independently scoped. Tarantool distinguishes visibility at
+ACKed. Sequence-zero baseline work (an empty bucket's) can therefore
+report a signed completed prefix of -1; counters stay unsigned. Creating
+another index incarnation enqueues baseline work at the bucket's counter
+(issue #177; before it, at the row's last sequence or zero), so this
+global completion frontier dips by one while the baseline is pending: it
+is not monotonic across bootstrap. It may conservatively delay another
+ready index's barrier; per-incarnation target floors remain independently
+scoped. Tarantool distinguishes visibility at
 commit start from visibility after commit returns; source shipping and
 frontier reads require the latter ([transaction model](https://www.tarantool.io/en/doc/latest/platform/atomic/transaction_model/)).
 
@@ -482,7 +507,7 @@ arbitrary floor records may be interchanged.
 
 The invariants cover committed-only delivery, exact index projection once
 writes stop and the outbox is ACK-drained, deleted-row/key rechecks, durable
-source obligations, counter/live-version continuity, capacity promises and
+source obligations, counter continuity, capacity promises and
 causal session catch-up. The recheck fixture uses row existence and exact
 current candidate-key equality. Actual full `WHERE` evaluation, canonical
 key/type/collation encoding, PK deduplication and refill after rejecting a
@@ -491,9 +516,10 @@ coverage of the session's committed index effects, not a global snapshot
 or completeness for concurrent other writers.
 
 Refinement premises remain explicit: bootstrap enumerates the complete
-baseline, reads each row and its version in one consistent view, ACKs every
-baseline assignment before READY, and refuses late bootstrap enqueue after
-READY. These enumeration/snapshot/late-request guards are not separately
+baseline, reads each row and its bucket's counter in one consistent view
+(`LazyBaseline.tla`, below, checks the sequence that gives the baseline),
+ACKs every baseline assignment before READY, and refuses late bootstrap
+enqueue after READY. These enumeration/snapshot/late-request guards are not separately
 mutated here; native witnesses must exercise them. Existing fence/drain
 contracts (including the backfill models above) protect the bootstrap write
 window. New/forward-schema writes wait until this shard's durable matching
@@ -507,12 +533,13 @@ Process/network failure may lose transient frames/receipts; durable
 row/outbox/markers/floors survive. The finite checks prove safety and
 conditional drained convergence, not that a partitioned queue will drain.
 
-All 37 focused configurations are generated by `gen_cfgs.sh`, selected by
+All 36 focused configurations are generated by `gen_cfgs.sh`, selected by
 `run_all.sh` module routing and included in the default `check.sh` list:
-5 positive cases and 32 expected counterexamples. Explicit configuration
-arguments still override the default list. The default list grows from
-71 to 108 before the capacity-meter refinements below; previous
-configurations and the core commit module are unchanged.
+5 positive cases and 31 expected counterexamples. Explicit configuration
+arguments still override the default list. When they were added, the
+default list grew from 71 to 108; issue #177 removed the row-version
+control (`Bug_LazyHandoffDropLiveVersion`) with the per-row ledger. The
+core commit module is unchanged.
 To run just these refinements:
 
 ```sh
@@ -543,7 +570,6 @@ tla/check.sh "${configs[@]}"
 | `Bug_LazyCapacityNoEntryReserve` | 6 | 3 | violates `EntryPromisesFit` |
 | `Bug_LazyCapacityNoSeqReserve` | 6 | 3 | violates `SequencePromisesFit` |
 | `Bug_LazyHandoffDropFloors` | 56 | 7 | violates `DrainedProjection` |
-| `Bug_LazyHandoffDropLiveVersion` | 9 | 4 | violates `LiveVersionSurvives` |
 | `Bug_LazyHandoffDropMarkers` | 18 | 5 | violates `DrainedProjection` |
 | `Bug_LazyHandoffNoTargetDrain` | 136 | 11 | violates `DrainedProjection` |
 | `Bug_LazyHandoffNoTargetFence` | 136 | 11 | violates `DrainedProjection` |
@@ -563,6 +589,49 @@ tla/check.sh "${configs[@]}"
 | `Bug_LazyIndexShipBeforeCommit` | 560 | 12 | violates `CommittedOnly` |
 | `Bug_LazyIndexSplitOutbox` | 44 | 9 | violates `DrainedConverges` |
 | `Bug_LazyIndexStaleOverwrite` | 249,637 | 21 | violates `DrainedConverges` |
+
+### Baseline sequences (issue #177)
+
+Storage nodes keep no per-row version for lazy indexes. A bootstrap gives
+each row's baseline assignment its bucket's counter, read in the same
+confirmed view as the row; releases before #177 gave it the row's last
+sequence from a per-row ledger, or 0. `LazyBaseline.tla` checks that any
+sequence up to the counter is correct. One row of one source bucket, with
+index key A, B or none, changes:
+- before a new incarnation is bootstrapped (not captured for it);
+- after it is ready (captured: an old-key delete and a new-key put, both
+  at the write's sequence).
+
+Delivery ships, loses, duplicates and reorders frames. Each key's target
+bucket applies a frame above both its floor and its marker, refuses a late
+baseline, and acknowledges the rest as obsolete. Floors install the
+bucket's completed prefix once the incarnation is ready, and collect the
+tombstones at or below them. Bootstrap reads the row and the counter in
+one step, the write fence's premise, and may give the baseline any
+sequence from 0 to the counter.
+
+`DrainedConverges`: once the outbox is drained, the markers are the row's
+current key, however frames were reordered or duplicated, and also after
+collection. `BugBaselineAboveCounter` gives the baseline the counter plus
+one: the delete of a later write at that sequence no longer supersedes it,
+and the deleted row stays in the index.
+
+The incarnation can also be retired (DROP or a rotation): its target is
+dropped, every later frame is acknowledged from the retirement alone, and
+its floors are deleted (`L.clear_retired`). `BugClearLiveFloors` deletes
+the floors of a ready incarnation too: a duplicate of a frame whose
+tombstone was collected under a floor is applied again, and the row's old
+key comes back.
+
+```sh
+tla/check.sh LazyBaseline Bug_LazyBaselineAboveCounter Bug_LazyBaselineClearLiveFloors
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LazyBaseline` | 323,760 | 25 | passes |
+| `Bug_LazyBaselineAboveCounter` | 762 | 8 | violates `DrainedConverges` |
+| `Bug_LazyBaselineClearLiveFloors` | 87,841 | 14 | violates `DrainedConverges` |
 
 ### Conservative capacity meter
 
@@ -1178,7 +1247,7 @@ Implementation refinement obligations remain explicit:
   premise; the models do not prove Rust dispatch/error-code matching.
 * Fresh global/lazy target identities must be complete and READY before
   publication. Existing global-fill/lazy bootstrap proofs are reused,
-  not reimplemented here. Preserve source bucket counters, row-version and
+  not reimplemented here. Preserve source bucket counters and
   reservation/outbox obligations or explicitly rotate/retire them without
   losing a pending obligation. READY and retirement are durable facts,
   not an inference from a missing old space. The logical auto/row-ID
@@ -1361,6 +1430,36 @@ tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
 ```
 
 ### Strong-read freshness, stream provenance and locking replies (issue #130)
+
+`native_freshness.sh` runs two explicit callback schedules (#170). Both
+hold the actual initial production `box.status` callback, retain the real
+RF3/fsync quorum barrier, pause only an owned replica, recycle large CALL
+ports, and check exact native argument/transaction ownership. The `native`
+schedule delivers that callback after the native witnesses. The `handback`
+schedule delivers it while the first stream barrier is pending: the real
+callback changes ready buckets to stale with the same PID, writable role
+and term, and the native read must return only `lua`, reclaiming its newly
+owned transaction/certificate. An explicit Lua read on the same IPROTO
+stream then checks exact committed values and the subsequent read-set
+conflict. Neither schedule refreshes caches while its native call is pending
+or replaces a production cache flag, barrier or guard. The original native
+read-set, final-prefix/no-op, ambient-transaction and failed-barrier
+no-Lua-retry checks run in both schedules.
+
+The old unconditional native-success assertion fails with this actual
+callback delivery and the same `served=2`, `to_lua=1`, `stale_buckets=1`
+counters retained in [the original failed job](https://github.com/cstheorist/tarn/actions/runs/40871992223/job/123441115757).
+That historical job exported neither its per-round event file nor its
+native binary hash, so the exact historical notification is unproven. The
+controlled counterexample establishes a sufficient legal invalidation,
+not retrospective identification of that event. A separate unchanged-main
+ordinary pass remains separate evidence. The original observer also read
+the watch key as its payload; the fixture now records both callback
+arguments. Current runs export actual production callback entry/exit,
+pre-pause/pending/post-yield snapshots, source/module/Tarantool hashes,
+version and owned process/cleanup records in CI artifacts and job logs.
+These are runtime controls outside the models below; no production
+behavior, ABI, verified body or protocol transition changes.
 
 `StrongReadFreshness.tla` refines the replica-freshness premise that the
 commit model's atomic failover does not express. Three replicas retain
@@ -1925,12 +2024,109 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
   Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix
 ```
 
+### External strong KV read envelopes (issue #181)
+
+`ExternalStrongKV.tla` checks the supported read-only API's composition
+with existing strong point reads. A request has three positions `<<a,b,a>>`,
+including an initial miss and a duplicate. Owner changes can restart a
+whole vector under the same frozen table handle, with a finite shared work
+budget. Definition/incarnation changes are terminal and discard the whole
+result. Each returned point observes its existing strong-read primitive;
+different positions may observe different committed revisions.
+
+The ownership control returns an actual false absence at a departed owner.
+The incarnation control decodes a new table's values under an old handle.
+Misclassifying a schema change as an ownership refresh returns a complete
+vector with mixed column definitions. The capacity control marks a clipped
+prefix complete. Omitting the prepared-claim check returns a currently
+missing row after an acknowledged insert. The atomicity control advertises
+a snapshot for an actual completed `<<1,2,2>>` vector even though the only
+committed images were `<<1,0,1>>` and `<<2,2,2>>`. That vector is legal under
+`independent_points`; the false guarantee is what the control detects.
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `ExternalStrongKV` | 103 | 11 | passes |
+| `Bug_KVOwnerFence` | 17 | 7 | violates `PointMeaning` |
+| `Bug_KVIncarnation` | 20 | 7 | violates `FrozenObjectData` |
+| `Bug_KVSchemaAsOwner` | 12 | 9 | violates `FrozenColumns` |
+| `Bug_KVClippedComplete` | 5 | 5 | violates `FullVector` |
+| `Bug_KVMissingClaim` | 33 | 9 | violates `PointMeaning` |
+| `Bug_KVFalseAtomic` | 20 | 7 | violates `AdvertisedSnapshot` |
+
+These are the registered two-worker results. A negative run stops at its
+first violation, so its explored state count is not a full graph size.
+Profiles bound the faults separately and retain the actual completed-data
+witnesses. The model does not duplicate the quorum algorithm: native
+freshness, confirmed MVCC, ACLs, no-ambient-transaction entry, codecs,
+role/clock checks and DDL/movement implementations remain compositional
+or runtime premises. [The public API contract](strong-kv.md) and paired
+runtime histories define those separate obligations. No Verus body changes.
+
+### Gateway resource ownership
+
+`GatewayResources.tla` models connecting, pooled and retiring sockets,
+two physical I/O owners, externally pinned handles, abandoned pending RPCs,
+normal/completion admission, and encoded response slices. It asserts that
+physical owners remain charged, eviction never closes a pinned/pending
+socket, normal discovery leaves the completion reserve, and a response is
+charged through its last slice. The passing finite instance explores 24,388
+distinct states to depth 24. Four controls fail their intended invariants:
+`Bug_GatewayEarlyRelease` / `SocketCharged`, `Bug_GatewayEvictPinned` /
+`EvictionSafe`, `Bug_GatewayReserve` / `CompletionReserve`, and
+`Bug_GatewayResponseRelease` / `ResponseOwned`.
+
+This is an abstract resource safety contract, not a refinement proof of
+Tokio/Bytes or a liveness guarantee. Buffers have unit size in the model;
+Rust tests exercise byte counts, partial frames, cancellation and physical
+retirement. SQL/decoded allocations remain outside this bound. The five
+cases add five configurations to the registry; their separate
+run does not certify an execution of the entire expanded suite.
+
+```sh
+tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
+  Bug_GatewayReserve Bug_GatewayResponseRelease
+```
+
+### Bounded bucket movement
+
+`BoundedMove.tla` separates physical copy/reclaim/install from serving
+ownership. Its three-key, one-row-batch instance permits concurrent pending
+writes, dirty-hint overflow/loss, a restart, disk refusal, cancellation and
+snapshots retained across publication. The positive configuration explores
+6,230 distinct states to depth 28. Eight controls expose their intended
+failures: omitted drain or lost deltas violate `AcknowledgedEffects`; early
+publication violates `CompletePublication`; exposed install/reclaim chunks
+or a stale partial snapshot violate `NoPartialReads`; oversized work violates
+`BoundedWork`; and a late page after cancel violates `CancelledResources`.
+
+`TarnCommit.tla` retains its predicate, prepared-transaction and RC lock
+interleavings through the new reclaim/install phases. The affected positive
+runs completed `Move_Scan` (1,746,444 states), `Move_RC` (1,531,251),
+`Move_ScanFailover` (1,012,888), `Join_Scan` (83,949), `Join_ScanFailover`
+(58,935), `Join3_Scan` (3,881,646) and `Join3_ScanPrepare` (2,150,603).
+The existing omitted-drain, omitted-hold and stale-serving controls still
+violate `StrictSerializable`. These focused runs do not certify all other
+registry configurations; CI runs the default registry separately.
+
+The models do not prove Tarantool, filesystem durability, actual byte/RSS
+accounting, format migration, or unbounded liveness. Live disk/memory/fault
+measurements and the maintenance migration drill supply separate evidence;
+see [the movement contract](bounded-moves.md). Shared executable Verus
+bodies are unchanged (140 verified, zero errors).
+
+```sh
+tla/check.sh BoundedMove Bug_BoundedMoveDrain Bug_BoundedMoveDelta \
+  Bug_BoundedMovePublish Bug_BoundedMoveVisibility Bug_BoundedMoveReclaim \
+  Bug_BoundedMoveBatch Bug_BoundedMoveLatePage Bug_BoundedMoveSnapshot
+```
+
 ### Configuration counts
 
-The default list contains 266 unique configurations: 70 positive
-outcomes and 196 expected broken/trade-off outcomes. The 273 generated
-configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 279 total. Explicit
+The default list contains 323 unique configurations: 80 positive
+outcomes and 243 expected broken/trade-off outcomes. The 326 generated
+configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
+placement and query-budget configurations are maintained directly, for 336 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1964,11 +2160,23 @@ then completed all 259 cases with 68 positive and 191 expected control
 outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
 The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
-forms that historical 263-case union, not execution of a new full 263-case CI
-run. The generator reproduces twice without changes. The current proof
-inventory is 330 files: 314 TLA+ model/config files, 11 verified-crate
-source/test/manifest files and five formal runner/inspection scripts.
-Verus bodies are unchanged.
+formed a 263-case union. The full list subsequently passed in
+[CI 40910653977](https://github.com/cstheorist/tarn/actions/runs/40910653977),
+alongside all four required jobs on the exact #191 source tree. File-backup
+and cluster-backup registrations add twelve configurations, and seven
+external-KV checks passed separately through the registered checker.
+Integration preserves both groups, their model/config bytes and dispatch.
+This is an input union; prior CI runs did not execute the integrated list.
+The current proof inventory is 365 files: 349 TLA+ model/config files,
+11 verified-crate source/test/manifest files and five formal runner/inspection
+scripts. The complete 293-case CI run remains a separate validation gate.
+Four query-budget configurations add one positive and three expected
+violations. Verus bodies are unchanged.
+The two malformed-handback controls and five gateway-resource configurations complete this union. The prior 277-case
+list passed in [CI 40945628982](https://github.com/cstheorist/tarn/actions/runs/40945628982);
+that result does not certify the added KV model or this combined source.
+The lazy read policy model (`LazyReadPolicy.tla`) adds one positive and two
+expected violations (`Bug_LazyPolicyIgnoreStrong`, `Bug_LazyPolicyForgetHistory`).
 
 ## Verus proofs
 
@@ -2223,6 +2431,83 @@ the scheduled RF1 witness establishes the refusal mechanism. A later
 successful run is separate evidence, not a retrospective fault diagnosis
 or a benchmark improvement.
 
+### Vinyl pressure phase scheduling and failed-witness readback (issue #174)
+
+`tests/sql/vinylpressure.py --real-pressure` keeps its total 20,000-attempt
+bound, eight writers by default, 8 KiB random payloads and the real native
+I/O, regulator and compaction checks. It reserves phase-local slots in
+proportion to the three-second warmup, requested limited-I/O window and
+three-second release window. Each writer owns interleaved slots spaced
+across the actual window. Missed slots expire; they are never transferred
+or sent in a catch-up burst. Workers park between slots and while the
+controller changes I/O. The limited window opens after the 0.5 MiB/s control
+receipt; the release window opens after restoring uncapped I/O. Every
+writer must dispatch work in each complete window. Timestamps observe
+client call entry and completion, rather than promising physical network
+arrival at a particular instant.
+
+The fixture freezes its attempt, native-sample and in-flight ledgers after
+bounded drain. Before checking the pressure witness, it reads back at most
+20,001 ordered IDs and saves exact missing acknowledged IDs, present refused
+IDs, unexpected IDs and any unresolved IDs. An uncertain result is never
+replayed or classified as settled merely because readback sees its key.
+Incomplete drain or readback is explicit; a live writer at the drain cut
+preserves the owned database for investigation. Stage, restore, drain,
+readback and assertion failures remain distinguishable. CI retains the
+manifest, events, summary and raw JSONL ledgers on success and failure.
+
+```sh
+python3 tests/sql/vinylpressure_phase_test.py
+```
+
+These offline controls use virtual monotonic time and the fixture's actual
+scheduler, controller, audit and finalizer. They offer more than the entire
+budget during warmup, check later phase activity and the total bound, and
+exercise slow calls, expired permits, I/O-control errors and failed-witness
+readback. A source-derived adapter for the former global-cap policy fails
+the early-exit oracle; it does not execute the entire historical fixture.
+The retained original CI failure identifies cap exhaustion, but did not
+retain per-attempt phase records or perform exact readback. Its phase of
+exhaustion and exact effects remain unobserved.
+
+This is a test-driver change. Production admission, commit, locking and
+recovery code, TLA+ inputs and Verus bodies are unchanged. These controls
+prove neither native-engine latency nor a comparative performance result;
+the complete release SQL and live-fault matrix remains required.
+
+## Typed range reads (issue #135)
+
+`TypedRead.tla` checks a local result refinement with two one-row pages,
+finite values, NULL/absence, and buffered replacements/deletes. Successful
+projection and COUNT/SUM/MIN/MAX folds must equal filtering the captured
+snapshot with the own-write overlay; their coverage includes rejected rows.
+An incomplete fold cannot publish success. The positive configuration visits
+99,328 distinct states. Five isolated negative controls violate ExactFold
+(stored-version overlay, early termination on an empty page), FullCoverage
+(recording only qualifying rows), CompleteOnly (publishing an incomplete
+fold), and ExactProjection (mixing snapshots).
+
+This is a bounded refinement under the existing MVCC snapshot, full-range
+lock/DDL checks, routing and commit-validation premises. It does not prove
+Lua/Rust parsing, integer arithmetic, decimal precision, collations, native
+storage, or liveness. `Local_ROValidate`, `Frac_ROValidate`,
+`LocalFailover_ROValidate`, `GroupedRead`, `GroupedDDL` and their relevant
+negative controls retain the read-contract checks. Protocol actions and
+verified executable bodies are unchanged.
+
+`lua/test/pushdown_test.lua` exercises the actual memtx/Vinyl procedures:
+signed/unsigned 64-bit and small-number promotion boundaries, NULLs, fills,
+excluded extrema, empty qualifying pages, stream invalidation, prepared
+locks on rejected rows, and a captured Vinyl reduction crossed by a
+prepared/applied write. The public SQL test `tests/sql/pushdowntest.py`
+compares exact MariaDB results, including aggregates above 2^53/64-bit
+sums, parameter changes, unsupported shapes, overlays at both isolation
+levels, absent procedures, incomplete/malformed partials, and OCC conflicts
+after a rejected row changes. Small multi-shard READ COMMITTED statements
+retain ordinary reads without new validation; their reduction counter must
+stay unchanged. The ordinary differential suite adds 30
+cases. Bucket tests reject both new procedures on the wrong owner.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request:
@@ -2250,6 +2535,21 @@ eviction, and an exact-result join whose aligned shard keys reduce observed
 fanout. Existing GroupedTables/GroupedRead positive and sensitivity models,
 storage protocols, SQL, transaction and live-fault suites remain required;
 these models do not prove observer accuracy or performance.
+
+### Advisory cardinality hints and join order (issue #136)
+
+Statistics are untrusted plan hints: samples are biased, sizes approximate,
+and there is no coherent SQL snapshot across their collection. Neither
+`ANALYZE` nor its data participates in transaction validation. Both eligible
+join orders use the existing checked SELECT/multi-key paths, recording the
+actual ranges and preserving buffered writes. No commit action, lock rule,
+recovery decision or verified body changes; the existing read-model contracts
+apply. The TLA+ models do not prove expression remapping or SQL join algebra.
+Unit tests check the conservative eligibility and metadata permutation;
+`tests/sql/statisticstest.py` checks exact results, stale/missing hints,
+binary cache generations, own writes, point/phantom OCC, altered tuple layout
+and coherent joins under cross-table writes. Differential tests compare
+ANALYZE status rows and joins with MariaDB 10.11.
 
 ### IPROTO admission and retirement (issue #127)
 
@@ -2282,3 +2582,100 @@ routing while ordinary capacity remains occupied. Native/Lua/vinyl modes,
 malformed/lost-reply faults and failover preserve the existing uncertainty
 and matched fencing behavior. Resource budgets do not certify whole-query
 memory bounds or benchmark speedups.
+
+### Physical file backup agent and seed identity (issue #56)
+
+`FileBackup.tla` checks the agent's publication and seed-mode contract with
+two abstract files: copier death/lease expiry, file reclamation, corruption,
+checked restore, registration, distinct seed identity and read-only follow
+before operator-authorized promotion. It checks complete-file publication,
+a valid publication lease, verified restored contents and identity separation.
+The four `Bug_FileBackup*` configurations deliberately publish partial data,
+skip hash checks, reuse the source identity or ignore an expired lease;
+each must violate its corresponding invariant.
+
+Tarantool's coherent backup file list/WAL recovery, actual filesystem
+`fsync`/rename behavior, SHA-256, fixed-width header format, administrative
+registration and the operator's catch-up/promotion decision are trusted
+premises. This bounded model does not prove file IO, a whole-cluster backup,
+Tarantool replication, performance, or Python/Lua refinement. The existing
+commit/locking/recovery models and 140 verified shared bodies are unchanged.
+Live tests recover real vinyl files and compare every tuple byte, including
+post-backup WAL and negative lease/copy/restore controls. The startup voter
+marker prevents accidental candidate startup until an operator clears it;
+it does not make the operator's catch-up decision automatically.
+
+
+### Quiescent cluster backup and restore (issue #137)
+
+`ClusterBackup.tla` models a distributed decision, independent replica APPLY,
+complete replica fencing, restart, certification, per-node copying, controller
+failure, publication and quarantined restore/activation. The positive bounded
+configuration explores 52,164 distinct states at depth 30. Six controls remove
+all-replica fencing, draining, replica completeness, durable restart fencing,
+complete restore verification or metadata retention. Each violates its named
+invariant; the early-copy and no-drain controls expose incoherent copied rows
+and loss of an acknowledged effect, respectively. This is a separate backup
+contract; it does not modify or prove a refinement of `TarnCommit`.
+
+The runtime additionally checks published membership, catalogs, exact bucket
+coverage, equal WAL vectors and per-replica tuple/schema digests. Its drain
+refuses PREPARED/STAGING, unfinished DDL/movement and unshipped lazy obligations;
+it does not remove them. Tarantool 3.9.0's
+[read-only transition](https://github.com/tarantool/tarantool/blob/3.9.0/src/box/box.cc#L449)
+aborts in-progress persistent nonlocal writes. Settled synchronous queues,
+replica catch-up, stable before/after WAL vectors and the pinned immutable
+checkpoint/file contract remain trusted storage premises. Persistent local
+spaces are refused because read-only mode does not fence them. The live drill
+holds an actual uncommitted mutation across acquisition and checks its refusal.
+
+Filesystem fsync/rename, hash collision resistance, Tarantool's checkpoint/WAL
+and replication implementation, complete honest inventory, exclusive administrative
+access and isolated restored networking remain trusted. No unbounded theorem,
+online-backup guarantee, arbitrary-time PITR, whole-code refinement or automatic
+liveness/restart bound follows. The [operations contract](cluster-backup.md)
+and [live evidence index](../tests/evidence/cluster-backup/index.json) retain
+these boundaries and all source-bound outcomes.
+
+
+### Composite lazy routing (#185)
+
+`LazyRouting.tla` checks immutable routing metadata, refusal by old
+capabilities, all-owner prefix coverage, typed ordered merging, LIMIT after
+base rechecks and epoch fencing. Its six negative controls independently
+remove these protections. The model fixes a caught-up generation and uses
+small typed integer streams; it does not prove hash distribution or SQL
+normalization. Existing LazyIndex, LazyBarrier and LazyHandoff models cover
+assignment versions, source frontiers and movement obligations.
+
+Executable checks exercise partial and complete routing identities,
+ascending/descending cursor pages, stale base keys, migration/backfill,
+case-insensitive and nullable identities, old import tokens, received/sent
+copies, heterogeneous auxiliary IDs, and RF3/fsync leader death/restart on
+MemTX and Vinyl. Resource exhaustion returns a complete fallback or error;
+no prefix of a failed merge is published.
+
+The [retained executable evidence](../tests/evidence/lazy-routing/README.md)
+includes 60 Lua lifecycle checks, source/target and JOIN restart faults,
+composite RF3/fsync leader recovery, both full 11-case lazy SQL suites
+against MariaDB and the 1,092-case differential pass. The
+[routing cost study](lazy-routing-cost.md) retains five paired RF3/fsync
+comparisons for each uniform/skewed 1/4/16-lane case, all raw samples and
+failed attempts. It reports repeatable gains for the declared fully bound
+skewed workload and separate write-heavy/prefix regressions; it makes no
+universal throughput, independent-host or beyond-RAM claim.
+
+## Mutation acknowledgement outcomes (issue #183)
+
+[The outcome contract](outcomes.md) adds complete procedure-envelope checks
+for autocommit, single-shard and READ COMMITTED mutations. This refines the
+gateway's interpretation of a result, without changing `TarnCommit` durable
+transitions, votes, locks, acknowledgement timing or recovery.
+
+`NativeHandback` now permits a matched reply to have a malformed success,
+rollback or handback prefix. Positive stream/autocommit configurations retain
+`AtMostOnce` and `ReplyHolds`; `Bug_HandbackMalformedReply` and its autocommit
+variant trust that prefix and violate `ReplyHolds`. A valid complete but
+dishonest storage reply is outside the model. Exact MessagePack parsing,
+numeric codes/SQLSTATE and two MySQL drivers are executable test obligations,
+not newly verified Rust bodies. The 140 shared Verus functions are unchanged.

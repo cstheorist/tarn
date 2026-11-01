@@ -42,6 +42,9 @@ pub struct ShardConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ClusterConfig {
+    /// Query/transaction and gateway-wide SQL resource budgets.
+    #[serde(default)]
+    pub resources: crate::budget::Limits,
     pub shards: Vec<ShardConfig>,
     /// The number of buckets of a new cluster (default
     /// `buckets::NEW_CLUSTER_BUCKETS`), fixed when the first SQL server
@@ -53,13 +56,18 @@ pub struct ClusterConfig {
     pub user: String,
     #[serde(default = "default_user")]
     pub password: String,
-    /// Connections per shard leader (streams are multiplexed on them).
+    /// Maximum pooled connections per shard leader, grown on demand.
+    /// Streams are multiplexed; topology.max_connections bounds the gateway.
     #[serde(default = "default_pool")]
     pub pool_size: usize,
     /// Opt into bounded native primary-key batches. Other native paths
     /// remain enabled when this is false, for isolated profiling.
     #[serde(default)]
     pub native_batch_reads: bool,
+    /// Opt into exact projected scans and integer partial aggregates after
+    /// measuring the workload. Narrow-row scans can regress; isolation is unchanged.
+    #[serde(default)]
+    pub query_pushdown: bool,
     /// Distinguishes Tarn servers in transaction ids.
     #[serde(default)]
     pub node_id: u32,
@@ -106,6 +114,8 @@ pub struct ClusterConfig {
     /// Bounded IPROTO admission and physical connection lifetimes.
     #[serde(default)]
     pub rpc: crate::RpcConfig,
+    #[serde(default)]
+    pub topology: crate::TopologyConfig,
 }
 
 fn default_move_timeout() -> f64 {
@@ -268,7 +278,7 @@ pub struct Globals {
 
 struct Pool {
     addr: String,
-    clients: Vec<Client>,
+    clients: Mutex<Vec<(Client, Instant)>>,
     next: AtomicUsize,
 }
 
@@ -299,6 +309,10 @@ async fn require_strong_reads(client: &Client, completion: bool) -> SqlResult<()
     .await;
     let valid = match response {
         Ok(Ok(r)) => r.data().is_some_and(|data| strong_read_contract(&data)),
+        Ok(Err(e @ tarn_iproto::Error::Admission { .. })) => {
+            client.close();
+            return Err(from_iproto(e));
+        }
         _ => false,
     };
     if valid {
@@ -313,14 +327,24 @@ async fn require_strong_reads(client: &Client, completion: bool) -> SqlResult<()
 }
 
 impl Pool {
-    fn pick(&self) -> Option<Client> {
-        let n = self.clients.len();
+    fn pick(&self, max: usize) -> Option<Client> {
+        let mut clients = self.clients.lock();
+        clients.retain(|(c, _)| !c.is_closed() && !c.is_stale());
+        let n = clients.len();
+        if n == 0 {
+            return None;
+        }
         let start = self.next.fetch_add(1, Ordering::Relaxed);
+        // Grow only when every existing socket has an external owner.
+        if n < max && !clients.iter().any(|(c, _)| c.exclusively_idle()) {
+            return None;
+        }
         for i in 0..n {
-            let c = &self.clients[(start + i) % n];
+            let (c, used) = &mut clients[(start.wrapping_add(i)) % n];
             // A stale connection answered ER_READONLY: its server is no
             // longer the leader, although the connection survived.
             if !c.is_closed() && !c.is_stale() {
+                *used = Instant::now();
                 return Some(c.clone());
             }
         }
@@ -334,6 +358,7 @@ pub struct Shard {
     replicas: Vec<String>,
     leader: RwLock<Option<Arc<Pool>>>,
     discover: tokio::sync::Mutex<()>,
+    discover_failure: Mutex<Option<(Instant, SqlError)>>,
     rpc_budget: std::sync::OnceLock<tarn_iproto::Budget>,
     /// The shard left the cluster: it owns no bucket, and fan-outs and
     /// schema changes skip it.
@@ -428,6 +453,7 @@ impl Shard {
             replicas,
             leader: RwLock::new(None),
             discover: tokio::sync::Mutex::new(()),
+            discover_failure: Mutex::new(None),
             rpc_budget: std::sync::OnceLock::new(),
             removed: std::sync::atomic::AtomicBool::new(false),
         }
@@ -452,7 +478,7 @@ impl Shard {
 
     async fn client_for(&self, cluster: &Cluster, completion: bool) -> SqlResult<Client> {
         if let Some(p) = self.leader.read().clone() {
-            if let Some(c) = p.pick() {
+            if let Some(c) = p.pick(if completion { 1 } else { cluster.cfg.pool_size }) {
                 return Ok(c);
             }
         }
@@ -463,6 +489,14 @@ impl Shard {
         *self.leader.write() = None;
     }
 
+    pub(crate) fn retire_connections(&self) {
+        if let Some(pool) = self.leader.write().take() {
+            for (client, _) in pool.clients.lock().iter() {
+                client.close();
+            }
+        }
+    }
+
     pub fn leader_addr(&self) -> Option<String> {
         self.leader.read().as_ref().map(|p| p.addr.clone())
     }
@@ -470,16 +504,37 @@ impl Shard {
     async fn discover(&self, cluster: &Cluster, completion: bool) -> SqlResult<Client> {
         let _g = self.discover.lock().await;
         if let Some(p) = self.leader.read().clone() {
-            if let Some(c) = p.pick() {
+            if let Some(c) = p.pick(if completion { 1 } else { cluster.cfg.pool_size }) {
                 return Ok(c);
+            }
+        }
+        if !completion {
+            if let Some((at, error)) = &*self.discover_failure.lock() {
+                if at.elapsed() < Duration::from_millis(100) {
+                    return Err(error.clone());
+                }
             }
         }
         let mut last_err = String::from("no replicas configured");
         for addr in &self.replicas {
-            let opts = cluster.opts_for_shard(self, addr);
+            cluster.reclaim_connections(completion).await;
+            // Pool growth is optional. A hard cap must not reject work that
+            // can use an existing multiplexed connection.
+            if !cluster.connections.available(completion) {
+                if let Some(p) = self.leader.read().clone() {
+                    if let Some(c) = p.pick(1) {
+                        return Ok(c);
+                    }
+                }
+            }
+            let mut opts = cluster.opts_for_shard(self, addr);
+            opts.completion_connection = completion;
             let c = match Client::connect(&opts).await {
                 Ok(c) => c,
                 Err(e) => {
+                    if matches!(e, tarn_iproto::Error::Admission { .. }) {
+                        return Err(from_iproto(e));
+                    }
                     last_err = format!("{}: {}", addr, e);
                     continue;
                 }
@@ -504,6 +559,7 @@ impl Shard {
                         rd.value().ok().map(|v| v.as_i64() != Some(0))
                     })
                     .unwrap_or(true),
+                Err(e @ tarn_iproto::Error::Admission { .. }) => return Err(from_iproto(e)),
                 Err(e) => {
                     last_err = format!("{}: {}", addr, e);
                     continue;
@@ -513,45 +569,47 @@ impl Shard {
                 last_err = format!("{} is read-only", addr);
                 continue;
             }
+            crate::compat::admit(&c, self.id, cluster.cfg.max_txn_age, completion).await?;
             if let Err(e) = require_strong_reads(&c, completion).await {
+                if e.code == 1205 {
+                    return Err(e);
+                }
                 last_err = format!("{}: {}", addr, e);
                 continue;
             }
-            let mut clients = vec![c.clone()];
-            for _ in 1..cluster.cfg.pool_size.max(1) {
-                match Client::connect(&opts).await {
-                    Ok(x) => {
-                        if let Err(e) = require_strong_reads(&x, completion).await {
-                            tracing::warn!(shard = self.id, "extra storage connection is incompatible: {}", e);
-                            break;
-                        }
-                        clients.push(x);
-                    }
-                    Err(e) => {
-                        tracing::warn!(shard = self.id, "extra connection to {}: {}", addr, e);
-                        break;
-                    }
+            // Reserve connections belong to this completion only. Keeping
+            // them in the ordinary pool would let normal work pin the reserve.
+            if completion {
+                return Ok(c);
+            }
+            if let Some(p) = self.leader.read().clone() {
+                if p.addr == *addr {
+                    p.clients.lock().push((c.clone(), Instant::now()));
+                    return Ok(c);
                 }
             }
             let pool = Arc::new(Pool {
                 addr: addr.clone(),
-                clients,
+                clients: Mutex::new(vec![(c.clone(), Instant::now())]),
                 next: AtomicUsize::new(0),
             });
             *self.leader.write() = Some(pool);
             tracing::info!(shard = self.id, leader = %addr, "connected to shard leader");
             return Ok(c);
         }
-        Err(SqlError::new(
+        let error = SqlError::new(
             2003,
             "HY000",
             format!("shard {} has no reachable leader ({})", self.id, last_err),
-        ))
+        );
+        *self.discover_failure.lock() = Some((Instant::now(), error.clone()));
+        Err(error)
     }
 }
 
 #[derive(Default)]
 pub struct Stats {
+    pub topk_scans: AtomicU64,
     pub(crate) query_digests: crate::observe::Metrics,
     pub queries: AtomicU64,
     pub commits_local: AtomicU64,
@@ -567,6 +625,8 @@ pub struct Stats {
     pub deadlock_calls: AtomicU64,
     /// COUNTs the shards computed without returning rows (issue #52).
     pub storage_counts: AtomicU64,
+    pub storage_reductions: AtomicU64,
+    pub storage_projections: AtomicU64,
     /// Rows read from storage by SELECT, UPDATE and DELETE.
     pub rows_read: AtomicU64,
     /// Storage reads (pages) of index scans and multi-key lookups that
@@ -582,13 +642,20 @@ pub struct Stats {
 }
 
 pub struct CachedPlan {
+    pub resource_guard: tarn_common::ResourceGuard,
+    pub(crate) statistics_generation: Option<u64>,
     pub version: u64,
     pub stmt: crate::plan::Stmt,
     pub(crate) diagnostic: Option<crate::observe::Descriptor>,
 }
 
 pub struct Cluster {
+    pub resources: Arc<crate::budget::Pool>,
+    pub statistics: crate::statistics::Statistics,
     pub(crate) rpc_global: tarn_iproto::Budget,
+    pub(crate) connections: tarn_iproto::ConnectionBudget,
+    pub(crate) responses: tarn_iproto::ResponseBudget,
+    pub(crate) fanout: crate::topology::Fanout,
     pub cfg: ClusterConfig,
     pub shards: ShardList,
     catalog: RwLock<Arc<Catalog>>,
@@ -602,7 +669,7 @@ pub struct Cluster {
     pub globals: Mutex<Globals>,
     /// Catalog reloads so far, and the lock that makes concurrent
     /// `refresh_catalog` calls share one reload.
-    reloads: AtomicU64,
+    pub(crate) reloads: AtomicU64,
     reload_mu: tokio::sync::Mutex<()>,
     /// Row-lock requests in flight, by transaction (each makes one at a
     /// time): where the cross-shard deadlock detector starts.
@@ -619,6 +686,7 @@ pub struct Cluster {
     pub(crate) members: RwLock<crate::members::Members>,
     members_ver: AtomicU64,
     pub(crate) members_mu: tokio::sync::Mutex<()>,
+    pub(crate) member_reads: AtomicU64,
     pub(crate) lazy_samples: Mutex<std::collections::BTreeMap<u32, Option<crate::lazy::StatsSample>>>,
     pub(crate) vinyl_samples: Mutex<std::collections::BTreeMap<u32, crate::vinyl::StatsSample>>,
 }
@@ -649,6 +717,32 @@ impl Drop for LockRequestGuard<'_> {
 /// if it still waits.
 const DEADLOCK_MIN_WAIT: Duration = Duration::from_millis(50);
 
+/// How many more times a schema change sends APPLY to a shard where a
+/// transaction conflict rolled it back, before it reports the change
+/// unfinished (see `run_job_steps`).
+const APPLY_CONFLICT_RETRIES: u32 = 5;
+
+/// Run `attempt` again while it fails with a transaction conflict (1213), at
+/// most `retries` more times, waiting `backoff` and then twice as long each
+/// time in between. Only for steps that may be repeated.
+pub(crate) async fn retry_conflicts<T, F, Fut>(retries: u32, backoff: Duration, mut attempt: F) -> SqlResult<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = SqlResult<T>>,
+{
+    let (mut left, mut wait) = (retries, backoff);
+    loop {
+        match attempt().await {
+            Err(e) if e.code == 1213 && left > 0 => {
+                left -= 1;
+                tokio::time::sleep(wait).await;
+                wait = wait.saturating_mul(2);
+            }
+            r => return r,
+        }
+    }
+}
+
 /// A pending row-lock wait, as its shard reports it (`tarn_lock_waits`).
 #[derive(Clone, Debug, PartialEq)]
 struct Wait {
@@ -670,7 +764,7 @@ struct Wait {
 /// not answer contributes nothing.
 async fn lock_waits(c: &Cluster, shards: &[usize]) -> Vec<Wait> {
     let futs = shards.iter().map(|&s| c.call(s, "tarn_lock_waits", &[0x90]));
-    let replies = futures::future::join_all(futs).await;
+    let replies = crate::topology::collect(futs, c.cfg.topology.fanout).await;
     c.stats.deadlock_calls.fetch_add(shards.len() as u64, Ordering::Relaxed);
     let mut out = Vec::new();
     for (&s, r) in shards.iter().zip(replies) {
@@ -920,8 +1014,17 @@ pub async fn detect_deadlocks(c: &Arc<Cluster>) {
 }
 
 impl Cluster {
-    pub async fn connect(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
+    fn configured(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
         cfg.rpc.validate()?;
+        cfg.topology.validate()?;
+        if cfg.shards.len() > MAX_SHARDS || cfg.pool_size == 0 || cfg.pool_size > 1024 {
+            return Err(SqlError::internal("too many shards or invalid pool_size (1..1024)"));
+        }
+        let connections =
+            tarn_iproto::ConnectionBudget::new(cfg.topology.max_connections, cfg.topology.completion_connections)
+                .map_err(|e| SqlError::internal(e.to_string()))?;
+        let fanout = crate::topology::Fanout::new(&cfg.topology);
+        let responses = tarn_iproto::ResponseBudget::new(cfg.topology.response_bytes);
         let rpc_global =
             tarn_iproto::Budget::new("global", cfg.rpc.global).map_err(|e| SqlError::internal(e.to_string()))?;
         if cfg.shards.is_empty() {
@@ -954,7 +1057,12 @@ impl Cluster {
             cfg.shards.len(),
         );
         let c = Arc::new(Cluster {
+            resources: crate::budget::Pool::new(cfg.resources.clone())?,
+            statistics: crate::statistics::Statistics::default(),
             rpc_global,
+            connections,
+            responses,
+            fanout,
             cfg,
             shards,
             globals,
@@ -974,17 +1082,20 @@ impl Cluster {
             members: RwLock::new(crate::members::Members::default()),
             members_ver: AtomicU64::new(0),
             members_mu: tokio::sync::Mutex::new(()),
+            member_reads: AtomicU64::new(0),
             lazy_samples: Mutex::new(Default::default()),
             vinyl_samples: Mutex::new(Default::default()),
         });
+        Ok(c)
+    }
+
+    pub async fn connect(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
+        let c = Self::configured(cfg)?;
         // The first shard (jobs, catalog) must answer, and every shard in
         // the cluster; one of the configuration that left the cluster need
         // not (the membership the others keep says it left).
         c.shards[0].client(&c).await?;
         c.load_members().await?;
-        for i in c.live_shards().collect::<Vec<_>>() {
-            c.shards[i].client(&c).await?;
-        }
         c.reload_buckets().await?;
         if let Some(n) = c.cfg.bucket_count {
             let count = c.bucket_map().count;
@@ -1012,6 +1123,7 @@ impl Cluster {
                 loop {
                     tokio::time::sleep(every).await;
                     let Some(c) = weak.upgrade() else { break };
+                    c.evict_idle_connections(false).await;
                     if let Err(e) = c.finish_stale_jobs().await {
                         tracing::debug!("looking for abandoned schema changes: {}", e);
                     }
@@ -1042,13 +1154,8 @@ impl Cluster {
             loop {
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 let Some(c) = weak.upgrade() else { break };
-                if let Ok(v) = c.catalog_version().await {
-                    if v != known {
-                        known = v;
-                        if let Err(e) = c.reload_catalog().await {
-                            tracing::warn!("catalog reload failed: {}", e);
-                        }
-                    }
+                if let Err(e) = c.poll_catalog(&mut known).await {
+                    tracing::warn!("catalog reload failed: {}", e);
                 }
             }
         });
@@ -1075,10 +1182,63 @@ impl Cluster {
             user: Some(self.cfg.user.clone()),
             password: Some(self.cfg.password.clone()),
             connect_timeout: Duration::from_secs(3),
+            max_response_bytes: crate::budget::STORAGE_REPLY_BYTES,
             request_limits: self.cfg.rpc.connection,
             request_timeout: Duration::from_secs_f64(self.cfg.rpc.timeout_secs),
             admission,
             observation_scope: shard.map(|s| s.id),
+            connections: Some(self.connections.clone()),
+            completion_connection: false,
+            responses: Some(self.responses.clone()),
+            response_frame_bytes: self.cfg.topology.response_frame_bytes,
+        }
+    }
+
+    /// Release only pool-owned idle handles. Stream/lock owners and abandoned
+    /// pending RPCs remain pinned; the transport releases capacity after I/O
+    /// retirement. No mutation is retried by eviction.
+    pub(crate) async fn reclaim_connections(&self, completion: bool) {
+        if self.connections.available(completion) {
+            return;
+        }
+        self.evict_idle_connections(completion).await;
+    }
+
+    async fn evict_idle_connections(&self, completion: bool) {
+        let pressure = !self.connections.available(completion);
+        let idle = Duration::from_secs(self.cfg.topology.idle_secs);
+        let mut candidates = Vec::new();
+        for (s, shard) in self.shards.iter().enumerate() {
+            if let Some(p) = shard.leader.read().clone() {
+                for (c, used) in p.clients.lock().iter() {
+                    if c.exclusively_idle() && (pressure || used.elapsed() >= idle) {
+                        candidates.push((*used, s, c.stats().id));
+                    }
+                }
+            }
+        }
+        candidates.sort_unstable();
+        for (_, s, id) in candidates {
+            let mut removed = false;
+            if let Some(p) = self.shards[s].leader.read().clone() {
+                p.clients.lock().retain(|(c, _)| {
+                    let keep = c.stats().id != id || !c.exclusively_idle();
+                    removed |= !keep;
+                    keep
+                });
+            }
+            // Drop-abort is asynchronous. A single yield can resume before
+            // either I/O task retires, evicting every idle socket and then
+            // refusing a replacement. Wait for actual retirement, bounded
+            // even if another discoverer takes the freed slot first.
+            if pressure && removed {
+                self.connections
+                    .wait_available(completion, Duration::from_millis(50))
+                    .await;
+            }
+            if pressure && self.connections.available(completion) {
+                break;
+            }
         }
     }
 
@@ -1245,12 +1405,15 @@ impl Cluster {
         if !c.marked(mark) {
             match c.call(0, func, args).await {
                 Ok(r) => {
-                    let d = r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data"))?;
-                    if crate::mpw::status_is(&d, "lua") && crate::mpw::status_arg_is(&d, 1, "all") {
+                    let d = r
+                        .data()
+                        .ok_or_else(|| crate::mpw::ambiguous(s.id, &"CALL reply without data"))?;
+                    let handback = crate::mpw::native_write_handback(&d);
+                    if handback == Some(true) {
                         tracing::debug!(shard = s.id, "{} hands back every call", func);
                         c.mark(mark);
                     }
-                    if !crate::mpw::status_is(&d, "lua") {
+                    if handback.is_none() {
                         return Ok(d);
                     }
                 }
@@ -1316,7 +1479,15 @@ impl Cluster {
                 c.call(0, func, args).await
             };
             match reply {
-                Ok(r) => return r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data")),
+                Ok(r) => {
+                    return r.data().ok_or_else(|| {
+                        if idempotent {
+                            crate::mpw::proto("CALL reply without data")
+                        } else {
+                            crate::mpw::ambiguous(s.id, &"CALL reply without data")
+                        }
+                    });
+                }
                 Err(tarn_iproto::Error::Server { code, message }) if code == tarn_iproto::ER_READONLY && tries < 3 => {
                     tracing::warn!(shard = s.id, "leader changed: {}", message);
                     s.invalidate();
@@ -1339,13 +1510,55 @@ impl Cluster {
     /// CALL `func` on every shard in the cluster: the replies by position
     /// (None for a removed shard).
     pub async fn call_all(&self, func: &str, args: &[u8]) -> SqlResult<Vec<Option<Bytes>>> {
+        use futures::StreamExt;
         let live: Vec<usize> = self.live_shards().collect();
-        let replies = futures::future::try_join_all(live.iter().map(|&i| self.call(i, func, args))).await?;
+        let futures: Vec<_> = live
+            .iter()
+            .map(|&i| self.fanout.run(self.call(i, func, args)))
+            .collect();
+        let replies = futures::stream::iter(futures).buffered(self.cfg.topology.fanout);
+        futures::pin_mut!(replies);
         let mut out = vec![None; self.shards.len()];
-        for (i, d) in live.into_iter().zip(replies) {
+        let mut bytes = 0usize;
+        let mut error = None;
+        let mut positions = live.iter().copied();
+        while let Some(d) = replies.next().await {
+            let i = positions.next().expect("one position per reply");
+            let d = match d {
+                Ok(d) if error.is_none() => d,
+                Ok(_) => continue,
+                Err(e) => {
+                    error.get_or_insert(e);
+                    out.fill(None);
+                    continue;
+                }
+            };
+            bytes = bytes.saturating_add(d.len());
+            if bytes > self.cfg.topology.control_reply_bytes {
+                error = Some(SqlError::new(1205, "HY000", "topology response byte limit exceeded"));
+                out.fill(None);
+                continue;
+            }
             out[i] = Some(d);
         }
-        Ok(out)
+        match error {
+            Some(e) => Err(e),
+            None => Ok(out),
+        }
+    }
+
+    pub(crate) fn read_fanout<'a, I, T: Send + 'a>(
+        &'a self,
+        futures: I,
+    ) -> futures::future::BoxFuture<'a, Vec<SqlResult<T>>>
+    where
+        I: IntoIterator,
+        I::Item: std::future::Future<Output = SqlResult<T>> + Send + 'a,
+    {
+        crate::topology::collect(
+            futures.into_iter().map(|f| self.fanout.run(f)),
+            self.cfg.topology.fanout,
+        )
     }
 
     async fn catalog_version(&self) -> SqlResult<u64> {
@@ -1384,10 +1597,37 @@ impl Cluster {
         if self.reloads.load(Ordering::Acquire) != seen {
             return Ok(());
         }
-        self.reload_catalog().await
+        self.reload_catalog_inner().await
     }
 
+    /// Read a catalog after this call began. DDL publication and catch-up
+    /// fences cannot reuse an overlapping read that captured an older schema.
     pub async fn reload_catalog(&self) -> SqlResult<()> {
+        let _g = self.reload_mu.lock().await;
+        self.reload_catalog_inner().await
+    }
+
+    /// One poll of the catalog poller (every 0.3 s). Once the shards'
+    /// catalog version changes from `known`, it reloads the catalog, unless
+    /// this server's is that new already: a statement that met the version
+    /// reloaded it, and a reload discards every cached plan. A failed reload
+    /// waits for the next version, or for a statement that meets the fence.
+    async fn poll_catalog(&self, known: &mut u64) -> SqlResult<()> {
+        let Ok(v) = self.catalog_version().await else {
+            return Ok(());
+        };
+        if v == *known {
+            return Ok(());
+        }
+        *known = v;
+        let _g = self.reload_mu.lock().await;
+        if self.catalog().version >= v {
+            return Ok(());
+        }
+        self.reload_catalog_inner().await
+    }
+
+    async fn reload_catalog_inner(&self) -> SqlResult<()> {
         let version = self.catalog_version().await?;
         let d = self.call(0, "tarn_catalog", &[0x90]).await?;
         let mut rd = Rd::new(&d);
@@ -1444,7 +1684,10 @@ impl Cluster {
             .read()
             .get(&(db.to_string(), template.to_string()))
             .cloned()?;
-        if p.version == v {
+        if p.version == v
+            && p.statistics_generation
+                .is_none_or(|g| self.statistics.snapshot(v).generation == g)
+        {
             self.stats.plan_cache_hits.fetch_add(1, Ordering::Relaxed);
             Some(p)
         } else {
@@ -1557,7 +1800,7 @@ impl Cluster {
             .filter(|&i| def.indexes[i].lazy.is_some())
             .collect();
         if !lazies.is_empty() {
-            self.require_lazy_capabilities().await?;
+            self.require_lazy_capabilities(def.lazy_route_parts()).await?;
         }
         let first = self
             .alloc_space_ids(1 + globals.len() as u64 + lazies.len() as u64)
@@ -1626,7 +1869,7 @@ impl Cluster {
                 .filter_map(|i| i.lazy.as_ref().map(|l| l.space_id))
                 .collect();
             if !lazy_drop.is_empty() {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts()).await?;
             }
             let ver = self.next_catalog_version().await?;
             let mut a = Mp::new();
@@ -1669,7 +1912,7 @@ impl Cluster {
             nd.ver = ver;
             let mut lazy_drop = Vec::new();
             if def.has_lazy() {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts()).await?;
                 let count = nd.indexes.iter().filter(|i| i.lazy.is_some()).count();
                 let first = self.alloc_space_ids(count as u64).await?;
                 for (n, i) in nd.indexes.iter_mut().filter(|i| i.lazy.is_some()).enumerate() {
@@ -1784,7 +2027,8 @@ impl Cluster {
             let ver = self.next_catalog_version().await?;
             ch.def.ver = ver;
             if def.has_lazy() || ch.def.indexes.iter().any(|i| i.lazy.is_some()) {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts().max(ch.def.lazy_route_parts()))
+                    .await?;
             }
             // New unique keys without the shard key: space ids for their
             // global indexes, which the job fills from the existing rows.
@@ -1831,6 +2075,7 @@ impl Cluster {
     async fn require_engine_capabilities(&self) -> SqlResult<()> {
         for shard in self.live_shards() {
             for addr in self.shards[shard].replicas() {
+                self.reclaim_connections(false).await;
                 let client = tarn_iproto::Client::connect(&self.opts(addr))
                     .await
                     .map_err(|e| SqlError::unsupported(format!("engine-copy storage capability unavailable: {e}")))?;
@@ -2135,7 +2380,7 @@ impl Cluster {
             // all yet. No shard joins while the job is in progress.)
             self.load_members().await?;
             if job.kind == JobKind::Move {
-                return self.finish_move(&job).await;
+                return self.with_job_alive(&job.owner, self.finish_move(&job)).await;
             }
             if job.kind == JobKind::Members {
                 return self.finish_members(&job).await;
@@ -2199,7 +2444,12 @@ impl Cluster {
         let mut phase = job.phase.as_str();
         if phase == "prepare" || phase == "run" {
             if job.kind == JobKind::Alter {
-                for r in futures::future::join_all(live.iter().map(|&i| step(i, job.kind.proc("build")))).await {
+                for r in crate::topology::collect(
+                    live.iter().map(|&i| step(i, job.kind.proc("build"))),
+                    self.cfg.topology.fanout,
+                )
+                .await
+                {
                     match r {
                         Ok(_) => {}
                         // a storage node from before BUILD existed: its PREPARE builds them
@@ -2212,7 +2462,12 @@ impl Cluster {
             }
             let mut applied = false;
             if failed.is_none() {
-                for r in futures::future::join_all(live.iter().map(|&i| step(i, job.kind.proc("prepare")))).await {
+                for r in crate::topology::collect(
+                    live.iter().map(|&i| step(i, job.kind.proc("prepare"))),
+                    self.cfg.topology.fanout,
+                )
+                .await
+                {
                     match r {
                         Ok(d) => applied |= applied_reply(&d),
                         Err(e) => {
@@ -2238,7 +2493,12 @@ impl Cluster {
             self.job_phase(job, phase).await?;
         }
         if phase == "abort" {
-            for r in futures::future::join_all(live.iter().map(|&i| step(i, job.kind.proc("abort")))).await {
+            for r in crate::topology::collect(
+                live.iter().map(|&i| step(i, job.kind.proc("abort"))),
+                self.cfg.topology.fanout,
+            )
+            .await
+            {
                 if let Err(e) = r {
                     // The job stays: whoever finishes it aborts again.
                     tracing::warn!("{} of {}: abort: {}", job.kind.statement(), job.space, e);
@@ -2262,7 +2522,19 @@ impl Cluster {
             vec![live.clone()]
         };
         for g in groups {
-            for r in futures::future::join_all(g.iter().map(|&i| step(i, job.kind.proc("apply")))).await {
+            // APPLY may be repeated (a server that finishes the job repeats
+            // it). A shard where a transaction conflict rolled it back, as
+            // one can roll back a DDL statement of it, gets it again at once.
+            for r in crate::topology::collect(
+                g.iter().map(|&i| {
+                    retry_conflicts(APPLY_CONFLICT_RETRIES, Duration::from_millis(20), move || {
+                        step(i, job.kind.proc("apply"))
+                    })
+                }),
+                self.cfg.topology.fanout,
+            )
+            .await
+            {
                 if let Err(e) = r {
                     // Some shards may have applied it: the job stays, and a
                     // server finishes it (finish_stale_jobs).
@@ -2513,6 +2785,7 @@ pub(crate) mod wire_test {
 
     pub async fn accept(listener: &TcpListener) -> TcpStream {
         let (mut sock, _) = listener.accept().await.unwrap();
+        sock.set_nodelay(true).unwrap();
         let mut greeting = [b' '; 128];
         let first = b"Tarantool 3.9.0 (Binary)";
         greeting[..first.len()].copy_from_slice(first);
@@ -2529,8 +2802,24 @@ pub(crate) mod wire_test {
     }
 }
 #[cfg(test)]
+#[path = "../../tarn-iproto/tests/common/mod.rs"]
+mod test_support;
+
+#[cfg(test)]
 #[path = "cluster_fallback_tests.rs"]
 mod fallback_tests;
+
+#[cfg(test)]
+#[path = "cluster_topology_tests.rs"]
+mod topology_tests;
+
+#[cfg(test)]
+#[path = "cluster_catalog_tests.rs"]
+mod catalog_tests;
+
+#[cfg(test)]
+#[path = "cluster_step_tests.rs"]
+mod step_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2642,6 +2931,26 @@ mod tests {
             let mut rd = Rd::new(&body);
             assert_eq!(rd.map().unwrap(), 2);
             assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
+            assert_eq!(rd.string().unwrap(), "tarn_compatibility");
+            let mut body = Mp::new();
+            body.map(1)
+                .uint(0x30)
+                .arr(1)
+                .arr(8)
+                .str("ok")
+                .uint(1)
+                .uint(2)
+                .uint(1)
+                .str("3.9.0")
+                .uint(14)
+                .str("ready")
+                .f64(120.0);
+            reply(&mut sock, sync, 0, &body.0).await;
+            let (kind, sync, stream, body) = request(&mut sock).await;
+            assert_eq!((kind, stream), (10, 0));
+            let mut rd = Rd::new(&body);
+            assert_eq!(rd.map().unwrap(), 2);
+            assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
             assert_eq!(rd.string().unwrap(), "tarn_read_contract");
             let mut body = Mp::new();
             body.map(1).uint(0x30).arr(1).arr(2).str("strong_reads").uint(1);
@@ -2675,10 +2984,13 @@ mod tests {
             client.call(0, "ordinary", &[0x90]).await,
             Err(tarn_iproto::Error::Admission { .. })
         ));
-        tokio::time::timeout(Duration::from_secs(2), require_strong_reads(&client, true))
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            crate::compat::admit(&client, 1, 120.0, true).await?;
+            require_strong_reads(&client, true).await
+        })
+        .await
+        .unwrap()
+        .unwrap();
         held.await.unwrap();
         assert_eq!(budget.stats().pending, 0);
         assert!(!client.is_closed());

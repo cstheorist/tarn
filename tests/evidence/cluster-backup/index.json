@@ -1,0 +1,292 @@
+{
+  "format": "tarn-cluster-backup-evidence-v1",
+  "implementation_revision": "1c601f8",
+  "records": [
+    {
+      "path": "final/cb-activation-memtx-lua.json",
+      "sha256": "0d6ae2801fe49d8ac57578036904b34841aef0543c20629efaad3cdea4c8260d",
+      "status": "passed",
+      "checks": 30,
+      "source_revision": "1c601f8",
+      "engine": "memtx",
+      "native": "0",
+      "error": null,
+      "timings": {
+        "cut": {
+          "token": "244894f6-dfe1-4736-a1c4-b7b9ae4f857f",
+          "fence_s": 0.34868783300044015,
+          "fence_to_seal_s": 3.685059334966354,
+          "manifest_sha256": "f7c27bcb2a62012a840679099911b836fb2bd23d7723367d4c0ba6b991748495",
+          "source_resume_to_write_s": 7.460986294958275
+        },
+        "restore_copy_verify_s": 1.0149304179940373,
+        "restore_to_verified_writes_s": 5.538797835994046
+      }
+    },
+    {
+      "path": "final/cb-activation-memtx-native.json",
+      "sha256": "600fdcba3955a1ccc13cb95682121e607a0e39b37bf80703dbe4f0c83eb00e5c",
+      "status": "passed",
+      "checks": 30,
+      "source_revision": "1c601f8",
+      "engine": "memtx",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": null,
+      "timings": {
+        "cut": {
+          "token": "41d3a235-ff81-4caa-ab94-13d4bb136078",
+          "fence_s": 0.32210170896723866,
+          "fence_to_seal_s": 3.637392627017107,
+          "manifest_sha256": "1cabea24a5fa25df456af1eafb8ca9932fbdd45fb440a1f0a4d494daea7f7c75",
+          "source_resume_to_write_s": 7.448788544978015
+        },
+        "restore_copy_verify_s": 0.7434170829947107,
+        "restore_to_verified_writes_s": 5.28066716901958
+      }
+    },
+    {
+      "path": "final/cb-activation-vinyl-lua.json",
+      "sha256": "958c08e2d20c2fb6011a81c42da5d380443e6a60215772227e91dfbb9ff92cd8",
+      "status": "passed",
+      "checks": 30,
+      "source_revision": "1c601f8",
+      "engine": "vinyl",
+      "native": "0",
+      "error": null,
+      "timings": {
+        "cut": {
+          "token": "44c28aa5-db5a-4e4c-ba6b-baac4a7f64f4",
+          "fence_s": 0.3284341670223512,
+          "fence_to_seal_s": 3.8314119179849513,
+          "manifest_sha256": "e92393087a171534fa87d4745118a125d197edcd977c6b19e245e64585b7843b",
+          "source_resume_to_write_s": 7.726847086974885
+        },
+        "restore_copy_verify_s": 0.9340886669815518,
+        "restore_to_verified_writes_s": 5.684212127001956
+      }
+    },
+    {
+      "path": "final/cb-activation-vinyl-native.json",
+      "sha256": "2d95787918886f67ebc06f879b3dbe71b844cd6cb578cb122599aa6f8b94dfdc",
+      "status": "passed",
+      "checks": 30,
+      "source_revision": "1c601f8",
+      "engine": "vinyl",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": null,
+      "timings": {
+        "cut": {
+          "token": "f7562bd1-9810-4b7f-8978-241a16529a09",
+          "fence_s": 0.3486808760208078,
+          "fence_to_seal_s": 3.793989668949507,
+          "manifest_sha256": "e17e7ad1f73c50ca0dc4108cd37160ffb0001c8b7842f5447a9aa1338dac6eda",
+          "source_resume_to_write_s": 7.631671752955299
+        },
+        "restore_copy_verify_s": 0.9503404590068385,
+        "restore_to_verified_writes_s": 5.63780033600051
+      }
+    },
+    {
+      "path": "development/cb-extended.json",
+      "sha256": "d2adb8909122cd22ed4e975c76ce214e9b9760d626e643ecd3102bebbb8270b2",
+      "status": "passed",
+      "checks": 18,
+      "source_revision": "working-tree",
+      "engine": "memtx",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": null,
+      "timings": {
+        "cut": {
+          "token": "5bf0f0db-a747-4486-a646-d36e972c4d5a",
+          "fence_s": 0.35186887497548014,
+          "backup_outage_s": 2.7368754179915413,
+          "manifest_sha256": "35b3b69f26eb0e162d2317677d65782d4f61cf3c0ab2c36e55e2d9cbdb6e5da5"
+        }
+      }
+    },
+    {
+      "path": "development/cb-final-memtx-lua.json",
+      "sha256": "ddd94e9e832e2ba8a8275b85096c8a7b5d9fb72b830c65b00106e0b1b2b27357",
+      "status": "failed",
+      "checks": 1,
+      "source_revision": "77931ec",
+      "engine": "memtx",
+      "native": "0",
+      "error": "Can't modify data on a read-only instance {\"type\":\"ClientError\",\"code\":7,\"name\":\"READONLY\",\"trace\":[{\"file\":\"/work/lua/tarn.lua\",\"line\":380}]}\nfatal error, exiting the event loop\n",
+      "timings": {}
+    },
+    {
+      "path": "development/cb-final-memtx-native.json",
+      "sha256": "66511b3acf70e48e6db58db8c473c8c231104e402a9d58f850589487dcbd8c14",
+      "status": "passed",
+      "checks": 28,
+      "source_revision": "77931ec",
+      "engine": "memtx",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": null,
+      "timings": {
+        "cut": {
+          "token": "8414c653-f69a-40df-aa42-ab749b5330d4",
+          "fence_s": 0.5693258750252426,
+          "fence_to_seal_s": 21.92272521799896,
+          "manifest_sha256": "ae11c07100c2fbe8a272ade744b1ccefd399b3805af42d4bbfdd77bf6c5174a7",
+          "source_resume_to_write_s": 48.078181563992985
+        },
+        "restore_copy_verify_s": 0.7674245840171352,
+        "restore_to_verified_writes_s": 14.581671924039256
+      }
+    },
+    {
+      "path": "development/cb-fourth.json",
+      "sha256": "a8fc215b75bbb6f4b0afeb6849bdcbd6db8c0de4d2e01a5011cc78fdeb955e60",
+      "status": "passed",
+      "checks": 11,
+      "source_revision": "working-tree",
+      "engine": "memtx",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": null,
+      "timings": {
+        "cut": {
+          "token": "76407383-c1d6-4005-8920-883ef618fd9f",
+          "fence_s": 0.33046670898329467,
+          "backup_outage_s": 2.646411834983155,
+          "manifest_sha256": "c26ea7cee2f871e4318bc3dbf460c66d481c5256003338f6d6176ec0d245e22e"
+        }
+      }
+    },
+    {
+      "path": "development/cb-full-lua.json",
+      "sha256": "d95f8c376d8b7b4f2586089e517109d047e691d8c22893d581a90bf77f3ad7f0",
+      "status": "failed",
+      "checks": 23,
+      "source_revision": "working-tree",
+      "engine": "memtx",
+      "native": "0",
+      "error": "readiness timeout: False",
+      "timings": {
+        "cut": {
+          "token": "0f2fe1b3-0d4e-406b-bd32-b36ed39d4eb3",
+          "fence_s": 5.647291961009614,
+          "backup_outage_s": 61.62233656999888,
+          "manifest_sha256": "07a0cb09cb9efc71770db5d2f8a1b65f1c7d4befa272368283d6387ddb561f7d"
+        }
+      }
+    },
+    {
+      "path": "development/cb-full-native.json",
+      "sha256": "df3dc81d79eb56e60f6fa57dd41c2b2c03d20afac76d480ca2479afa813d56f7",
+      "status": "passed",
+      "checks": 25,
+      "source_revision": "working-tree",
+      "engine": "memtx",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": null,
+      "timings": {
+        "cut": {
+          "token": "b8c3eeef-c4df-4d6f-9793-f20ef57a56e5",
+          "fence_s": 0.35147987597156316,
+          "backup_outage_s": 3.7623692100169137,
+          "manifest_sha256": "4bcc3d197294984d600a87de0d684c60f27d639e44668a4e0af3668a8815a326"
+        }
+      }
+    },
+    {
+      "path": "development/cb-full-vinyl-native.json",
+      "sha256": "25878741556b135804af1dc994f0e7d8cb5773b008ef429653a057b7e8f342b3",
+      "status": "failed",
+      "checks": 3,
+      "source_revision": "working-tree",
+      "engine": "vinyl",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": "Can't modify data on a read-only instance - state is election follower with term 2, synchro queue with term 2 belongs to 1 (ea0aa898-d843-4189-91f0-248234b179c7) and is frozen until promotion {\"type\":\"ClientError\",\"code\":7,\"name\":\"READONLY\",\"reason\":\"synchro\",\"state\":\"follower\",\"term\":2,\"queue_owner_id\":1,\"queue_term\":2,\"queue_owner_uuid\":ea0aa898-d843-4189-91f0-248234b179c7,\"trace\":[{\"file\":\"eval\",\"line\":1}]}\nfatal error, exiting the event loop\n",
+      "timings": {}
+    },
+    {
+      "path": "development/cb-second.json",
+      "sha256": "1ac728e5c85a105b4c631b9ac17adf56b7aa848cdcb74aef0bc08b792fce90b1",
+      "status": "failed",
+      "checks": 1,
+      "source_revision": "working-tree",
+      "engine": "memtx",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": "'members'",
+      "timings": {}
+    },
+    {
+      "path": "development/cb-third.json",
+      "sha256": "a9626bb16caa9bb34b44324d36f4f4e62fe55f86691a2b3e13c4e952337433de",
+      "status": "failed",
+      "checks": 4,
+      "source_revision": "working-tree",
+      "engine": "memtx",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": "/work/lua/tarn_backup.lua:61: attempt to call field 'hex' (a nil value)",
+      "timings": {}
+    },
+    {
+      "path": "development/cb-vinyl.json",
+      "sha256": "e481cff9163670cfd72f361d0d579f6994c88c6554dd437216626534b4371823",
+      "status": "passed",
+      "checks": 19,
+      "source_revision": "working-tree",
+      "engine": "vinyl",
+      "native": "/out/target/release/libtarn_storage.so",
+      "error": null,
+      "timings": {
+        "cut": {
+          "token": "108e2e20-d3a0-4a91-9158-d2d400c22587",
+          "fence_s": 0.3662532499874942,
+          "backup_outage_s": 3.203541876981035,
+          "manifest_sha256": "dfcd1742f51dfb304baad42cafa6716e1604407a10f53d58bdb663b91c1deebe"
+        }
+      }
+    }
+  ],
+  "boundary": "Two RF3/fsync shards in one isolated Docker network namespace, 256 rows per shard for the final matrix; 2 CPU and 1536 MiB cgroup limits. Correctness and fault-inclusive drill timings only; no independent-host failure-domain, online-overhead, PB-capacity or production-RTO claim.",
+  "failure_analysis": {
+    "cb-second.json": "Development missing optional membership field; fixed by returning explicit null.",
+    "cb-third.json": "Development nonexistent digest.hex API; replaced with hex encoding of the actual digest bytes.",
+    "cb-full-lua.json": "Concurrent trial passed offline logical audit but restored readiness timed out; election/replication timeout logs retained. Root cause not established.",
+    "cb-full-vinyl-native.json": "Concurrent trial lost writable leader before local-space control; root cause not established.",
+    "cb-final-memtx-lua.json": "Serial earlier trial lost writable leader before membership publication; timeout logs retained. Final fixture observes readiness before that mutation without resending any mutation. Root cause of transient role loss remains unproven.",
+    "cb-physical-regression.json": "The invocation reduced payload from the fixture default 4096 to 1024 bytes. The resulting 281688-byte backup completed too close to its 1-second lease-expiry threshold, so the expected-expiry assertion failed. The unchanged fixture passed at its documented default payload; this is an input-dependent control, not a backup code fix."
+  },
+  "development_boundary": "Exploratory results are not final acceptance evidence. Per-file hashes bind each recorded input; working-tree labels do not identify immutable commits. cb-full-lua and cb-full-vinyl-native overlapped. Original failed records and logs are preserved separately from later passes.",
+  "archives": [
+    {
+      "path": "development-logs.tar.gz",
+      "sha256": "745e05b888a98c3edd4a66b1cd2f014969657d7ab344dbdf775e3689cb80810d"
+    },
+    {
+      "path": "final-drill-logs-manifests.tar.gz",
+      "sha256": "62610f5ff34c25ecd555c9fcb111aba256e990374ffc35a60ce3d8d45d4a376a"
+    },
+    {
+      "path": "physical-regression-logs.tar.gz",
+      "sha256": "7f8c277d78866b3162e44855e09c667f88c801063c7b02b742c835665eaf11a4"
+    }
+  ],
+  "formal": {
+    "positive": "../../../tla/out/ClusterBackup.out",
+    "distinct_states": 52164,
+    "depth": 30,
+    "negative_controls": 6,
+    "boundary": "Bounded abstract backup protocol; relies on honest complete inventory, isolated networking, fsync and pinned Tarantool checkpoint/replication/read-only semantics; no whole-runtime refinement."
+  },
+  "physical_regression": [
+    {
+      "path": "development/cb-physical-regression.json",
+      "sha256": "77867479e6615e7050b0bc7332c2aefd74572a3472d4ce4fa3c7ed6e30897b57",
+      "completed": false,
+      "payload": 1024,
+      "source_revision": "1c601f8"
+    },
+    {
+      "path": "final/cb-physical-default.json",
+      "sha256": "bd593bca0bd5e7195f3b3db12af1730b5e6c3b6a6c00327ea1b18c904e4566c7",
+      "completed": true,
+      "payload": 4096,
+      "source_revision": "1c601f8"
+    }
+  ]
+}

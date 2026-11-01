@@ -1,0 +1,190 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 22 and seed -8171010019357749350 with 1 worker on 1 cores with 228MB heap and 64MB offheap memory [pid: 89] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/FileBackup.tla
+Parsing file /tmp/tlc-11662002553509040832/Naturals.tla (jar:file:/tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-11662002553509040832/FiniteSets.tla (jar:file:/tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-11662002553509040832/_TLCTrace.tla (jar:file:/tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-11662002553509040832/Sequences.tla (jar:file:/tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-11662002553509040832/TLC.tla (jar:file:/tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-11662002553509040832/TLCExt.tla (jar:file:/tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-11662002553509040832/Integers.tla (jar:file:/tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module FileBackup
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module FileBackup
+Starting... (2026-10-29 12:39:07)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-29 12:39:07.
+Error: Invariant RestoredChecked is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ publishedHeld = FALSE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = FALSE
+/\ identity = "none"
+/\ copied = {}
+/\ sound = {}
+/\ registered = FALSE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "none"
+
+State 2: <Register line 16, col 13 to line 18, col 113 of module FileBackup>
+/\ publishedHeld = FALSE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = FALSE
+/\ identity = "none"
+/\ copied = {}
+/\ sound = {}
+/\ registered = TRUE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "none"
+
+State 3: <Start line 19, col 10 to line 21, col 105 of module FileBackup>
+/\ publishedHeld = FALSE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = FALSE
+/\ identity = "none"
+/\ copied = {}
+/\ sound = {}
+/\ registered = TRUE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "held"
+
+State 4: <Copy("snapshot") line 28, col 12 to line 33, col 107 of module FileBackup>
+/\ publishedHeld = FALSE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = FALSE
+/\ identity = "none"
+/\ copied = {"snapshot"}
+/\ sound = {"snapshot"}
+/\ registered = TRUE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "held"
+
+State 5: <Copy("run") line 28, col 12 to line 33, col 107 of module FileBackup>
+/\ publishedHeld = FALSE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = FALSE
+/\ identity = "none"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"snapshot", "run"}
+/\ registered = TRUE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "held"
+
+State 6: <Publish line 34, col 12 to line 39, col 92 of module FileBackup>
+/\ publishedHeld = TRUE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = TRUE
+/\ identity = "none"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"snapshot", "run"}
+/\ registered = TRUE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "released"
+
+State 7: <Corrupt("snapshot") line 43, col 15 to line 45, col 110 of module FileBackup>
+/\ publishedHeld = TRUE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = TRUE
+/\ identity = "none"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"run"}
+/\ registered = TRUE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "released"
+
+State 8: <Restore("snapshot") line 46, col 15 to line 51, col 95 of module FileBackup>
+/\ publishedHeld = TRUE
+/\ restoreComplete = FALSE
+/\ restored = {"snapshot"}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = TRUE
+/\ identity = "none"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"run"}
+/\ registered = TRUE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "released"
+
+State 9: <Restore("run") line 46, col 15 to line 51, col 95 of module FileBackup>
+/\ publishedHeld = TRUE
+/\ restoreComplete = FALSE
+/\ restored = {"snapshot", "run"}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = TRUE
+/\ identity = "none"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"run"}
+/\ registered = TRUE
+/\ restoredSound = {"run"}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "released"
+
+State 10: <FinishRestore line 52, col 18 to line 57, col 103 of module FileBackup>
+/\ publishedHeld = TRUE
+/\ restoreComplete = TRUE
+/\ restored = {"snapshot", "run"}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = TRUE
+/\ identity = "seed"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"run"}
+/\ registered = TRUE
+/\ restoredSound = {"run"}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "released"
+
+999 states generated, 350 distinct states found, 62 states left on queue.
+The depth of the complete state graph search is 10.
+Finished in 00s at (2026-10-29 12:39:07)
+Trace exploration spec path: ./FileBackup_TTrace_1793277546.tla

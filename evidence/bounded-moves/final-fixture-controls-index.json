@@ -1,0 +1,48 @@
+{
+  "archive": {
+    "path": "final-fixture-controls.tar.gz",
+    "sha256": "a9c0dc976a11e5cd2f55b1b08fb00d3587cb00330c62dca929df84f375ac0d3b",
+    "files": 40
+  },
+  "source": "9af12c0 plus the fixture changes committed with this evidence; per-file hashes retained",
+  "topology": {
+    "groups": 8,
+    "gateways": 2,
+    "samples": 2,
+    "checks": [
+      {
+        "format1_gateway": "refused_format2",
+        "returncode": 1
+      },
+      {
+        "pair": 0,
+        "scan": "complete",
+        "rows": 8
+      },
+      {
+        "pair": 0,
+        "rc_scan": "complete",
+        "rows": 8
+      },
+      {
+        "pair": 1,
+        "scan": "complete",
+        "rows": 8
+      },
+      {
+        "pair": 1,
+        "rc_scan": "complete",
+        "rows": 8
+      }
+    ],
+    "completed": true,
+    "build": "unoptimized dev, RUST_MIN_STACK=16777216; functional control, not a performance comparison"
+  },
+  "lazy_clock": {
+    "result": "both engines passed",
+    "mode": "Lua",
+    "status_notification_control": true,
+    "previous_failure": "required clock peer was not ready before a one-shot PREPARE",
+    "first_focused_attempt": "ownership wrapper refused relative controller path; retained as failed startup"
+  }
+}

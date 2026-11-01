@@ -10,8 +10,8 @@ use crate::expr::{EvalCtx, Expr};
 use crate::normalize::LitName;
 use crate::plan::*;
 use crate::txn::{
-    count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, RangeRead, Route, Row,
-    StoragePred, Txn,
+    count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, Projection, RangeRead, Route,
+    Row, StoragePred, Txn,
 };
 use crate::types::{key_val_coll, sort_cmp, sort_cmp_coll, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
@@ -23,6 +23,8 @@ use tarn_iproto::Iter;
 
 mod colocated;
 pub(crate) mod diagnostics;
+mod pushdown;
+mod topk;
 
 async fn read_client(cluster: &Cluster, shard: usize) -> SqlResult<tarn_iproto::Client> {
     crate::observe::shard(shard);
@@ -63,10 +65,12 @@ enum Pages {
 /// RAND() and for expressions that fail on some rows.
 #[derive(Clone, Copy)]
 struct Keep<'a, 'c> {
+    topk: Option<topk::Spec<'a>>,
     filter: Option<&'a Expr>,
     cx: &'a EvalCtx<'c>,
     t: &'a TableDef,
     written: &'a BTreeSet<Bytes>,
+    project: Option<&'a Projection>,
 }
 
 impl Keep<'_, '_> {
@@ -78,7 +82,7 @@ impl Keep<'_, '_> {
                     if !self.written.is_empty() && self.written.contains(&crate::txn::key_bytes(&self.t.pk_key(&r))) {
                         continue;
                     }
-                    if f.eval_bool(&r, self.cx)? {
+                    if crate::budget::Frame::new().scope_sync(|| f.eval_bool(&r, self.cx))? {
                         out.push(r);
                     }
                 }
@@ -91,6 +95,7 @@ impl Keep<'_, '_> {
 /// The rows one index scan kept, with how many it read and the last row it
 /// read (before `Keep` filtered them): what the scan covered.
 struct Scanned {
+    _last_guard: Option<tarn_common::ResourceGuard>,
     rows: Vec<Row>,
     read: usize,
     last: Option<Row>,
@@ -114,45 +119,122 @@ async fn scan_pages(
 ) -> SqlResult<Scanned> {
     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
     let mut out = Scanned {
+        _last_guard: None,
         rows: Vec::new(),
         read: 0,
         last: None,
     };
     let mut after: Option<Vec<u8>> = None;
     let mut left = c.limit;
+    let mut top = keep.topk.map(topk::TopK::new).transpose()?;
     loop {
-        reads.fetch_add(1, AtomicOrdering::Relaxed);
-        let (rows, next) = select_rows(
-            client,
-            stream,
-            t,
-            index,
-            &c.key,
-            c.iter,
-            left,
-            end,
-            lock_check,
-            begin,
-            after.as_deref(),
-            route,
-        )
-        .await?;
-        begin = false;
-        if let Some(l) = left.as_mut() {
-            *l = l.saturating_sub(rows.len() as u32);
+        // Projection and top-K have disjoint eligibility. Keep the ordinary
+        // top-K page lifetime if a future caller supplies both options.
+        if top.is_none() {
+            if let Some(project) = keep.project {
+                reads.fetch_add(1, AtomicOrdering::Relaxed);
+                if let Some(page) = crate::txn::project_rows(
+                    client,
+                    stream,
+                    t,
+                    index,
+                    &c.key,
+                    c.iter,
+                    end,
+                    lock_check,
+                    begin,
+                    after.as_deref(),
+                    route,
+                    project,
+                )
+                .await?
+                {
+                    begin = false;
+                    out.read += page.read;
+                    if let Some(r) = page.last {
+                        out.last = Some(r);
+                    }
+                    keep.extend(&mut out.rows, page.rows)?;
+                    match (page.next, pages) {
+                        (None, _) => return Ok(out),
+                        (Some(_), Pages::One(e)) => return Err(e()),
+                        (Some(n), Pages::All) => {
+                            after = Some(n);
+                            continue;
+                        }
+                    }
+                }
+            }
         }
-        out.read += rows.len();
-        if let Some(r) = rows.last() {
-            out.last = Some(r.clone());
-        }
-        keep.extend(&mut out.rows, rows)?;
+        let frame = top.as_ref().map(|_| crate::budget::Frame::new());
+        let page = async {
+            reads.fetch_add(1, AtomicOrdering::Relaxed);
+            let (rows, next) = select_rows(
+                client,
+                stream,
+                t,
+                index,
+                &c.key,
+                c.iter,
+                left,
+                end,
+                lock_check,
+                begin,
+                after.as_deref(),
+                route,
+            )
+            .await?;
+            begin = false;
+            if let Some(l) = left.as_mut() {
+                *l = l.saturating_sub(rows.len() as u32);
+            }
+            out.read += rows.len();
+            if let Some(r) = rows.last() {
+                if top.is_some() {
+                    out._last_guard = crate::budget::retain(crate::budget::row_bytes(r) * 2)?;
+                }
+                out.last = Some(if top.is_some() {
+                    crate::budget::own_row(r.clone())
+                } else {
+                    r.clone()
+                });
+            }
+            if let Some(top) = &mut top {
+                for row in rows {
+                    let row_frame = crate::budget::Frame::new();
+                    row_frame.scope_sync(|| -> SqlResult<()> {
+                        if keep
+                            .filter
+                            .map(|f| f.eval_bool(&row, keep.cx))
+                            .transpose()?
+                            .unwrap_or(true)
+                        {
+                            top.push(row, keep.cx)?;
+                        }
+                        Ok(())
+                    })?;
+                }
+            } else {
+                keep.extend(&mut out.rows, rows)?;
+            }
+            Ok::<_, SqlError>(next)
+        };
+        let next = match &frame {
+            Some(frame) => frame.scope(page).await?,
+            None => page.await?,
+        };
+        drop(frame);
         match (next, pages) {
-            (None, _) => return Ok(out),
-            (Some(_), _) if left == Some(0) => return Ok(out),
+            (None, _) => break,
+            (Some(_), _) if left == Some(0) => break,
             (Some(_), Pages::One(e)) => return Err(e()),
             (Some(n), Pages::All) => after = Some(n),
         }
     }
+    if let Some(top) = top {
+        out.rows = top.finish()?;
+    }
+    Ok(out)
 }
 
 /// Every page of one multi-key read (`select_keys`) on one shard.
@@ -226,17 +308,37 @@ async fn committed_snapshot(
 ) -> SqlResult<Vec<Row>> {
     let mut attempt = 0;
     loop {
-        let mut snap = Txn::new(cluster, false);
-        snap.writes = txn.writes.clone(); // overlaid, never written
-        let res = select_once(cluster, &mut ReadMode::Txn(&mut snap), p, cx).await;
-        snap.writes.clear();
-        let res = match res {
-            Ok(v) => snap.commit(cluster).await.map(|_| v),
-            Err(e) => {
-                snap.rollback(cluster);
-                Err(e)
-            }
-        };
+        let frame = crate::budget::Frame::new();
+        let res = frame
+            .scope(Box::pin(async {
+                let mut snap = Txn::new(cluster, false);
+                crate::budget::charge(
+                    txn.writes
+                        .values()
+                        .fold(0u64, |n, w| {
+                            n.saturating_add(
+                                crate::budget::row_bytes(&w.pk)
+                                    + w.row.as_ref().map_or(0, |r| crate::budget::row_bytes(r)),
+                            )
+                        })
+                        .saturating_mul(2),
+                )?;
+                snap.writes = txn.writes.clone(); // overlaid, never written
+                let res = select_once(cluster, &mut ReadMode::Txn(&mut snap), p, cx).await;
+                snap.writes.clear();
+                match res {
+                    Ok(v) => snap.commit(cluster).await.map(|_| v),
+                    Err(e) => {
+                        snap.rollback(cluster);
+                        Err(e)
+                    }
+                }
+            }))
+            .await;
+        if res.is_ok() {
+            frame.retain_all();
+        }
+        drop(frame);
         match res {
             Err(e) if e.code == 1213 && !e.moved && attempt < crate::session::MAX_RETRIES => {
                 attempt += 1;
@@ -413,7 +515,7 @@ struct Call {
 
 /// Lexicographic order of index keys as the index holds them (as
 /// Tarantool orders them: a case-insensitive part is a binary weight string).
-fn key_cmp(a: &[Value], b: &[Value]) -> std::cmp::Ordering {
+pub(crate) fn key_cmp(a: &[Value], b: &[Value]) -> std::cmp::Ordering {
     for (x, y) in a.iter().zip(b) {
         let o = sort_cmp(x, y);
         if o != std::cmp::Ordering::Equal {
@@ -528,9 +630,9 @@ pub(crate) async fn fetch_keys(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (s, (ks, _)) in &per_shard {
-                let client = read_client(cluster, *s).await?;
                 let route = &routes[s];
                 futs.push(async move {
+                    let client = read_client(cluster, *s).await?;
                     keys_pages(
                         &client,
                         0,
@@ -548,11 +650,15 @@ pub(crate) async fn fetch_keys(
                     .await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 rows.extend(r?);
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(per_shard.keys().copied()),
+            )?;
             let mut futs = Vec::new();
             for (s, (ks, _)) in &per_shard {
                 let st = txn.stream(cluster, *s).await?;
@@ -564,7 +670,7 @@ pub(crate) async fn fetch_keys(
                     .await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 match r {
                     Ok(v) => rows.extend(v),
                     Err(e) => {
@@ -579,7 +685,7 @@ pub(crate) async fn fetch_keys(
                 txn.mark_begun(*s);
                 for (k, b) in ks.iter().zip(bs) {
                     if unique {
-                        txn.note_point(*s, t.space_id, idx.id, k.clone(), *b);
+                        txn.note_point(*s, t.space_id, idx.id, k.clone(), *b)?;
                     } else {
                         txn.note_range(
                             *s,
@@ -592,7 +698,7 @@ pub(crate) async fn fetch_keys(
                                 hi_incl: true,
                                 bucket: *b,
                             },
-                        );
+                        )?;
                     }
                 }
             }
@@ -864,10 +970,12 @@ async fn fetch_stored_from(
         _ => BTreeSet::new(),
     };
     let keep = Keep {
+        topk: None,
         filter,
         cx,
         t,
         written: &written,
+        project: None,
     };
     let scans = read_calls(cluster, &map, mode, t, index, calls, unique_point, keep).await?;
     Ok(scans.into_iter().flat_map(|s| s.rows).collect())
@@ -915,18 +1023,22 @@ async fn read_calls(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (c, route) in calls.iter().zip(&routes) {
-                let client = read_client(cluster, c.shard).await?;
-                futs.push(
-                    async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await },
-                );
+                futs.push(async move {
+                    let client = read_client(cluster, c.shard).await?;
+                    scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await
+                });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 let s = r?;
                 read += s.read;
                 out.push(s);
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(calls.iter().map(|c| c.shard)),
+            )?;
             let mut futs = Vec::new();
             for (c, route) in calls.iter().zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
@@ -937,7 +1049,7 @@ async fn read_calls(
                     .await
                 });
             }
-            let results = futures::future::join_all(futs).await;
+            let results = cluster.read_fanout(futs).await;
             // A call that a limit cut short read its range only up to the
             // last row it returned: record that much (issue #41), so that
             // writes to the unread rest of the range do not conflict.
@@ -967,7 +1079,7 @@ async fn read_calls(
             for (c, to) in calls.into_iter().zip(read_to) {
                 txn.mark_begun(c.shard);
                 if unique_point {
-                    txn.note_point(c.shard, t.space_id, index, c.key, c.bucket);
+                    txn.note_point(c.shard, t.space_id, index, c.key, c.bucket)?;
                 } else if let Some(mut r) = c.range {
                     match to {
                         Some(k) if matches!(c.iter, Iter::Le | Iter::Lt) => {
@@ -980,7 +1092,7 @@ async fn read_calls(
                         }
                         None => {}
                     }
-                    txn.note_range(c.shard, r);
+                    txn.note_range(c.shard, r)?;
                 }
             }
         }
@@ -1255,21 +1367,38 @@ fn append_join(
 ) -> SqlResult<()> {
     let mut matched = false;
     for r in right {
-        let mut row = left.clone();
-        row.resize(ta.offset, Value::Null);
-        row.extend(r);
-        if let Some(on) = on {
-            if !on.eval_bool(&row, cx)? {
-                continue;
+        let frame = crate::budget::Frame::new();
+        frame.scope_sync(|| -> SqlResult<()> {
+            crate::budget::work(1)?;
+            crate::budget::charge(
+                (crate::budget::row_bytes(&left)
+                    + crate::budget::row_bytes(&r)
+                    + (ta.offset as u64).saturating_mul(std::mem::size_of::<Value>() as u64))
+                .saturating_mul(2),
+            )?;
+            let mut row = left.clone();
+            row.resize(ta.offset, Value::Null);
+            row.extend(r);
+            if on.map(|on| on.eval_bool(&row, cx)).transpose()?.unwrap_or(true) {
+                // The enclosing lookup page can now be released. Retained
+                // join rows own their payload independently of that page.
+                crate::budget::persistent(crate::budget::row_bytes(&row).saturating_mul(4))?;
+                out.push(crate::budget::own_row(row));
+                matched = true;
             }
-        }
-        matched = true;
-        out.push(row);
+            Ok(())
+        })?;
     }
     if !matched && kind == JoinKind::Left {
+        crate::budget::charge(
+            (crate::budget::row_bytes(&left)
+                + ((ta.offset + ta.table.columns.len()) as u64).saturating_mul(std::mem::size_of::<Value>() as u64))
+            .saturating_mul(2),
+        )?;
         let mut row = left;
         row.resize(ta.offset + ta.table.columns.len(), Value::Null);
-        out.push(row);
+        crate::budget::persistent(crate::budget::row_bytes(&row).saturating_mul(4))?;
+        out.push(crate::budget::own_row(row));
     }
     Ok(())
 }
@@ -1364,7 +1493,7 @@ async fn colocated_rows(
         for (r, group) in reads.iter().zip(&groups) {
             for key in &group.keys {
                 if key.len() == r.table.indexes[0].cols.len() {
-                    txn.note_point(shard, r.table.space_id, 0, key.clone(), Some(bucket));
+                    txn.note_point(shard, r.table.space_id, 0, key.clone(), Some(bucket))?;
                 } else {
                     txn.note_range(
                         shard,
@@ -1377,7 +1506,7 @@ async fn colocated_rows(
                             hi_incl: true,
                             bucket: Some(bucket),
                         },
-                    );
+                    )?;
                 }
             }
         }
@@ -1395,7 +1524,7 @@ async fn colocated_rows(
             .iter()
             .map(|left| lk.keys_of(&ta.table, idx, left, cx))
             .collect::<SqlResult<Vec<_>>>()?;
-        let rights = distribute(&ta.table, idx, lk.len, wanted, group.rows, &[]);
+        let rights = distribute(&ta.table, idx, lk.len, wanted, group.rows, &[])?;
         let mut out = Vec::new();
         for (left, right) in rows.into_iter().zip(rights) {
             append_join(&mut out, left, right, ta, *kind, *on, cx)?;
@@ -1442,8 +1571,13 @@ async fn source_rows(
         match Lookup::of(cluster.nlive(), matches!(mode, ReadMode::Committed(_)), ta) {
             None => {
                 for left in rows {
-                    let right = fetch(cluster, mode, ta, &left, cx).await?;
-                    join(left, right)?;
+                    let frame = crate::budget::Frame::new();
+                    frame
+                        .scope(Box::pin(async {
+                            let right = fetch(cluster, mode, ta, &left, cx).await?;
+                            join(left, right)
+                        }))
+                        .await?;
                 }
             }
             Some(lk) => {
@@ -1452,22 +1586,28 @@ async fn source_rows(
                 let mut rest = rows.into_iter().peekable();
                 while rest.peek().is_some() {
                     let batch: Vec<Row> = rest.by_ref().take(n).collect();
-                    let rights = match lookup_batch(cluster, mode, ta, &lk, &batch, cx).await {
-                        // A batch longer than one storage page at READ
-                        // COMMITTED: each outer row's lookup on its own,
-                        // as before, rather than the statement in a snapshot.
-                        Err(e) if e.code == NEED_SNAPSHOT && matches!(mode, ReadMode::Statement(_)) => {
-                            let mut v = Vec::with_capacity(batch.len());
-                            for left in &batch {
-                                v.push(fetch(cluster, mode, ta, left, cx).await?);
+                    let frame = crate::budget::Frame::new();
+                    frame
+                        .scope(Box::pin(async {
+                            let rights = match lookup_batch(cluster, mode, ta, &lk, &batch, cx).await {
+                                // A batch longer than one storage page at READ
+                                // COMMITTED: each outer row's lookup on its own,
+                                // as before, rather than the statement in a snapshot.
+                                Err(e) if e.code == NEED_SNAPSHOT && matches!(mode, ReadMode::Statement(_)) => {
+                                    let mut v = Vec::with_capacity(batch.len());
+                                    for left in &batch {
+                                        v.push(fetch(cluster, mode, ta, left, cx).await?);
+                                    }
+                                    v
+                                }
+                                r => r?,
+                            };
+                            for (left, right) in batch.into_iter().zip(rights) {
+                                join(left, right)?;
                             }
-                            v
-                        }
-                        r => r?,
-                    };
-                    for (left, right) in batch.into_iter().zip(rights) {
-                        join(left, right)?;
-                    }
+                            Ok::<_, SqlError>(())
+                        }))
+                        .await?;
                 }
             }
         }
@@ -1477,7 +1617,7 @@ async fn source_rows(
 }
 
 /// Outer rows whose inner rows one batched lookup reads (issue #84).
-const JOIN_BATCH: usize = 256;
+pub(crate) const JOIN_BATCH: usize = 256;
 
 /// How the inner table of a join is reached by equality on an index key or
 /// key prefix (the usual join): the lookups of a batch of outer rows can then
@@ -1623,7 +1763,7 @@ async fn lookup_batch(
         }
         ReadMode::Auto { .. } => (stored, Vec::new()),
     };
-    Ok(distribute(t, idx, lk.len, wanted, stored, &own))
+    distribute(t, idx, lk.len, wanted, stored, &own)
 }
 
 /// Each outer row's inner rows, from the rows a batched lookup read
@@ -1639,7 +1779,8 @@ fn distribute(
     wanted: Vec<Vec<Vec<Value>>>,
     stored: Vec<Row>,
     own: &[Row],
-) -> Vec<Vec<Row>> {
+) -> SqlResult<Vec<Vec<Row>>> {
+    crate::budget::decoded(0, stored.len(), len)?;
     let mut stored: Vec<(Vec<Value>, Row)> = stored
         .into_iter()
         .map(|r| {
@@ -1656,10 +1797,16 @@ fn distribute(
             for k in ks {
                 let lo = stored.partition_point(|(x, _)| key_cmp(x, &k) == std::cmp::Ordering::Less);
                 let hi = stored.partition_point(|(x, _)| key_cmp(x, &k) != std::cmp::Ordering::Greater);
+                crate::budget::charge(stored[lo..hi].iter().fold(0u64, |n, (_, r)| {
+                    n.saturating_add(crate::budget::row_bytes(r).saturating_mul(2))
+                }))?;
                 v.extend(stored[lo..hi].iter().map(|(_, r)| r.clone()));
             }
+            crate::budget::charge(own.iter().fold(0u64, |n, r| {
+                n.saturating_add(crate::budget::row_bytes(r).saturating_mul(2))
+            }))?;
             v.extend(own.iter().cloned());
-            v
+            Ok(v)
         })
         .collect()
 }
@@ -1831,49 +1978,88 @@ impl AggState {
 }
 
 fn aggregate(rows: Vec<Row>, ap: &AggPlan, cx: &EvalCtx) -> SqlResult<Vec<Row>> {
+    let n = rows.len() as u64;
+    crate::budget::work(
+        n.saturating_mul(n.max(1).ilog2() as u64 + 1)
+            .saturating_mul(ap.aggs.iter().map(|a| a.order.len() as u64).sum::<u64>() + 1)
+            .saturating_mul(4),
+    )?;
     let mut order: Vec<Vec<KeyVal>> = Vec::new();
     let mut groups: HashMap<Vec<KeyVal>, (Vec<Value>, Vec<AggState>, Vec<HashSet<KeyVal>>)> = HashMap::new();
     for row in &rows {
-        let gv: Vec<Value> = ap.group.iter().map(|g| g.eval(row, cx)).collect::<SqlResult<_>>()?;
-        let gk: Vec<KeyVal> = gv
-            .iter()
-            .zip(&ap.group_coll)
-            .map(|(v, c)| key_val_coll(v, *c))
-            .collect();
-        let entry = groups.entry(gk.clone()).or_insert_with(|| {
-            order.push(gk);
-            (
-                gv,
-                ap.aggs.iter().map(AggState::new).collect(),
-                ap.aggs.iter().map(|_| HashSet::new()).collect(),
-            )
-        });
-        for (i, a) in ap.aggs.iter().enumerate() {
-            let v = match &a.arg {
-                Some(e) => Some(e.eval(row, cx)?),
-                None => None,
-            };
-            if a.distinct {
-                if let Some(x) = &v {
-                    if x.is_null() || !entry.2[i].insert(key_val_coll(x, a.coll)) {
-                        continue;
+        let frame = crate::budget::Frame::new();
+        frame.scope_sync(|| -> SqlResult<()> {
+            crate::budget::work(1)?;
+            crate::budget::charge(
+                crate::budget::row_bytes(row)
+                    .saturating_mul(16)
+                    .saturating_add((ap.aggs.len() as u64).saturating_mul(512)),
+            )?;
+            let gv: Vec<Value> = ap.group.iter().map(|g| g.eval(row, cx)).collect::<SqlResult<_>>()?;
+            let gk: Vec<KeyVal> = gv
+                .iter()
+                .zip(&ap.group_coll)
+                .map(|(v, c)| key_val_coll(v, *c))
+                .collect();
+            if !groups.contains_key(&gk) {
+                crate::budget::persistent(
+                    crate::budget::row_bytes(&gv)
+                        .saturating_mul(16)
+                        .saturating_add((ap.aggs.len() as u64).saturating_mul(1024)),
+                )?;
+            }
+            let entry = groups.entry(gk.clone()).or_insert_with(|| {
+                order.push(gk);
+                (
+                    gv,
+                    ap.aggs.iter().map(AggState::new).collect(),
+                    ap.aggs.iter().map(|_| HashSet::new()).collect(),
+                )
+            });
+            for (i, a) in ap.aggs.iter().enumerate() {
+                let v = match &a.arg {
+                    Some(e) => Some(e.eval(row, cx)?),
+                    None => None,
+                };
+                if a.distinct {
+                    if let Some(x) = &v {
+                        let key = key_val_coll(x, a.coll);
+                        if x.is_null() || entry.2[i].contains(&key) {
+                            continue;
+                        }
+                        crate::budget::persistent(crate::budget::value_bytes(x).saturating_mul(16))?;
+                        entry.2[i].insert(key);
                     }
                 }
-            }
-            if a.func == AggFunc::GroupConcat && !a.order.is_empty() {
-                if let Some(x) = v {
-                    if !x.is_null() {
-                        let keys: Vec<Value> =
-                            a.order.iter().map(|(e, _)| e.eval(row, cx)).collect::<SqlResult<_>>()?;
-                        if let AggState::Concat(parts) = &mut entry.1[i] {
-                            parts.push((keys, x.to_text().unwrap_or_default()));
+                if matches!(
+                    a.func,
+                    AggFunc::Min | AggFunc::Max | AggFunc::AnyValue | AggFunc::GroupConcat
+                ) {
+                    if let Some(x) = &v {
+                        crate::budget::persistent(
+                            crate::budget::value_bytes(x)
+                                .saturating_mul(4)
+                                .saturating_add((a.order.len() as u64).saturating_mul(128)),
+                        )?;
+                    }
+                }
+                if a.func == AggFunc::GroupConcat && !a.order.is_empty() {
+                    if let Some(x) = v {
+                        if !x.is_null() {
+                            let keys: Vec<Value> =
+                                a.order.iter().map(|(e, _)| e.eval(row, cx)).collect::<SqlResult<_>>()?;
+                            crate::budget::persistent(crate::budget::row_bytes(&keys).saturating_mul(4))?;
+                            if let AggState::Concat(parts) = &mut entry.1[i] {
+                                parts.push((keys, x.to_text().unwrap_or_default()));
+                            }
                         }
                     }
+                    continue;
                 }
-                continue;
+                entry.1[i].add(a.func, a.coll, v);
             }
-            entry.1[i].add(a.func, a.coll, v);
-        }
+            Ok(())
+        })?;
     }
     if groups.is_empty() && ap.group.is_empty() {
         // aggregate over an empty input still yields one row
@@ -1979,13 +2165,16 @@ struct Atom<'e> {
 /// The comparisons a conjunct consists of, if it is a column compared with
 /// constants by bytes (not under a case-insensitive collation); `IS [NOT]
 /// NULL` and `IN` lists come back as storage predicates directly.
-fn conjunct_atoms<'e>(e: &'e Expr, ncols: usize) -> Option<(Vec<Atom<'e>>, Option<(usize, bool, &'e [Expr])>)> {
+fn conjunct_atoms<'e>(e: &'e Expr, t: &TableDef) -> Option<(Vec<Atom<'e>>, Option<(usize, bool, &'e [Expr])>)> {
     let col = |x: &Expr| match x {
-        Expr::Col(c) if *c < ncols => Some(*c),
+        Expr::Col(c) if *c < t.columns.len() => Some(*c),
         _ => None,
     };
+    // Numeric comparisons ignore the connection's fallback collation.
+    // Text still needs the exact byte-comparison contract below.
+    let allowed = |c: usize, coll: &Collation| t.columns[c].ty().is_integer() || !coll.is_ci();
     match e {
-        Expr::Cmp(a, op, b, coll) if !coll.is_ci() => {
+        Expr::Cmp(a, op, b, coll) => {
             let (c, arg, op) = match (col(a), col(b)) {
                 (Some(c), None) if b.is_constant() => (c, &**b, *op),
                 (None, Some(c)) if a.is_constant() => (
@@ -2001,10 +2190,16 @@ fn conjunct_atoms<'e>(e: &'e Expr, ncols: usize) -> Option<(Vec<Atom<'e>>, Optio
                 ),
                 _ => return None,
             };
+            if !allowed(c, coll) {
+                return None;
+            }
             Some((vec![Atom { col: c, op, arg }], None))
         }
-        Expr::Between(x, lo, hi, false, coll) if !coll.is_ci() && lo.is_constant() && hi.is_constant() => {
+        Expr::Between(x, lo, hi, false, coll) if lo.is_constant() && hi.is_constant() => {
             let c = col(x)?;
+            if !allowed(c, coll) {
+                return None;
+            }
             Some((
                 vec![
                     Atom {
@@ -2021,8 +2216,11 @@ fn conjunct_atoms<'e>(e: &'e Expr, ncols: usize) -> Option<(Vec<Atom<'e>>, Optio
                 None,
             ))
         }
-        Expr::InList(x, list, false, coll) if !coll.is_ci() && list.iter().all(|v| v.is_constant()) => {
+        Expr::InList(x, list, false, coll) if list.iter().all(|v| v.is_constant()) => {
             let c = col(x)?;
+            if !allowed(c, coll) {
+                return None;
+            }
             if list.len() == 1 {
                 return Some((
                     vec![Atom {
@@ -2135,13 +2333,27 @@ fn count_preds(p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Option<Vec<Storage
             int: false,
         });
     }
+    let Some(residual) = storage_preds(p, cx)? else {
+        return Ok(None);
+    };
+    preds.extend(residual);
+    Ok(Some(preds))
+}
+
+/// Exact, deterministic residual predicates shared by COUNT, projection,
+/// and typed partial aggregates. An unsupported conjunct rejects the whole
+/// pushdown; no partially filtered result can replace ordinary execution.
+fn storage_preds(p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Option<Vec<StoragePred>>> {
+    let Source::Table(ta) = &p.source else { return Ok(None) };
+    let t = &ta.table;
+    let mut preds = Vec::new();
     let mut conj = Vec::new();
     if let Some(f) = &p.filter {
         split_conj(f, &mut conj);
     }
     let covered = path_atoms(t, &ta.path);
     for e in conj {
-        let Some((atoms, other)) = conjunct_atoms(e, ncols) else {
+        let Some((atoms, other)) = conjunct_atoms(e, t) else {
             return Ok(None);
         };
         if let Some((c, not_null, list)) = other {
@@ -2322,18 +2534,22 @@ async fn storage_count(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
-                let client = read_client(cluster, c.shard).await?;
                 let preds = &preds;
                 futs.push(async move {
+                    let client = read_client(cluster, c.shard).await?;
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
                     count_rows(&client, 0, t, index, &c.key, c.iter, end, preds, ex, true, false, route).await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 n += r?;
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(calls.iter().map(|c| c.shard)),
+            )?;
             let mut futs = Vec::new();
             for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
@@ -2346,7 +2562,7 @@ async fn storage_count(
                     .await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 match r {
                     Ok(k) => n += k,
                     Err(e) => {
@@ -2360,7 +2576,7 @@ async fn storage_count(
             for c in calls {
                 txn.mark_begun(c.shard);
                 if let Some(r) = c.range {
-                    txn.note_range(c.shard, r);
+                    txn.note_range(c.shard, r)?;
                 }
             }
         }
@@ -2381,7 +2597,13 @@ pub async fn run_select(
     p: &SelectPlan,
     cx: &EvalCtx<'_>,
 ) -> SqlResult<Vec<Row>> {
-    match select_once(cluster, mode, p, cx).await {
+    let frame = crate::budget::Frame::new();
+    let result = frame.scope(select_once(cluster, mode, p, cx)).await;
+    if result.is_ok() {
+        frame.retain_all();
+    }
+    drop(frame);
+    match result {
         Err(e) if e.code == NEED_SNAPSHOT => match mode {
             ReadMode::Statement(txn) => committed_snapshot(cluster, txn, p, cx).await,
             _ => Err(SqlError::internal("a read asked for a snapshot outside READ COMMITTED")),
@@ -2401,15 +2623,26 @@ async fn select_once(
         let row: Row = ap.aggs.iter().map(|_| Value::Int(n as i64)).collect();
         return finish_aggregated(vec![row], p, cx);
     }
+    if cluster.cfg.query_pushdown {
+        if let Some(row) = pushdown::reduce(cluster, mode, p, cx).await? {
+            return finish_aggregated(vec![row], p, cx);
+        }
+        if let Some(rows) = pushdown::project(cluster, mode, p, cx).await? {
+            return finish_select(rows, p, cx);
+        }
+    }
     let ordered = ordered_instead(cluster, p, cx).await?;
     if let Some(rows) = paged_select(cluster, mode, p, ordered.as_ref(), cx).await? {
+        return Ok(rows);
+    }
+    if let Some(rows) = topk::select(cluster, mode, p, cx).await? {
         return Ok(rows);
     }
     let filter = |rows: Vec<Row>| -> SqlResult<Vec<Row>> {
         let Some(f) = &p.filter else { return Ok(rows) };
         let mut kept = Vec::with_capacity(rows.len());
         for r in rows {
-            if f.eval_bool(&r, cx)? {
+            if crate::budget::Frame::new().scope_sync(|| f.eval_bool(&r, cx))? {
                 kept.push(r);
             }
         }
@@ -2715,7 +2948,7 @@ async fn estimate(
         Some(_) => m.str("EQ"),
         None => m.nil(),
     };
-    let d = cluster.call(shard, "tarn_estimate", &m.0).await?;
+    let (d, _wire) = crate::budget::cluster_read(cluster, shard, "tarn_estimate", &m.0).await?;
     let (_, mut rd) = crate::mpw::lua_status(&d)?;
     let mut n = || -> SqlResult<Option<u64>> {
         match rd.value()? {
@@ -2746,15 +2979,25 @@ fn finish_aggregated(mut rows: Vec<Row>, p: &SelectPlan, cx: &EvalCtx<'_>) -> Sq
     if let Some(h) = &p.having {
         let mut kept = Vec::with_capacity(rows.len());
         for r in rows {
-            if h.eval_bool(&r, cx)? {
+            if crate::budget::Frame::new().scope_sync(|| h.eval_bool(&r, cx))? {
                 kept.push(r);
             }
         }
         rows = kept;
     }
     if !p.order.is_empty() {
+        let n = rows.len() as u64;
+        crate::budget::work(
+            n.saturating_mul(n.max(1).ilog2() as u64 + 1)
+                .saturating_mul(p.order.len() as u64)
+                .saturating_mul(4),
+        )?;
+        // Rows move into the sort without cloning their payload. Reserve
+        // key vectors, indices and stable-sort scratch, not the input again.
+        crate::budget::charge(n.saturating_mul(192))?;
         let mut keyed: Vec<(Vec<Value>, Row)> = Vec::with_capacity(rows.len());
         for r in rows {
+            crate::budget::charge((p.order.len() as u64).saturating_mul(128))?;
             let k: Vec<Value> = p.order.iter().map(|(e, _)| e.eval(&r, cx)).collect::<SqlResult<_>>()?;
             keyed.push((k, r));
         }
@@ -2776,7 +3019,13 @@ fn finish_aggregated(mut rows: Vec<Row>, p: &SelectPlan, cx: &EvalCtx<'_>) -> Sq
     let mut seen: HashSet<Vec<KeyVal>> = HashSet::new();
     let mut skipped = 0usize;
     for r in rows {
+        crate::budget::work(1)?;
+        crate::budget::charge((p.project.len() as u64).saturating_mul(128))?;
         let pr: Row = p.project.iter().map(|e| e.eval(&r, cx)).collect::<SqlResult<_>>()?;
+        crate::budget::row(&pr)?;
+        if p.distinct {
+            crate::budget::charge(crate::budget::row_bytes(&pr).saturating_mul(16))?;
+        }
         if p.distinct
             && !seen.insert(
                 pr.iter()
@@ -2801,24 +3050,46 @@ fn finish_aggregated(mut rows: Vec<Row>, p: &SelectPlan, cx: &EvalCtx<'_>) -> Sq
     Ok(out)
 }
 
-fn sort_rows(rows: &mut [Row], order: &[(Expr, bool)], cx: &EvalCtx<'_>) {
+fn sort_rows(rows: &mut [Row], order: &[(Expr, bool)], cx: &EvalCtx<'_>) -> SqlResult<()> {
     if order.is_empty() {
-        return;
+        return Ok(());
     }
-    rows.sort_by(|a, b| {
-        for (e, desc) in order {
-            let (x, y) = (
-                e.eval(a, cx).unwrap_or(Value::Null),
-                e.eval(b, cx).unwrap_or(Value::Null),
-            );
-            let o = sort_cmp(&x, &y);
+    let n = rows.len() as u64;
+    crate::budget::charge(n.saturating_mul(64 + (order.len() as u64).saturating_mul(128)))?;
+    crate::budget::work(
+        n.saturating_mul(n.max(1).ilog2() as u64 + 1)
+            .saturating_mul(order.len() as u64)
+            .saturating_mul(4),
+    )?;
+    let mut keyed = rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let keys = order
+                .iter()
+                .map(|(e, _)| e.eval(row, cx))
+                .collect::<SqlResult<Vec<_>>>()?;
+            Ok((keys, i))
+        })
+        .collect::<SqlResult<Vec<_>>>()?;
+    keyed.sort_by(|a, b| {
+        for (i, (_, desc)) in order.iter().enumerate() {
+            let o = sort_cmp(&a.0[i], &b.0[i]);
             let o = if *desc { o.reverse() } else { o };
-            if o != std::cmp::Ordering::Equal {
+            if o.is_ne() {
                 return o;
             }
         }
         std::cmp::Ordering::Equal
     });
+    let reordered = keyed
+        .into_iter()
+        .map(|(_, i)| std::mem::take(&mut rows[i]))
+        .collect::<Vec<_>>();
+    for (row, new) in rows.iter_mut().zip(reordered) {
+        *row = new;
+    }
+    Ok(())
 }
 
 /// Primary key of the row of `t` at `offset` in `row`, as the index holds
@@ -3051,7 +3322,7 @@ pub async fn candidate_rows(
             out.push(r);
         }
     }
-    sort_rows(&mut out, order, cx);
+    sort_rows(&mut out, order, cx)?;
     Ok(out)
 }
 
@@ -3090,7 +3361,7 @@ pub async fn run_locking_select(
         let Some(f) = &p.filter else { return Ok(rows) };
         let mut kept = Vec::with_capacity(rows.len());
         for r in rows {
-            if f.eval_bool(&r, cx)? {
+            if crate::budget::Frame::new().scope_sync(|| f.eval_bool(&r, cx))? {
                 kept.push(r);
             }
         }
@@ -3124,7 +3395,7 @@ pub async fn run_locking_select(
             };
             let mut rows = filter(rows)?;
             if plain {
-                sort_rows(&mut rows, &p.order, cx);
+                sort_rows(&mut rows, &p.order, cx)?;
             }
             rows
         }
@@ -3610,10 +3881,12 @@ impl Pager {
         }
         let none = BTreeSet::new();
         let keep = Keep {
+            topk: None,
             filter: None,
             cx,
             t,
             written: &none,
+            project: None,
         };
         let index = path_index(&self.ta.path);
         let scans = read_calls(cluster, &self.map, mode, t, index, calls, false, keep).await?;
@@ -3762,6 +4035,7 @@ mod tests {
                   price DECIMAL(10,2), PRIMARY KEY (tenant_id, id), KEY st (tenant_id, closed_at, deleted))";
         let c0 = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -3780,6 +4054,7 @@ mod tests {
         let cat = catalog();
         let n = normalize(sql, Mode::Literals).unwrap();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &n.params,
@@ -3800,6 +4075,28 @@ mod tests {
             now: "2026-01-02 03:04:05",
         };
         count_preds(&p, &cx).unwrap()
+    }
+
+    #[test]
+    fn numeric_storage_atoms_ignore_the_connection_collation() {
+        let t = catalog().get("d", "o").unwrap();
+        let ci = Collation::General { pad: true };
+        let lit = || Box::new(Expr::Lit(Value::Int(1)));
+        let integer = || Box::new(Expr::Col(1));
+        for e in [
+            Expr::Cmp(integer(), CmpOp::Eq, lit(), ci),
+            Expr::Between(integer(), lit(), lit(), false, ci),
+            Expr::InList(integer(), vec![Expr::Lit(Value::Int(1))], false, ci),
+        ] {
+            assert!(conjunct_atoms(&e, &t).is_some());
+        }
+        let text = Expr::Cmp(
+            Box::new(Expr::Col(4)),
+            CmpOp::Eq,
+            Box::new(Expr::Lit(Value::str("x"))),
+            ci,
+        );
+        assert!(conjunct_atoms(&text, &t).is_none());
     }
 
     #[test]
@@ -3938,6 +4235,7 @@ mod tests {
         .enumerate()
         {
             let ctx = PlanCtx {
+                statistics: None,
                 catalog: &c0,
                 db: Some("d"),
                 params: &[],
@@ -3952,6 +4250,7 @@ mod tests {
         }
         let cat = Catalog::new(1, vec!["d".into()], defs);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
@@ -4001,7 +4300,7 @@ mod tests {
         let wanted = vec![vec![k(2)], vec![k(1)], vec![], vec![k(2)], vec![k(3)]];
         let stored = vec![row(2, 1), row(1, 5), row(2, 0), row(1, 4)];
         let own = vec![row(9, 9)];
-        let got = distribute(t, idx, 1, wanted, stored, &own);
+        let got = distribute(t, idx, 1, wanted, stored, &own).unwrap();
         assert_eq!(
             got,
             vec![
@@ -4023,7 +4322,8 @@ mod tests {
             ]],
             vec![row(2, 1), row(1, 4), row(1, 5)],
             &[],
-        );
+        )
+        .unwrap();
         assert_eq!(got, vec![vec![row(1, 4), row(2, 1)]]);
     }
 
@@ -4287,6 +4587,7 @@ mod tests {
     fn decimal_join_access(create: &str, index: &str, len: usize, point: bool) -> TableAccess {
         let cat = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],

@@ -1,0 +1,51 @@
+{
+  "format": "tarn-cluster-backup-drill-v1",
+  "settings": {
+    "work": "/tmp/cb-full-vinyl-native",
+    "engine": "vinyl",
+    "rows": 256,
+    "output": "/work/cb-full-vinyl-native.json"
+  },
+  "checks": [
+    "two RF3/fsync shards loaded through Tarn mutation procedures",
+    "published membership version is present and ready on both shards",
+    "configured native dispatch or explicit Lua-only path exercised"
+  ],
+  "source_revision": "working-tree",
+  "source_sha256": {
+    "scripts/cluster_backup.py": "d764242eb578b2b85ad92f8fe5513b0b857c3d0e39923d7b9016bbcb990b829a",
+    "scripts/backup.py": "30735453ade038e53e6a18b23867519d37cb07368ecd152d18a14b3d2f197435",
+    "scripts/backup_rpc.lua": "87aba68182c2595bd6d2a2ab45bf6e6a424f3e130f7fe4497b80560b2ed0aced",
+    "tests/cluster_backup.py": "44e519775ab50f0d0c961f00efd761c45e2a1195b4986c3224a835d0c74e8a91",
+    "tests/cluster_backup_setup.lua": "98d61af73bb811fc67e43dc387ce5994f678d08292caef787d2e7c489576a99e",
+    "lua/storage.lua": "75a38e76134b55d01a5bb4e74befba0e72bb34a114bcdc18f2f55a13e5aa0b40",
+    "lua/tarn.lua": "6de5f2ead48f707a0d04526cf08d40f1407ac4241a10066aee1180d8c9bbfb83",
+    "lua/tarn_backup.lua": "6553ee7d54755680a79247929f12b21cfc81a55b6972f85b435c68437d9f20f3",
+    "lua/tarn_clock.lua": "8868417bc1ce33cdaa6a1589e3df9067936b870995e9b239fea589dc737e26e9",
+    "lua/tarn_engine.lua": "23bd5cc896244757760082b49b6d9c26c80a4d60bfbc93abeade8e74097a1f2f",
+    "lua/tarn_fresh.lua": "0adfcb894eace1fb9e69db9baa718dd9b321ab487a957457dd74f6f697b370f2",
+    "lua/tarn_lazy.lua": "717989b887f34aaf352f6cd20d50015055c1a5d5bd6838a5d2e9a50798a83808",
+    "lua/tarn_lazy_meter.lua": "163f3b32824051c2035a787e9c7044046f6627aa06f5faeb1d64ec82eb07c6ab",
+    "lua/tarn_vinyl.lua": "71a928397640a66f55f742b1d75cc6956a4f2db6132750480bc52b49dfe23abd"
+  },
+  "native": "/out/target/release/libtarn_storage.so",
+  "boundary": "same-host RF3 correctness and outage timings; not independent failure domains or production capacity",
+  "native_probe": {
+    "validations_to_lua": 0,
+    "commits_to_lua": 0,
+    "served": 0,
+    "to_lua": 0,
+    "validations": 0,
+    "ready": 1,
+    "commits": 0,
+    "fallbacks": {
+      "write": {
+        "vinyl": 1
+      }
+    },
+    "writes": 0,
+    "writes_to_lua": 1
+  },
+  "status": "failed",
+  "error": "Can't modify data on a read-only instance - state is election follower with term 2, synchro queue with term 2 belongs to 1 (ea0aa898-d843-4189-91f0-248234b179c7) and is frozen until promotion {\"type\":\"ClientError\",\"code\":7,\"name\":\"READONLY\",\"reason\":\"synchro\",\"state\":\"follower\",\"term\":2,\"queue_owner_id\":1,\"queue_term\":2,\"queue_owner_uuid\":ea0aa898-d843-4189-91f0-248234b179c7,\"trace\":[{\"file\":\"eval\",\"line\":1}]}\nfatal error, exiting the event loop\n"
+}

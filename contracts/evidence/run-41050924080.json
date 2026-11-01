@@ -1,0 +1,80 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/41050924080",
+  "scope": "Current-main contract matrix: the pinned MySQL half of the native-memtx prepared paged-read history failed to witness overlap after the Tarn half passed. Three other modes passed. No production consistency failure was observed by this assertion.",
+  "archive": "run-41050924080.tar.gz",
+  "bytes": 46518,
+  "sha256": "57ffddc21fb033d574dea1320de57d4ef1251c21038e012c6fb4b7acff2ab8e5",
+  "results": [
+    {
+      "path": "contracts-memtx-disabled-41050924080/contract-results/results.json",
+      "sha256": "ef89823b1e50eb3487b8ceb985af63ea7c1be756946bb2a5537d8382472ed3df",
+      "complete": true,
+      "error": null,
+      "cases": 56,
+      "failures": 0,
+      "failed": []
+    },
+    {
+      "path": "contracts-memtx-enabled-41050924080/contract-results/results.json",
+      "sha256": "d4488a1e2b145ca38a7bf369264e87acea42d7a9adbddde72d00823a12e29cba",
+      "complete": true,
+      "error": null,
+      "cases": 56,
+      "failures": 1,
+      "failed": [
+        {
+          "id": "rc_paged_snapshot",
+          "prepared": true,
+          "classification": "difference",
+          "results": [
+            {
+              "rows": 10000,
+              "writes": 30,
+              "overlapping_reads": 1,
+              "reads": [
+                {
+                  "begin": 133.348998216,
+                  "end": 133.433692494,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 134.576405624,
+                  "end": 134.659869245,
+                  "rows": 10000,
+                  "error": null
+                },
+                {
+                  "begin": 134.661114563,
+                  "end": 134.779191605,
+                  "rows": 10000,
+                  "error": null
+                }
+              ]
+            }
+          ],
+          "passed": false,
+          "error": "AssertionError('no observed write completion during a scan')"
+        }
+      ]
+    },
+    {
+      "path": "contracts-vinyl-disabled-41050924080/contract-results/results.json",
+      "sha256": "d1fa3fe8ba387a05a37d06a53ceeff95d3d27b349cf2ffa8b682e9fa19b402e3",
+      "complete": true,
+      "error": null,
+      "cases": 56,
+      "failures": 0,
+      "failed": []
+    },
+    {
+      "path": "contracts-vinyl-enabled-41050924080/contract-results/results.json",
+      "sha256": "688cc66e52e6d298ca8a72b74948ff40e20257f1384a9972c5d5c80156be7693",
+      "complete": true,
+      "error": null,
+      "cases": 56,
+      "failures": 0,
+      "failed": []
+    }
+  ]
+}

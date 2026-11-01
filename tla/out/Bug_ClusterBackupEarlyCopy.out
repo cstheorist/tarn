@@ -1,0 +1,201 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 109 and seed -7048866753605335709 with 1 worker on 2 cores with 683MB heap and 64MB offheap memory [pid: 52] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/ClusterBackup.tla
+Parsing file /tmp/tlc-12752213468284867837/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-12752213468284867837/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-12752213468284867837/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-12752213468284867837/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-12752213468284867837/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-12752213468284867837/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-12752213468284867837/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module ClusterBackup
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module ClusterBackup
+Starting... (2026-10-29 18:30:37)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-29 18:30:37.
+Error: Invariant CoherentData is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ durable = {}
+/\ cut = FALSE
+/\ fenced = {}
+/\ metadata = {}
+/\ data = <<0, 0, 0, 0>>
+/\ checked = FALSE
+/\ copied = {}
+/\ restored = {}
+/\ pending = {}
+/\ acknowledged = FALSE
+/\ serving = FALSE
+/\ failed = FALSE
+/\ complete = FALSE
+/\ live = 1..4
+/\ restartUsed = {}
+/\ begun = FALSE
+/\ image = <<0, 0, 0, 0>>
+
+State 2: <Certify line 45, col 12 to line 50, col 110 of module ClusterBackup>
+/\ durable = {}
+/\ cut = TRUE
+/\ fenced = {}
+/\ metadata = {}
+/\ data = <<0, 0, 0, 0>>
+/\ checked = FALSE
+/\ copied = {}
+/\ restored = {}
+/\ pending = {}
+/\ acknowledged = FALSE
+/\ serving = FALSE
+/\ failed = FALSE
+/\ complete = FALSE
+/\ live = 1..4
+/\ restartUsed = {}
+/\ begun = FALSE
+/\ image = <<0, 0, 0, 0>>
+
+State 3: <Decide line 24, col 11 to line 27, col 84 of module ClusterBackup>
+/\ durable = {}
+/\ cut = TRUE
+/\ fenced = {}
+/\ metadata = {}
+/\ data = <<0, 0, 0, 0>>
+/\ checked = FALSE
+/\ copied = {}
+/\ restored = {}
+/\ pending = 1..4
+/\ acknowledged = TRUE
+/\ serving = FALSE
+/\ failed = FALSE
+/\ complete = FALSE
+/\ live = 1..4
+/\ restartUsed = {}
+/\ begun = TRUE
+/\ image = <<0, 0, 0, 0>>
+
+State 4: <Apply(1) line 28, col 13 to line 31, col 103 of module ClusterBackup>
+/\ durable = {}
+/\ cut = TRUE
+/\ fenced = {}
+/\ metadata = {}
+/\ data = <<1, 0, 0, 0>>
+/\ checked = FALSE
+/\ copied = {}
+/\ restored = {}
+/\ pending = {2, 3, 4}
+/\ acknowledged = TRUE
+/\ serving = FALSE
+/\ failed = FALSE
+/\ complete = FALSE
+/\ live = 1..4
+/\ restartUsed = {}
+/\ begun = TRUE
+/\ image = <<0, 0, 0, 0>>
+
+State 5: <Copy(1) line 51, col 12 to line 55, col 90 of module ClusterBackup>
+/\ durable = {}
+/\ cut = TRUE
+/\ fenced = {}
+/\ metadata = {1}
+/\ data = <<1, 0, 0, 0>>
+/\ checked = FALSE
+/\ copied = {1}
+/\ restored = {}
+/\ pending = {2, 3, 4}
+/\ acknowledged = TRUE
+/\ serving = FALSE
+/\ failed = FALSE
+/\ complete = FALSE
+/\ live = 1..4
+/\ restartUsed = {}
+/\ begun = TRUE
+/\ image = <<1, 0, 0, 0>>
+
+State 6: <Copy(2) line 51, col 12 to line 55, col 90 of module ClusterBackup>
+/\ durable = {}
+/\ cut = TRUE
+/\ fenced = {}
+/\ metadata = {1, 2}
+/\ data = <<1, 0, 0, 0>>
+/\ checked = FALSE
+/\ copied = {1, 2}
+/\ restored = {}
+/\ pending = {2, 3, 4}
+/\ acknowledged = TRUE
+/\ serving = FALSE
+/\ failed = FALSE
+/\ complete = FALSE
+/\ live = 1..4
+/\ restartUsed = {}
+/\ begun = TRUE
+/\ image = <<1, 0, 0, 0>>
+
+State 7: <Copy(3) line 51, col 12 to line 55, col 90 of module ClusterBackup>
+/\ durable = {}
+/\ cut = TRUE
+/\ fenced = {}
+/\ metadata = {1, 2, 3}
+/\ data = <<1, 0, 0, 0>>
+/\ checked = FALSE
+/\ copied = {1, 2, 3}
+/\ restored = {}
+/\ pending = {2, 3, 4}
+/\ acknowledged = TRUE
+/\ serving = FALSE
+/\ failed = FALSE
+/\ complete = FALSE
+/\ live = 1..4
+/\ restartUsed = {}
+/\ begun = TRUE
+/\ image = <<1, 0, 0, 0>>
+
+State 8: <Copy(4) line 51, col 12 to line 55, col 90 of module ClusterBackup>
+/\ durable = {}
+/\ cut = TRUE
+/\ fenced = {}
+/\ metadata = {1, 2, 3, 4}
+/\ data = <<1, 0, 0, 0>>
+/\ checked = FALSE
+/\ copied = {1, 2, 3, 4}
+/\ restored = {}
+/\ pending = {2, 3, 4}
+/\ acknowledged = TRUE
+/\ serving = FALSE
+/\ failed = FALSE
+/\ complete = FALSE
+/\ live = 1..4
+/\ restartUsed = {}
+/\ begun = TRUE
+/\ image = <<1, 0, 0, 0>>
+
+State 9: <Publish line 56, col 12 to line 60, col 105 of module ClusterBackup>
+/\ durable = {}
+/\ cut = TRUE
+/\ fenced = {}
+/\ metadata = {1, 2, 3, 4}
+/\ data = <<1, 0, 0, 0>>
+/\ checked = FALSE
+/\ copied = {1, 2, 3, 4}
+/\ restored = {}
+/\ pending = {2, 3, 4}
+/\ acknowledged = TRUE
+/\ serving = FALSE
+/\ failed = FALSE
+/\ complete = TRUE
+/\ live = 1..4
+/\ restartUsed = {}
+/\ begun = TRUE
+/\ image = <<1, 0, 0, 0>>
+
+157326 states generated, 43988 distinct states found, 25122 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 00s at (2026-10-29 18:30:37)
+Trace exploration spec path: ./ClusterBackup_TTrace_1793298637.tla

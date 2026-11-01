@@ -1,0 +1,507 @@
+{
+  "issue": 188,
+  "implementation_head": "0666a0a8259165bddaa15be094538fc3b4223a48",
+  "matched_baseline": "8b12c4525bd677499a91b973afbc86cbcbb0cafd",
+  "cohorts": [
+    {
+      "run": 40945957576,
+      "url": "https://github.com/cstheorist/tarn/actions/runs/40945957576",
+      "archive": "scale-40945957576.tar.gz",
+      "note": "Preliminary: plain memtx catalog, cold client startup, 1000 scheduled/s; missed slots retained.",
+      "reports": [
+        {
+          "configuration": "topology-results-128-1-4",
+          "source": "e247e300abec6292ef425205855d7a35c6da0504",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 1058
+        },
+        {
+          "configuration": "topology-results-32-1-4",
+          "source": "e247e300abec6292ef425205855d7a35c6da0504",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 1442
+        },
+        {
+          "configuration": "topology-results-8-1-1",
+          "source": "e247e300abec6292ef425205855d7a35c6da0504",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 796
+        },
+        {
+          "configuration": "topology-results-8-1-4",
+          "source": "e247e300abec6292ef425205855d7a35c6da0504",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 868
+        },
+        {
+          "configuration": "topology-results-8-3-4",
+          "source": "e247e300abec6292ef425205855d7a35c6da0504",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 893
+        }
+      ]
+    },
+    {
+      "run": 40960884381,
+      "url": "https://github.com/cstheorist/tarn/actions/runs/40960884381",
+      "archive": "scale-40960884381.tar.gz",
+      "note": "Preliminary: same cold/plain workload. Five configurations passed; RF3 failed storage startup before gateway measurement.",
+      "reports": [
+        {
+          "configuration": "topology-results-128-1-4-2",
+          "source": "fd438d54736a0ba49d5f9782e9764fde1fc182ff",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 1059
+        },
+        {
+          "configuration": "topology-results-32-1-4-2",
+          "source": "fd438d54736a0ba49d5f9782e9764fde1fc182ff",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 1366
+        },
+        {
+          "configuration": "topology-results-8-1-1-2",
+          "source": "fd438d54736a0ba49d5f9782e9764fde1fc182ff",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 883
+        },
+        {
+          "configuration": "topology-results-8-1-4-1",
+          "source": "fd438d54736a0ba49d5f9782e9764fde1fc182ff",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 830
+        },
+        {
+          "configuration": "topology-results-8-1-4-2",
+          "source": "fd438d54736a0ba49d5f9782e9764fde1fc182ff",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 880
+        }
+      ]
+    },
+    {
+      "run": 40971979668,
+      "url": "https://github.com/cstheorist/tarn/actions/runs/40971979668",
+      "archive": "scale-40971979668.tar.gz",
+      "note": "Active lazy/Vinyl pollers, warm clients, 200 scheduled/s, older baseline 7b063f6; six configurations passed.",
+      "reports": [
+        {
+          "configuration": "topology-results-128-1-4-2",
+          "source": "2f40640713f90a403e42e5c1e89958710a0d2fd9",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-32-1-4-2",
+          "source": "2f40640713f90a403e42e5c1e89958710a0d2fd9",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-1-2",
+          "source": "2f40640713f90a403e42e5c1e89958710a0d2fd9",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-4-1",
+          "source": "2f40640713f90a403e42e5c1e89958710a0d2fd9",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-4-2",
+          "source": "2f40640713f90a403e42e5c1e89958710a0d2fd9",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-3-4-2",
+          "source": "2f40640713f90a403e42e5c1e89958710a0d2fd9",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        }
+      ]
+    },
+    {
+      "run": 40972749238,
+      "url": "https://github.com/cstheorist/tarn/actions/runs/40972749238",
+      "archive": "scale-40972749238.tar.gz",
+      "note": "Earlier integrated matched study before rolling-upgrade merge; six configurations, five AB/BA pairs each, baseline a885dc4.",
+      "reports": [
+        {
+          "configuration": "topology-results-128-1-4-2",
+          "source": "3537a7ec0569aa2d5ca1a12032e8c7d29258776a",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-32-1-4-2",
+          "source": "3537a7ec0569aa2d5ca1a12032e8c7d29258776a",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-1-2",
+          "source": "3537a7ec0569aa2d5ca1a12032e8c7d29258776a",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-4-1",
+          "source": "3537a7ec0569aa2d5ca1a12032e8c7d29258776a",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-4-2",
+          "source": "3537a7ec0569aa2d5ca1a12032e8c7d29258776a",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-3-4-2",
+          "source": "3537a7ec0569aa2d5ca1a12032e8c7d29258776a",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        }
+      ]
+    },
+    {
+      "run": 40972723697,
+      "url": "https://github.com/cstheorist/tarn/actions/runs/40972723697",
+      "archive": "scale-40972723697.tar.gz",
+      "note": "Additional automatic PR-merge cohort, all six configurations passed; same source-file hashes as integrated branch cohort.",
+      "reports": [
+        {
+          "configuration": "topology-results-128-1-4-2",
+          "source": "f86469b098f2cde95d8c739cb26b3ac4508e8f6f",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-32-1-4-2",
+          "source": "f86469b098f2cde95d8c739cb26b3ac4508e8f6f",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-1-2",
+          "source": "f86469b098f2cde95d8c739cb26b3ac4508e8f6f",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-4-1",
+          "source": "f86469b098f2cde95d8c739cb26b3ac4508e8f6f",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-4-2",
+          "source": "f86469b098f2cde95d8c739cb26b3ac4508e8f6f",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-3-4-2",
+          "source": "f86469b098f2cde95d8c739cb26b3ac4508e8f6f",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        }
+      ]
+    },
+    {
+      "run": 41051749936,
+      "url": "https://github.com/cstheorist/tarn/actions/runs/41051749936",
+      "archive": "scale-41051749936.tar.gz",
+      "note": "Final integrated PR cohort against rolling-upgrade main 8b12c45. All six configurations and every scheduled read pass.",
+      "reports": [
+        {
+          "configuration": "topology-results-128-1-4-2",
+          "source": "e7da022a8a2c67058b77081465ff60c92ec4c935",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-32-1-4-2",
+          "source": "e7da022a8a2c67058b77081465ff60c92ec4c935",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-1-2",
+          "source": "e7da022a8a2c67058b77081465ff60c92ec4c935",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-4-1",
+          "source": "e7da022a8a2c67058b77081465ff60c92ec4c935",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-1-4-2",
+          "source": "e7da022a8a2c67058b77081465ff60c92ec4c935",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        },
+        {
+          "configuration": "topology-results-8-3-4-2",
+          "source": "e7da022a8a2c67058b77081465ff60c92ec4c935",
+          "completed": true,
+          "samples": 10,
+          "errors": 0,
+          "missed_slots": 0
+        }
+      ]
+    }
+  ],
+  "artifacts": {
+    "README.md": {
+      "bytes": 2200,
+      "sha256": "18ab9b00129186dfb1a27c6fbf278dca3b04878422d4fd47a9a5d545725ba25c"
+    },
+    "active-smoke-r3.tar.gz": {
+      "bytes": 11705,
+      "sha256": "c482583dcb03ddcc7d19e8a6f77b86ade5d35764f6afdf2470d14e55bc33e53f"
+    },
+    "ci-40972723729.json": {
+      "bytes": 14343,
+      "sha256": "9b3cfd4e230460683509b99d5a65013772b2e061e8e53255de7f6d22776ea15d"
+    },
+    "ci1-failed.log.gz": {
+      "bytes": 1248,
+      "sha256": "4443658dd538abd2c55f8d3a4bbf8d9b9c069067c2ef41af2f3bbc0510374907"
+    },
+    "ci2-failed.log.gz": {
+      "bytes": 169275,
+      "sha256": "11e8b16a87feadedacec1c1c1a3517c88bc961ffcf6e0bc326be392e0437dcdd"
+    },
+    "ci3-failed.log.gz": {
+      "bytes": 1625,
+      "sha256": "63edecd2db24f7c1141c3635412e52e7471dc61be2818de8532d78da196cae05"
+    },
+    "integrated-ci.log.gz": {
+      "bytes": 206305,
+      "sha256": "e57d7721317790bc415cf550382d0acb81d4ab3af4d62fb17ebe191cd50878a6"
+    },
+    "integrated-clippy2.log.gz": {
+      "bytes": 187,
+      "sha256": "624e88ae66dd3f84ab62647897d676fffc020834bb15d16565b789263689f44a"
+    },
+    "integrated-manual-failed.log.gz": {
+      "bytes": 1704,
+      "sha256": "35a02f52a7ae3db6d5610942929616b24f4e4191a5cc22208de8fcdfef9605ef"
+    },
+    "integrated-topology-authorized.log.gz": {
+      "bytes": 667,
+      "sha256": "419ce16704a7f17e3492f4e045e122e7a437e37c6563676dea8795eeecc3a86f"
+    },
+    "integrated-topology.log.gz": {
+      "bytes": 791,
+      "sha256": "cc70dc7ec13c4f1ff56234a16ef0f827683c0aac8a7feb5a00908202d4ca2cee"
+    },
+    "integrated-transport.log.gz": {
+      "bytes": 1126,
+      "sha256": "421f888d92de3dd7256aeac6b9e0e28ae51504b958975e0f1d8050b0da2210b1"
+    },
+    "partition-3537a7e.tar.gz": {
+      "bytes": 17385,
+      "sha256": "28310d35b661c48f17a9dc8c0b5cdb427f69236f86b5c59b37f0ecda9e8cbb8e"
+    },
+    "partition-fd438d5-r7.tar.gz": {
+      "bytes": 16702,
+      "sha256": "1ac0317c7bea1277fe96555f0e54e2de8aed2ab2f2674557b799ca0eb95df7c7"
+    },
+    "scale-40945957576.tar.gz": {
+      "bytes": 193176,
+      "sha256": "18865ab01d3463308307f65cc5f0dacb4d2eff67c8d1590a43dfd3314eca0d28"
+    },
+    "scale-40960884381.tar.gz": {
+      "bytes": 194018,
+      "sha256": "0e1709f0f428a819aededa7feb0a4a0f17284c94082501e25be9d1e01337e1be"
+    },
+    "scale-40971979668.tar.gz": {
+      "bytes": 208910,
+      "sha256": "8754c2ebddbec9cec32bba797048ec6f4383fd3d4dda4080dcf4ee232168d32a"
+    },
+    "scale-40972723697.tar.gz": {
+      "bytes": 213444,
+      "sha256": "62ff94c351863d97bb6d81c540165fc210d13e14a379c532ec2f992095d67847"
+    },
+    "scale-40972749238.tar.gz": {
+      "bytes": 213223,
+      "sha256": "175ef60b41b76e3b1f4de52f315d319f49ee59032b329d4531e5360de1879947"
+    },
+    "scale2-failed.log.gz": {
+      "bytes": 12851,
+      "sha256": "efe3fee535af3dfa891a0fd823da29b023e975c7e5d0a6093373b8d88b69e1a2"
+    },
+    "summary.json": {
+      "bytes": 9426,
+      "sha256": "74cf3158bb0126df0df3be7f20a610b20cb49175bb8965999de9220d7191eda0"
+    },
+    "linux-upgrade-build.log.gz": {
+      "bytes": 753,
+      "sha256": "5dd202757836480c474adf5163f2f9d5625ec85f60e7d391300c8610da3554dd"
+    },
+    "linux-upgrade-build2.log.gz": {
+      "bytes": 741,
+      "sha256": "fafc327ee6bd1fe0938f73f9e01bf4f8e4d67bb81130a23d49eb524380d15e1b"
+    },
+    "portable-clippy.log.gz": {
+      "bytes": 162,
+      "sha256": "d5da3ac220ece7965618d3bd7a6a8af8e8e2c9b2c2bd15e4297bbb5d63f5b61f"
+    },
+    "upgrade-clippy.log.gz": {
+      "bytes": 173,
+      "sha256": "8f03c8dcf216af77e977e658d080282143e6cf29700d1a0b4ff72b7016ce1aab"
+    },
+    "upgrade-reserve.log.gz": {
+      "bytes": 322,
+      "sha256": "50a4e1f7d8e45a21b300f64560307143480a82846b359696cad52b9954dedbde"
+    },
+    "upgrade-topology-portable.log.gz": {
+      "bytes": 704,
+      "sha256": "a72134521fa9f9dfb7fd5480444af934eecd10a0c27a7a6b3822524e8a1bf401"
+    },
+    "upgrade-topology.log.gz": {
+      "bytes": 765,
+      "sha256": "dc8f9d7faab45be6ffdc44cdecb86b57341a781306737ef40f9abf51e3bc8ea4"
+    },
+    "scale-41051749936.tar.gz": {
+      "bytes": 214869,
+      "sha256": "8ff07def275b6893e527e0d342c84ac855f5cceb5ae0fb9ed59457c67d9d2c25"
+    },
+    "summary-final.json": {
+      "bytes": 9415,
+      "sha256": "e947efdd4c5b8cbcfb09b4dcfafc5091d79b585c0b4fdea1f55d8eb740d94948"
+    },
+    "vinyl-upgrade-attempt1-41051749810.tar.gz": {
+      "bytes": 32591,
+      "sha256": "3ea4b2b79a7d6c56bb47e118338dd79e9d86b1f5f45ac9942d2753abd39ac6b1"
+    },
+    "upgrade-ci-attempt1-failed.log.gz": {
+      "bytes": 1714,
+      "sha256": "6a47a5da1e7c622e4ec68599d3d3946f78f3f7e539b49aac6f8d9acab675a452"
+    },
+    "final-ci-attempt1.log.gz": {
+      "bytes": 229571,
+      "sha256": "c22a247578370f28a5efaeedf879451f8cc8fb10b90de0751ad430ce6acb8d21"
+    },
+    "ci-41051749810-attempt1.json": {
+      "bytes": 19799,
+      "sha256": "3d51ece8fb6c840822951a7cc0aa028075d82778286e9cb7ef120f7e94ad2d06"
+    },
+    "ci-41051749810-final.json": {
+      "bytes": 19799,
+      "sha256": "04565c50e1e859c491d3b589d24dbc67c33d4b4f9e5560bcdc45c6b677f27d33"
+    },
+    "final-ci-attempt2.log.gz": {
+      "bytes": 224968,
+      "sha256": "607c0307d38cbd66be862ce4f71a166b65ec81b0dc884160415cc0f28098b2df"
+    },
+    "vinyl-upgrade-attempt2-41051749810.tar.gz": {
+      "bytes": 35192,
+      "sha256": "fdbe7913de2fdd96b1874a1cceb7428b6d4a3d75101a0f0e55fc4c1403329e8e"
+    }
+  },
+  "validation": {
+    "full_ci": "https://github.com/cstheorist/tarn/actions/runs/40972723729",
+    "full_ci_source": "PR merge f86469b098f2cde95d8c739cb26b3ac4508e8f6f of 3537a7e",
+    "formal": "284 expected outcomes: 73 positive, 211 negative/tradeoff; Verus 140 verified, zero errors",
+    "additional_manual_ci": "40972746472 failed direct Lua backup fixture lazy_drain with matched 1213; unchanged automatic full suite passed. No guards weakened.",
+    "earlier_ci": "40936256430 failed outdated reserve fixture; 40945965949 failed join fixture capacity 10/2; 40960892086 failed compaction coverage (fixed on main in PR200); 40971985763 cancelled for main integration.",
+    "partition": "Integrated normal Linux ARM64 release; RF3 fsync, replication-only old-leader partition, single increment never replayed, stale raw tuple / SQL refusal, healing and both gateway restarts exact, all four owned containers removed.",
+    "local_sandbox": "First integrated metadata invocation could not bind loopback (EPERM); authorized rerun retained separately.",
+    "local_environment": "Development macOS runs and initial partition-fixture setup failures are excluded from performance evidence. Original local attempts remain under target/topology-evidence; CI and final report archives are committed here."
+  },
+  "final_integration": {
+    "source": "0666a0a8259165bddaa15be094538fc3b4223a48",
+    "main": "8b12c4525bd677499a91b973afbc86cbcbb0cafd",
+    "runtime_difference": "Preserve newly merged storage-version admission before lazy pool installation and on reserved completion discovery.",
+    "local_checks": "Strict all-target clippy, five topology tests and saturated completion-discovery test pass.",
+    "metadata": "Portable fake service uses 1,024 loopback listeners, one per logical identity; each gateway peaks at 16 sockets, 47,864,832 response bytes; 4,096 RPCs include storage-version admission.",
+    "retained_failures": "Initial noncanonical 127/8 endpoint test timed out on macOS; replaced with canonical loopback ports without bypassing compatibility. Local normal ARM64 release linker was killed at both 3 and 6 GiB container limits; these attempts are not passing evidence.",
+    "ci_run": 41051749810,
+    "scale_run": 41051749936,
+    "status": "complete",
+    "scale_status": "passed, all six configurations and all 24,000 scheduled reads",
+    "scale_summary": "summary-final.json",
+    "ci_attempt1": "All jobs pass except Vinyl rolling upgrade. During rollback, predecessor storage s1.3 exits replaying REPLACE in space 99001, lsn 1807: VY_QUOTA_TIMEOUT at 16 MiB. Failure is before storage becomes reachable, not a gateway reply or mutation replay. Only that unchanged job is rerun; original logs and receipts retained.",
+    "formal": "284 expected outcomes and Verus 140 verified, zero errors on final source; see final-ci-attempt1.log.gz.",
+    "ci_attempt2": "Only failed Vinyl rolling-upgrade job repeated without code, fixture, limit or assertion changes; passed. Overall CI succeeds. Source head remains 0666a0a.",
+    "ci_result": "ci-41051749810-final.json",
+    "cleanup": "Both task-owned idle build/runtime containers removed; RF3 partition fixture already removed all four owned containers and both networks."
+  },
+  "initial_integrated_head": "3537a7ec0569aa2d5ca1a12032e8c7d29258776a",
+  "initial_matched_baseline": "a885dc403c06df57a88496d28f147d6c4fb556c0"
+}

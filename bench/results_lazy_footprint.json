@@ -1,0 +1,7106 @@
+[
+ {
+  "code": "before",
+  "result": {
+   "lua": "before release",
+   "keys": 1000,
+   "engine": "memtx",
+   "load_seconds": 1.4103239059998,
+   "buckets": 1024,
+   "rows": 10000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 10000,
+      "data": 155800,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 10000,
+      "data": 388754,
+      "index": 1179648,
+      "live": 10000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 52527104,
+     "items_used": 1597512,
+     "base": {
+      "tuples": 10000,
+      "data": 114700,
+      "index": 737280,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1467971,
+      "index": 4407296,
+      "lua": 8944450,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 6004808
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2,
+      "data": 22,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 998,
+      "tuples": 9998,
+      "data": 388678,
+      "index": 1245184,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 52621312,
+     "items_used": 1609536,
+     "base": {
+      "tuples": 9000,
+      "data": 103229,
+      "index": 737280,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1480379,
+      "index": 4571136,
+      "lua": 10198809,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 6180672
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1000,
+      "data": 12150,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 9000,
+      "data": 349980,
+      "index": 1245184,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 52703232,
+     "items_used": 1451440,
+     "base": {
+      "tuples": 9000,
+      "data": 103229,
+      "index": 737280,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1326759,
+      "index": 4603904,
+      "lua": 10232848,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 6055344
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 73160,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1000,
+      "data": 12150,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 9000,
+      "data": 349980,
+      "index": 1245184,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 129784,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 52858880,
+     "items_used": 1675544,
+     "base": {
+      "tuples": 9000,
+      "data": 104330,
+      "index": 770048,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1542066,
+      "index": 4636672,
+      "lua": 10326539,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 6312216
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6964,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1004,
+      "data": 12192,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 996,
+      "tuples": 9996,
+      "data": 389486,
+      "index": 1327104,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 54374400,
+     "items_used": 1667288,
+     "base": {
+      "tuples": 9000,
+      "data": 104330,
+      "index": 770048,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1526973,
+      "index": 5308416,
+      "lua": 11683542,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 6975704
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1006,
+      "data": 12212,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1094,
+      "tuples": 10094,
+      "data": 393212,
+      "index": 1343488,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 54390784,
+     "items_used": 1718632,
+     "base": {
+      "tuples": 9000,
+      "data": 104827,
+      "index": 770048,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1575452,
+      "index": 5324800,
+      "lua": 8799618,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 7043432
+    }
+   ],
+   "seconds": 11.339997428,
+   "deletes": 1000
+  }
+ },
+ {
+  "code": "after",
+  "result": {
+   "lua": "after release",
+   "keys": 1000,
+   "engine": "memtx",
+   "load_seconds": 1.1603121530002,
+   "buckets": 1024,
+   "rows": 10000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 10000,
+      "data": 388754,
+      "index": 1179648,
+      "live": 10000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 50208768,
+     "items_used": 1265224,
+     "base": {
+      "tuples": 10000,
+      "data": 114700,
+      "index": 737280,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1160309,
+      "index": 3899392,
+      "lua": 7992478,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 5164616
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 4,
+      "data": 44,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 996,
+      "tuples": 9996,
+      "data": 388602,
+      "index": 1245184,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 50630656,
+     "items_used": 1324528,
+     "base": {
+      "tuples": 9000,
+      "data": 103229,
+      "index": 737280,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1217421,
+      "index": 4063232,
+      "lua": 9282266,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 5387760
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1000,
+      "data": 12150,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 9000,
+      "data": 349980,
+      "index": 1245184,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 50814976,
+     "items_used": 1151880,
+     "base": {
+      "tuples": 9000,
+      "data": 103229,
+      "index": 737280,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1049600,
+      "index": 4096000,
+      "lua": 8902505,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 5247880
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 73160,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1000,
+      "data": 12150,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 9000,
+      "data": 349980,
+      "index": 1245184,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 129784,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 51232768,
+     "items_used": 1347512,
+     "base": {
+      "tuples": 9000,
+      "data": 104330,
+      "index": 770048,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1238432,
+      "index": 4128768,
+      "lua": 9331306,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 5476280
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6964,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1005,
+      "data": 12201,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 995,
+      "tuples": 9995,
+      "data": 389450,
+      "index": 1327104,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 52707328,
+     "items_used": 1314984,
+     "base": {
+      "tuples": 9000,
+      "data": 104330,
+      "index": 770048,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1199329,
+      "index": 4800512,
+      "lua": 9778952,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 6115496
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1005,
+      "data": 12201,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1095,
+      "tuples": 10095,
+      "data": 393250,
+      "index": 1343488,
+      "live": 9000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 52936704,
+     "items_used": 1363072,
+     "base": {
+      "tuples": 9000,
+      "data": 104827,
+      "index": 770048,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 1245160,
+      "index": 4816896,
+      "lua": 12258312,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 6179968
+    }
+   ],
+   "seconds": 11.091962569,
+   "deletes": 1000
+  }
+ },
+ {
+  "code": "before",
+  "result": {
+   "lua": "before release",
+   "keys": 1000,
+   "engine": "vinyl",
+   "load_seconds": 1.1597093120001,
+   "buckets": 1024,
+   "rows": 10000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 10000,
+      "data": 155800,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 10000,
+      "data": 0,
+      "index": 0,
+      "live": 10000,
+      "memory": 0,
+      "disk": 1844231,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 55611392,
+     "items_used": 498536,
+     "base": {
+      "tuples": 10000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 659560,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 442719,
+      "index": 2563447,
+      "lua": 8587549,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 2988904
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 6,
+      "data": 66,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 994,
+      "tuples": 11000,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 0,
+      "disk": 2106724,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 59277312,
+     "items_used": 454416,
+     "base": {
+      "tuples": 11000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 720169,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 1933980,
+      "data": 400825,
+      "index": 2673847,
+      "lua": 9665391,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 3043088
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1000,
+      "data": 12150,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 11994,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 0,
+      "disk": 2274830,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 60846080,
+     "items_used": 419688,
+     "base": {
+      "tuples": 11000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 720169,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 1933980,
+      "data": 364235,
+      "index": 2712815,
+      "lua": 9355122,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 3041128
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 73160,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1000,
+      "data": 12150,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 11994,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 0,
+      "disk": 2274830,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 129784,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 62554112,
+     "items_used": 632712,
+     "base": {
+      "tuples": 12000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 796788,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 1933980,
+      "data": 567877,
+      "index": 2715062,
+      "lua": 9338140,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 3254152
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6964,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1007,
+      "data": 12223,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 994,
+      "tuples": 13996,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 770,
+      "disk": 2329819,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 67346432,
+     "items_used": 540216,
+     "base": {
+      "tuples": 12000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 796788,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 1729192,
+      "data": 472532,
+      "index": 3548639,
+      "lua": 10556558,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 4144696
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 9000,
+      "data": 140219,
+      "index": 507904,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1009,
+      "data": 12244,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1091,
+      "tuples": 10201,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 0,
+      "disk": 1968929,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 69074944,
+     "items_used": 574792,
+     "base": {
+      "tuples": 12100,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 804207,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 2127340,
+      "data": 504504,
+      "index": 3292927,
+      "lua": 13193801,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 4179272
+    }
+   ],
+   "seconds": 12.196192792,
+   "deletes": 1000
+  }
+ },
+ {
+  "code": "after",
+  "result": {
+   "lua": "after release",
+   "keys": 1000,
+   "engine": "vinyl",
+   "load_seconds": 1.3370914120001,
+   "buckets": 1024,
+   "rows": 10000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 10000,
+      "data": 0,
+      "index": 0,
+      "live": 10000,
+      "memory": 0,
+      "disk": 1844231,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 54796288,
+     "items_used": 201864,
+     "base": {
+      "tuples": 10000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 659560,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 173059,
+      "index": 2055543,
+      "lua": 9536349,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 2184328
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 5,
+      "data": 55,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 995,
+      "tuples": 11000,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 0,
+      "disk": 2101679,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 58380288,
+     "items_used": 163328,
+     "base": {
+      "tuples": 11000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 718009,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 1933980,
+      "data": 135139,
+      "index": 2165938,
+      "lua": 10205550,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 2244096
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1000,
+      "data": 12150,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 11995,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 0,
+      "disk": 2259986,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 59760640,
+     "items_used": 132072,
+     "base": {
+      "tuples": 11000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 718009,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 1933980,
+      "data": 98016,
+      "index": 2204770,
+      "lua": 9482629,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 2245608
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 73160,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1000,
+      "data": 12150,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 11995,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 0,
+      "disk": 2259986,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 129784,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 61210624,
+     "items_used": 332536,
+     "base": {
+      "tuples": 12000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 788628,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 1933980,
+      "data": 290181,
+      "index": 2207017,
+      "lua": 10236253,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 2446072
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6964,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1007,
+      "data": 12223,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 996,
+      "tuples": 13995,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 0,
+      "disk": 2306404,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 66928640,
+     "items_used": 301696,
+     "base": {
+      "tuples": 12000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 788628,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 1729192,
+      "data": 253357,
+      "index": 2794448,
+      "lua": 11995221,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 3005056
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 1011,
+      "data": 12266,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1091,
+      "tuples": 10201,
+      "data": 0,
+      "index": 0,
+      "live": 9000,
+      "memory": 0,
+      "disk": 1953124,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 606208,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 69197824,
+     "items_used": 253472,
+     "base": {
+      "tuples": 12100,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 796047,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 1938279,
+      "data": 202236,
+      "index": 2784690,
+      "lua": 8508361,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 2956832
+    }
+   ],
+   "seconds": 12.610198944,
+   "deletes": 1000
+  }
+ },
+ {
+  "code": "before",
+  "result": {
+   "lua": "before release",
+   "keys": 1000,
+   "engine": "memtx",
+   "load_seconds": 13.978449841,
+   "buckets": 1024,
+   "rows": 100000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 100000,
+      "data": 1631114,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 100000,
+      "data": 4177758,
+      "index": 10256384,
+      "live": 100000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 89952256,
+     "items_used": 14693376,
+     "base": {
+      "tuples": 100000,
+      "data": 1220114,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 13864706,
+      "index": 26656768,
+      "lua": 11574078,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 41350144
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 87,
+      "data": 939,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 9913,
+      "tuples": 99913,
+      "data": 4174270,
+      "index": 10469376,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 90898432,
+     "items_used": 14251352,
+     "base": {
+      "tuples": 90000,
+      "data": 1098086,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 13450985,
+      "index": 26968064,
+      "lua": 12971369,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 41219416
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10000,
+      "data": 121575,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 90000,
+      "data": 3760971,
+      "index": 10469376,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 91389952,
+     "items_used": 13530552,
+     "base": {
+      "tuples": 90000,
+      "data": 1098086,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 12727611,
+      "index": 27394048,
+      "lua": 9347533,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 40924600
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 81164,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10000,
+      "data": 121575,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 90000,
+      "data": 3760971,
+      "index": 10469376,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 137792,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 91398144,
+     "items_used": 13733152,
+     "base": {
+      "tuples": 90000,
+      "data": 1099187,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 12916585,
+      "index": 27394048,
+      "lua": 10868777,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 41127200
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6964,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10004,
+      "data": 121616,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 996,
+      "tuples": 90996,
+      "data": 3808447,
+      "index": 10469376,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 92143616,
+     "items_used": 13574648,
+     "base": {
+      "tuples": 90000,
+      "data": 1099187,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 12756106,
+      "index": 27983872,
+      "lua": 9030386,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 41558520
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10006,
+      "data": 121638,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1094,
+      "tuples": 91094,
+      "data": 3812155,
+      "index": 10469376,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 91762688,
+     "items_used": 13589440,
+     "base": {
+      "tuples": 90000,
+      "data": 1099684,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 12775498,
+      "index": 27983872,
+      "lua": 10948678,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 41573312
+    }
+   ],
+   "seconds": 27.021341593,
+   "deletes": 10000
+  }
+ },
+ {
+  "code": "after",
+  "result": {
+   "lua": "after release",
+   "keys": 1000,
+   "engine": "memtx",
+   "load_seconds": 13.49900147,
+   "buckets": 1024,
+   "rows": 100000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 100000,
+      "data": 4177758,
+      "index": 10256384,
+      "live": 100000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 82194432,
+     "items_used": 11505944,
+     "base": {
+      "tuples": 100000,
+      "data": 1220114,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 10845619,
+      "index": 22315008,
+      "lua": 11701477,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 33820952
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 91,
+      "data": 968,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 9909,
+      "tuples": 99909,
+      "data": 4174125,
+      "index": 10452992,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 82804736,
+     "items_used": 11245472,
+     "base": {
+      "tuples": 90000,
+      "data": 1098086,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 10601838,
+      "index": 22609920,
+      "lua": 10770574,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 33855392
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10000,
+      "data": 121575,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 90000,
+      "data": 3760971,
+      "index": 10452992,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 83300352,
+     "items_used": 10558128,
+     "base": {
+      "tuples": 90000,
+      "data": 1098086,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 9910057,
+      "index": 23035904,
+      "lua": 7965211,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 33594032
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 81164,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10000,
+      "data": 121575,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 90000,
+      "data": 3760971,
+      "index": 10452992,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 137792,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 83529728,
+     "items_used": 10775992,
+     "base": {
+      "tuples": 90000,
+      "data": 1099187,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 10117093,
+      "index": 23035904,
+      "lua": 8645178,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 33811896
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6964,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10004,
+      "data": 121616,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 996,
+      "tuples": 90996,
+      "data": 3808447,
+      "index": 10452992,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 84283392,
+     "items_used": 10708752,
+     "base": {
+      "tuples": 90000,
+      "data": 1099187,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 10047810,
+      "index": 23625728,
+      "lua": 9499170,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 34334480
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10006,
+      "data": 121638,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1094,
+      "tuples": 91094,
+      "data": 3812155,
+      "index": 10452992,
+      "live": 90000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 84496384,
+     "items_used": 10756904,
+     "base": {
+      "tuples": 90000,
+      "data": 1099684,
+      "index": 6406144,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 10093691,
+      "index": 23625728,
+      "lua": 12135605,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 34382632
+    }
+   ],
+   "seconds": 26.435294039,
+   "deletes": 10000
+  }
+ },
+ {
+  "code": "before",
+  "result": {
+   "lua": "before release",
+   "keys": 1000,
+   "engine": "vinyl",
+   "load_seconds": 14.887456674,
+   "buckets": 1024,
+   "rows": 100000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 100000,
+      "data": 1631114,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 100000,
+      "data": 0,
+      "index": 0,
+      "live": 100000,
+      "memory": 0,
+      "disk": 20034811,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 100913152,
+     "items_used": 3395936,
+     "base": {
+      "tuples": 100000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 7337216,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 3193241,
+      "index": 10688777,
+      "lua": 9086586,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 13390176
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 98,
+      "data": 1045,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 9902,
+      "tuples": 110000,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 0,
+      "disk": 22836883,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 137969664,
+     "items_used": 3136312,
+     "base": {
+      "tuples": 110000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 8003501,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19600971,
+      "data": 2949151,
+      "index": 10895231,
+      "lua": 7964984,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 13228856
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10000,
+      "data": 121575,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 119902,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 0,
+      "disk": 24554749,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 140058624,
+     "items_used": 3295608,
+     "base": {
+      "tuples": 110000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 8003501,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19600971,
+      "data": 3061427,
+      "index": 11376124,
+      "lua": 11996475,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 13814136
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 81164,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10000,
+      "data": 121575,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 119902,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 0,
+      "disk": 24554749,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 137792,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 141430784,
+     "items_used": 3515544,
+     "base": {
+      "tuples": 111000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 8086136,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19600971,
+      "data": 3274783,
+      "index": 11378501,
+      "lua": 8013290,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 14034072
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6964,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10015,
+      "data": 121734,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 994,
+      "tuples": 121902,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 0,
+      "disk": 25065672,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 142016512,
+     "items_used": 3443072,
+     "base": {
+      "tuples": 111000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 8086136,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19388182,
+      "data": 3197089,
+      "index": 11984751,
+      "lua": 11977319,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 14551424
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 90000,
+      "data": 1467986,
+      "index": 4341760,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10023,
+      "data": 121814,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1083,
+      "tuples": 122112,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 0,
+      "disk": 25110889,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 142065664,
+     "items_used": 3364192,
+     "base": {
+      "tuples": 111100,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 8093555,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19671331,
+      "data": 3122004,
+      "index": 11987136,
+      "lua": 8663130,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 14472544
+    }
+   ],
+   "seconds": 37.978115133,
+   "deletes": 10000
+  }
+ },
+ {
+  "code": "after",
+  "result": {
+   "lua": "after release",
+   "keys": 1000,
+   "engine": "vinyl",
+   "load_seconds": 13.885828731,
+   "buckets": 1024,
+   "rows": 100000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 100000,
+      "data": 0,
+      "index": 0,
+      "live": 100000,
+      "memory": 0,
+      "disk": 20018142,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 93171712,
+     "items_used": 283120,
+     "base": {
+      "tuples": 100000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 7317992,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 248363,
+      "index": 6346520,
+      "lua": 11856741,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 5935600
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 100,
+      "data": 1067,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 9900,
+      "tuples": 110000,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 0,
+      "disk": 22820218,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 129867776,
+     "items_used": 175376,
+     "base": {
+      "tuples": 110000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 7984277,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19600971,
+      "data": 144405,
+      "index": 6552974,
+      "lua": 10769584,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 5926160
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10000,
+      "data": 121575,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 119900,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 0,
+      "disk": 24537728,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 131903488,
+     "items_used": 415992,
+     "base": {
+      "tuples": 110000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 7984277,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19600971,
+      "data": 333441,
+      "index": 7033885,
+      "lua": 7815192,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 6592760
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 81164,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10000,
+      "data": 121575,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 119900,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 0,
+      "disk": 24537728,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 137792,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 133484544,
+     "items_used": 620552,
+     "base": {
+      "tuples": 111000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 8066912,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19600971,
+      "data": 531913,
+      "index": 7036262,
+      "lua": 9752102,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 6797320
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6964,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10015,
+      "data": 121734,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 994,
+      "tuples": 121900,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 0,
+      "disk": 25048651,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 134103040,
+     "items_used": 601504,
+     "base": {
+      "tuples": 111000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 8066912,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19388182,
+      "data": 506091,
+      "index": 7642512,
+      "lua": 7610173,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 7368096
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 4738,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 10023,
+      "data": 121814,
+      "index": 524288,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1083,
+      "tuples": 122111,
+      "data": 0,
+      "index": 0,
+      "live": 90000,
+      "memory": 350,
+      "disk": 25093856,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 4276224,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 134369280,
+     "items_used": 497168,
+     "base": {
+      "tuples": 111100,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 8074331,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 19712237,
+      "data": 781635,
+      "index": 7890657,
+      "lua": 9875734,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 7624208
+    }
+   ],
+   "seconds": 36.733267516,
+   "deletes": 10000
+  }
+ },
+ {
+  "code": "before",
+  "result": {
+   "lua": "before release",
+   "keys": 1000,
+   "engine": "memtx",
+   "load_seconds": 202.497018586,
+   "buckets": 1024,
+   "rows": 1000000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 1000000,
+      "data": 19104168,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 1000000,
+      "data": 48119812,
+      "index": 98631680,
+      "live": 1000000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 429551616,
+     "items_used": 157058904,
+     "base": {
+      "tuples": 1000000,
+      "data": 13385336,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 146876789,
+      "index": 216678400,
+      "lua": 12860700,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 373737304
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722049,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 128,
+      "data": 1616,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 19050,
+      "tuples": 999050,
+      "data": 48082904,
+      "index": 99106816,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 430350336,
+     "items_used": 155710696,
+     "base": {
+      "tuples": 980000,
+      "data": 13118393,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 145639389,
+      "index": 217251840,
+      "lua": 12423203,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 372962536
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722049,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2560,
+      "data": 36298,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 980000,
+      "data": 47160586,
+      "index": 99106816,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 430473216,
+     "items_used": 154029416,
+     "base": {
+      "tuples": 980000,
+      "data": 13118393,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 144033431,
+      "index": 217350144,
+      "lua": 10563384,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 371379560
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 89016,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722049,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2560,
+      "data": 36298,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 980000,
+      "data": 47160586,
+      "index": 99106816,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 153516,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 430411776,
+     "items_used": 154113552,
+     "base": {
+      "tuples": 980000,
+      "data": 13119502,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 144107916,
+      "index": 217350144,
+      "lua": 11097303,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 371463696
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722049,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6952,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2563,
+      "data": 36334,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 997,
+      "tuples": 980997,
+      "data": 47210070,
+      "index": 99106816,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 430923776,
+     "items_used": 154123600,
+     "base": {
+      "tuples": 980000,
+      "data": 13119502,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 144119116,
+      "index": 217939968,
+      "lua": 12758860,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 372063568
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722249,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2567,
+      "data": 36385,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1093,
+      "tuples": 981093,
+      "data": 47214079,
+      "index": 99106816,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 430460928,
+     "items_used": 154177376,
+     "base": {
+      "tuples": 980000,
+      "data": 13120007,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 144170022,
+      "index": 217939968,
+      "lua": 8872616,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 372117344
+    }
+   ],
+   "seconds": 223.960631699,
+   "deletes": 20000
+  }
+ },
+ {
+  "code": "after",
+  "result": {
+   "lua": "after release",
+   "keys": 1000,
+   "engine": "memtx",
+   "load_seconds": 164.511250448,
+   "buckets": 1024,
+   "rows": 1000000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 1000000,
+      "data": 48119812,
+      "index": 98566144,
+      "live": 1000000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 344887296,
+     "items_used": 119143400,
+     "base": {
+      "tuples": 1000000,
+      "data": 13385336,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 113822017,
+      "index": 172081152,
+      "lua": 10326949,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 291224552
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 128,
+      "data": 1616,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 19017,
+      "tuples": 999017,
+      "data": 48081341,
+      "index": 99041280,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 345370624,
+     "items_used": 118330280,
+     "base": {
+      "tuples": 980000,
+      "data": 13118393,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 113032380,
+      "index": 172654592,
+      "lua": 8869641,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 290984872
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2560,
+      "data": 36298,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 980000,
+      "data": 47160586,
+      "index": 99041280,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 345702400,
+     "items_used": 116875560,
+     "base": {
+      "tuples": 980000,
+      "data": 13118393,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 111642390,
+      "index": 172752896,
+      "lua": 10447147,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 289628456
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 89016,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2560,
+      "data": 36298,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 980000,
+      "data": 47160586,
+      "index": 99041280,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 153516,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 345509888,
+     "items_used": 116884040,
+     "base": {
+      "tuples": 980000,
+      "data": 13119502,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 111645592,
+      "index": 172752896,
+      "lua": 9879588,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 289636936
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6952,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2564,
+      "data": 36346,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 996,
+      "tuples": 980996,
+      "data": 47210023,
+      "index": 99041280,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 345927680,
+     "items_used": 116860200,
+     "base": {
+      "tuples": 980000,
+      "data": 13119502,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 111621062,
+      "index": 173342720,
+      "lua": 11235454,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 290202920
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2567,
+      "data": 36385,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 1093,
+      "tuples": 981093,
+      "data": 47214079,
+      "index": 99041280,
+      "live": 980000,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 346198016,
+     "items_used": 116910744,
+     "base": {
+      "tuples": 980000,
+      "data": 13120007,
+      "index": 66519040,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 111669142,
+      "index": 173342720,
+      "lua": 9803842,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 290253464
+    }
+   ],
+   "seconds": 184.339814219,
+   "deletes": 20000
+  }
+ },
+ {
+  "code": "before",
+  "result": {
+   "lua": "before release",
+   "keys": 1000,
+   "engine": "vinyl",
+   "load_seconds": 178.917345936,
+   "buckets": 1024,
+   "rows": 1000000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 1000000,
+      "data": 19104168,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 1000000,
+      "data": 0,
+      "index": 0,
+      "live": 1000000,
+      "memory": 0,
+      "disk": 216402940,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5603328,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 340242432,
+     "items_used": 38140248,
+     "base": {
+      "tuples": 1000000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 77625763,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 33240192,
+      "index": 58539275,
+      "lua": 9890412,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 89651544
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722049,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 128,
+      "data": 1616,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 19008,
+      "tuples": 1020000,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 0,
+      "disk": 222469597,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5603328,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 611115008,
+     "items_used": 37498272,
+     "base": {
+      "tuples": 1020000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79028587,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 65961841,
+      "data": 32682651,
+      "index": 58850150,
+      "lua": 8260282,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 89107872
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722049,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2560,
+      "data": 36298,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 1039008,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 0,
+      "disk": 225978010,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5603328,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 613093376,
+     "items_used": 37396256,
+     "base": {
+      "tuples": 1020000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79028587,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 67079717,
+      "data": 32588101,
+      "index": 59052570,
+      "lua": 8228303,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 89104160
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 89016,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722049,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2560,
+      "data": 36298,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 1039008,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 0,
+      "disk": 225978010,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 153516,
+      "index": 5603328,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 614559744,
+     "items_used": 37655120,
+     "base": {
+      "tuples": 1021000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79111182,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 66999348,
+      "data": 32833667,
+      "index": 59055011,
+      "lua": 12153425,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 89363024
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722049,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6952,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 3560,
+      "data": 50548,
+      "index": 229376,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 992,
+      "tuples": 1041012,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 1680,
+      "disk": 226504535,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5603328,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 618610688,
+     "items_used": 37507328,
+     "base": {
+      "tuples": 1021000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79111182,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 67036894,
+      "data": 32691995,
+      "index": 59906956,
+      "lua": 10537839,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 90198272
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 980000,
+      "data": 18722249,
+      "index": 44531712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 3660,
+      "data": 51813,
+      "index": 229376,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 96,
+      "tuples": 1042207,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 1080,
+      "disk": 226733986,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5603328,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 620154880,
+     "items_used": 37507928,
+     "base": {
+      "tuples": 1021100,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79118593,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 67097499,
+      "data": 32688810,
+      "index": 59948258,
+      "lua": 9104254,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 90215256
+    }
+   ],
+   "seconds": 727.976154683,
+   "deletes": 20000
+  }
+ },
+ {
+  "code": "after",
+  "result": {
+   "lua": "after release",
+   "keys": 1000,
+   "engine": "vinyl",
+   "load_seconds": 163.410665348,
+   "buckets": 1024,
+   "rows": 1000000,
+   "phases": [
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "loaded",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 1000000,
+      "data": 0,
+      "index": 0,
+      "live": 1000000,
+      "memory": 0,
+      "disk": 216386299,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 255860736,
+     "items_used": 221464,
+     "base": {
+      "tuples": 1000000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 77606562,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 0,
+      "data": 184453,
+      "index": 14039742,
+      "lua": 12704133,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 7217432
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "tombstones",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 128,
+      "data": 1616,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 19000,
+      "tuples": 1020000,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 0,
+      "disk": 222452933,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 532963328,
+     "items_used": 214440,
+     "base": {
+      "tuples": 1020000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79009380,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 65961841,
+      "data": 176200,
+      "index": 14334414,
+      "lua": 12544257,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 7308712
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "collected",
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2560,
+      "data": 36298,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 1039000,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 0,
+      "disk": 225959890,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 535523328,
+     "items_used": 184912,
+     "base": {
+      "tuples": 1020000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79009380,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 67079717,
+      "data": 146052,
+      "index": 14536820,
+      "lua": 8266237,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 7377488
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "outbox",
+     "outbox_encoded": 89016,
+     "_tarn_part": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 2560,
+      "data": 36298,
+      "index": 196608,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 0,
+      "tuples": 1039000,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 0,
+      "disk": 225959890,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 2000,
+      "data": 153516,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 539320320,
+     "items_used": 410376,
+     "base": {
+      "tuples": 1021000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79091975,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 66999348,
+      "data": 363093,
+      "index": 14539261,
+      "lua": 10897821,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 7602952
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3492,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "reserved",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 100,
+      "data": 300,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 100,
+      "data": 6952,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 3560,
+      "data": 50548,
+      "index": 229376,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 997,
+      "tuples": 1041000,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 0,
+      "disk": 226486414,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 545099776,
+     "items_used": 258440,
+     "base": {
+      "tuples": 1021000,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79091975,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 67036894,
+      "data": 209407,
+      "index": 15145446,
+      "lua": 8714270,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 8040840
+    },
+    {
+     "_tarn_txn": {
+      "tuples": 100,
+      "data": 3692,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "phase": "committed",
+     "_tarn_part": {
+      "tuples": 100,
+      "data": 3592,
+      "index": 147456,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_version": {
+      "tuples": 0,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_slots": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_counter": {
+      "tuples": 1024,
+      "data": 6786,
+      "index": 131072,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_reservation": {
+      "tuples": 0,
+      "data": 0,
+      "index": 98304,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "_tarn_lazy_floor": {
+      "tuples": 3660,
+      "data": 51813,
+      "index": 229376,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "target": {
+      "tombstones": 99,
+      "tuples": 1042197,
+      "data": 0,
+      "index": 0,
+      "live": 980000,
+      "memory": 0,
+      "disk": 226716045,
+      "engine": "vinyl"
+     },
+     "_tarn_lazy_outbox": {
+      "tuples": 0,
+      "data": 0,
+      "index": 5619712,
+      "memory": 0,
+      "disk": 0,
+      "engine": "memtx"
+     },
+     "rss": 546365440,
+     "items_used": 295752,
+     "base": {
+      "tuples": 1021100,
+      "data": 0,
+      "index": 0,
+      "memory": 0,
+      "disk": 79099386,
+      "engine": "vinyl"
+     },
+     "memory": {
+      "cache": 67097885,
+      "data": 243670,
+      "index": 15186744,
+      "lua": 11215452,
+      "net": 1359872,
+      "tx": 0
+     },
+     "arena_used": 8110920
+    }
+   ],
+   "seconds": 690.735847656,
+   "deletes": 20000
+  }
+ }
+]

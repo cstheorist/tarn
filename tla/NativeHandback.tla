@@ -37,7 +37,8 @@ CONSTANTS
     InStream,                      \* the step commits a stream's transaction (else autocommit)
     BugKeepWritesOnHandback,       \* a hand-back leaves the writes in the stream's transaction
     BugHandbackAfterCommitBegan,   \* ... and one once the commit began, when it fails
-    BugResendAfterLoss             \* the SQL server calls again after a lost connection
+    BugResendAfterLoss,            \* the SQL server calls again after a lost connection
+    BugTrustMalformedReply        \* a plausible prefix is mistaken for a complete reply
 
 VARIABLES
     txn,        \* the stream's transaction: none, open, gone (rolled back), committed
@@ -67,15 +68,32 @@ CallNative ==
     /\ UNCHANGED <<txn, pend, applied, nat, lua, conn, reply>>
 
 (* A reply: ["lua"] -> the Lua procedure, on the same stream. *)
+Decoded ==
+    IF BugTrustMalformedReply
+    THEN CASE reply = "malformed_lua" -> "lua"
+           [] reply = "malformed_ok" -> "ok"
+           [] reply = "malformed_err" -> "err"
+           [] OTHER -> reply
+    ELSE reply
+
 Receive ==
     /\ sq \in {"native", "lua"} /\ reply # "none" /\ conn = "up"
-    /\ sq' = CASE reply = "lua" /\ sq = "native" -> "lua"
-               [] reply = "ok"                  -> "ok"
-               [] reply = "err"                 -> "err"
+    /\ sq' = CASE Decoded = "lua" /\ sq = "native" -> "lua"
+               [] Decoded = "ok"                  -> "ok"
+               [] Decoded = "err"                 -> "err"
                [] OTHER                         -> "unknown"
-    /\ called' = IF reply = "lua" /\ sq = "native" THEN called \cup {"lua"} ELSE called
+    /\ called' = IF Decoded = "lua" /\ sq = "native" THEN called \cup {"lua"} ELSE called
     /\ reply' = "none"
     /\ UNCHANGED <<txn, pend, applied, nat, lua, conn>>
+
+(* The IPROTO frame is matched, but its procedure envelope is malformed:
+   a prefix, extra return value, wrong field type, or unsupported shape.
+   This does not model a server forging a valid complete acknowledgement. *)
+MalformedReply ==
+    /\ conn = "up" /\ sq \in {"native", "lua"}
+    /\ reply \in {"ok", "err", "lua", "unknown"}
+    /\ reply' \in {"malformed_lua", "malformed_ok", "malformed_err"}
+    /\ UNCHANGED <<txn, pend, applied, called, nat, lua, conn, sq>>
 
 (* The connection drops while a call is out: its outcome is unknown. *)
 Lose ==
@@ -160,7 +178,7 @@ LuaStep ==
     /\ UNCHANGED <<called, nat, conn, sq>>
 
 Next ==
-    \/ CallNative \/ Receive \/ Lose \/ Resend \/ SessionEnd
+    \/ CallNative \/ Receive \/ MalformedReply \/ Lose \/ Resend \/ SessionEnd
     \/ NativeStart(TRUE) \/ NativeStart(FALSE) \/ NativeWrite
     \/ NativeGiveUp(TRUE) \/ NativeGiveUp(FALSE)
     \/ NativeCommit("ok") \/ NativeCommit("failed") \/ NativeCommit("maybe")
@@ -175,7 +193,8 @@ TypeOK ==
     /\ nat \in {"idle", "writing", "wrote", "done"} /\ lua \in {"idle", "done"}
     /\ conn \in {"up", "lost"}
     /\ sq \in {"start", "native", "lua", "resend", "ok", "err", "unknown"}
-    /\ reply \in {"none", "ok", "err", "lua", "unknown"}
+    /\ reply \in {"none", "ok", "err", "lua", "unknown",
+                  "malformed_lua", "malformed_ok", "malformed_err"}
 
 AtMostOnce == applied <= 1
 ReplyHolds ==

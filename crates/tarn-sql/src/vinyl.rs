@@ -126,6 +126,7 @@ fn decode_stats(data: &[u8]) -> SqlResult<StatsSample> {
 pub(crate) fn start_stats(cluster: &Arc<Cluster>) {
     let weak = Arc::downgrade(cluster);
     tokio::spawn(async move {
+        let mut cursor = 0usize;
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -139,7 +140,7 @@ pub(crate) fn start_stats(cluster: &Arc<Cluster>) {
                 c.vinyl_samples.lock().clear();
                 continue;
             }
-            let polls = c.live_shards().map(|shard| {
+            let polls = crate::topology::poll_shards(&c, &mut cursor).into_iter().map(|shard| {
                 let c = &c;
                 async move {
                     let id = c.shards[shard].id;
@@ -152,7 +153,7 @@ pub(crate) fn start_stats(cluster: &Arc<Cluster>) {
                     (id, sample)
                 }
             });
-            let results = futures::future::join_all(polls).await;
+            let results = crate::topology::collect(polls, c.cfg.topology.fanout).await;
             let live: BTreeSet<_> = c.live_shards().map(|s| c.shards[s].id).collect();
             let mut samples = c.vinyl_samples.lock();
             samples.retain(|id, _| live.contains(id));

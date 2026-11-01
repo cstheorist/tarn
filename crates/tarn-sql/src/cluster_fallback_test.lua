@@ -45,6 +45,15 @@ function fallback_native(...)
         fallback_log.committed = true
         while fallback_hold do fiber.sleep(0.001) end
         return result
+    elseif fallback_mode:match('^malformed_') or fallback_mode == 'unknown' then
+        local result = original(...)
+        assert(result[1] == 'ok')
+        fallback_log.committed = true
+        if fallback_mode == 'malformed_error' then return {'error', 1213, 'bad envelope', 'extra'} end
+        if fallback_mode == 'malformed_lua' then return {'lua', 'extra'} end
+        if fallback_mode == 'malformed_returns' then return {'error', 1213, 'bad envelope'}, 'extra' end
+        if fallback_mode == 'malformed_missing' then return end
+        return {'error', 1180, 'native commit outcome unknown'}
     end
     return {'lua'}
 end

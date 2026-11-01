@@ -1,0 +1,78 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 23 and seed -4473965549352459875 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 59412] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue188/tla/GatewayResources.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1670508348840264539/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1670508348840264539/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1670508348840264539/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1670508348840264539/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1670508348840264539/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1670508348840264539/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1670508348840264539/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module GatewayResources
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module GatewayResources
+Starting... (2026-10-29 14:37:10)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-29 14:37:10.
+Error: Invariant ResponseOwned is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ state = [b |-> "new", a |-> "new", c |-> "new"]
+/\ responseCharge = {}
+/\ badReserve = FALSE
+/\ refs = [x |-> 0, y |-> 0]
+/\ evicted = {}
+/\ io = [b |-> 0, a |-> 0, c |-> 0]
+/\ pinned = {}
+/\ charged = {}
+/\ reading = {}
+
+State 2: <Read("x") line 45, col 12 to line 47, col 90 of module GatewayResources>
+/\ pending = {}
+/\ state = [b |-> "new", a |-> "new", c |-> "new"]
+/\ responseCharge = {"x"}
+/\ badReserve = FALSE
+/\ refs = [x |-> 0, y |-> 0]
+/\ evicted = {}
+/\ io = [b |-> 0, a |-> 0, c |-> 0]
+/\ pinned = {}
+/\ charged = {}
+/\ reading = {"x"}
+
+State 3: <Reply("x") line 48, col 13 to line 50, col 101 of module GatewayResources>
+/\ pending = {}
+/\ state = [b |-> "new", a |-> "new", c |-> "new"]
+/\ responseCharge = {"x"}
+/\ badReserve = FALSE
+/\ refs = [x |-> 2, y |-> 0]
+/\ evicted = {}
+/\ io = [b |-> 0, a |-> 0, c |-> 0]
+/\ pinned = {}
+/\ charged = {}
+/\ reading = {}
+
+State 4: <DropSlice("x") line 51, col 17 to line 53, col 98 of module GatewayResources>
+/\ pending = {}
+/\ state = [b |-> "new", a |-> "new", c |-> "new"]
+/\ responseCharge = {}
+/\ badReserve = FALSE
+/\ refs = [x |-> 1, y |-> 0]
+/\ evicted = {}
+/\ io = [b |-> 0, a |-> 0, c |-> 0]
+/\ pinned = {}
+/\ charged = {}
+/\ reading = {}
+
+132 states generated, 69 distinct states found, 46 states left on queue.
+The depth of the complete state graph search is 4.
+Finished in 00s at (2026-10-29 14:37:10)
+Trace exploration spec path: ./GatewayResources_TTrace_1793299030.tla

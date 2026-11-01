@@ -175,6 +175,9 @@ local success, failure = xpcall(function()
 
     for n,engine in ipairs({'memtx','vinyl'}) do
         local sid=sids[n]
+        -- The short deadline belongs to the unavailable-prefix controls.
+        -- Restore it for each engine after the preceding positive recovery.
+        ev(leader,'tarn.cfg.read_freshness_timeout=.15')
         local st=c:new_stream()
         ok(st:call('tarn_select',{sid,0,{1},0,1,box.NULL,true,false,box.NULL,true},{timeout=3}))
         local original=st:eval("return tostring(require('ffi').C.box_txn_id())")
@@ -201,7 +204,13 @@ local success, failure = xpcall(function()
             r[1]=='expired' and r[2]==1213 and same==original and absent(id),{reply=r,before=original,after=same})
         signal(follower,18)
         local wr,we=writer:wait_result(3);assert(wr,tostring(we))
-        for i=1,3 do ev(i,"box.cfg{replication_synchro_quorum=2,replication_synchro_timeout=5}") end
+        -- Use the production 5-second barrier deadline once the actual
+        -- follower has resumed. Keep the single writer attempt and the
+        -- original borrowed MVCC transaction; neither is replayed/refreshed.
+        for i=1,3 do ev(i,"box.cfg{replication_synchro_quorum=2,replication_synchro_timeout=5};tarn.cfg.read_freshness_timeout=5") end
+        await('confirmed queue drained after follower resumes',function()
+            local s=state(leader);return s.queue.len==0 and not s.queue.busy
+        end)
         await('coverage after follower resumes',healthy)
         ok(rpc(leader,'tarn_autocommit',{{{'replace',sid,{1,9,1}}}}))
         local v=st:call('tarn_validate',{id,{{sid,0,{1},1}},{}})

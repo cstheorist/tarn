@@ -1,0 +1,146 @@
+name: Native GC failover investigation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gc-failover-review.yml'
+      - 'scripts/gc_failover_review.py'
+      - 'tests/test_gc_failover_review.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gc-review-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: '1.98.1'
+  TARANTOOL_VERSION: '3.9.0'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Pinned release (${{ matrix.revision }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [observed, current]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: source
+          ref: ${{ matrix.revision == 'observed' && '420bde9fa9393c847cf022d4230b233c49b01fa7' || github.sha }}
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source -> target
+          key: gc-review-${{ matrix.revision }}
+      - name: Build the unchanged release profile and bind artifacts
+        run: |
+          mkdir -p "$RUNNER_TEMP/binaries"
+          cd source
+          cargo build --release --locked -p tarn-server -p tarn-storage 2>&1 | tee "$RUNNER_TEMP/binaries/build.log"
+          cp target/release/tarn-server target/release/libtarn_storage.so "$RUNNER_TEMP/binaries/"
+          python3 ../harness/scripts/gc_failover_review.py bind --source . --output "$RUNNER_TEMP/binaries"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: gc-build-${{ matrix.revision }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/binaries
+          retention-days: 30
+          if-no-files-found: error
+
+  investigate:
+    name: ${{ matrix.revision }} / ${{ matrix.engine }} / ${{ matrix.mode }} / JIT ${{ matrix.jit }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - {revision: observed, engine: vinyl, mode: native, jit: 'on'}
+          - {revision: observed, engine: vinyl, mode: lua, jit: 'on'}
+          - {revision: observed, engine: vinyl, mode: native, jit: 'off'}
+          - {revision: current, engine: vinyl, mode: native, jit: 'on'}
+          - {revision: current, engine: memtx, mode: native, jit: 'on'}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: source
+          ref: ${{ matrix.revision == 'observed' && '420bde9fa9393c847cf022d4230b233c49b01fa7' || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: gc-build-${{ matrix.revision }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/binaries
+      - name: Restore pinned Tarantool
+        id: tarantool-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('harness/ci/install-tarantool.sh') }}
+      - name: Install Tarantool and SQL driver
+        run: |
+          harness/ci/install-tarantool.sh "$TARANTOOL_VERSION" "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+          python3 -m pip install PyMySQL
+          chmod +x "$RUNNER_TEMP/binaries/tarn-server"
+      - name: Save pinned Tarantool
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('harness/ci/install-tarantool.sh') }}
+      - name: Collector controls
+        run: python3 harness/tests/test_gc_failover_review.py
+      - name: Capture future crash cores on this isolated runner
+        run: |
+          mkdir -p "$RUNNER_TEMP/gc-cores"
+          cat /proc/sys/kernel/core_pattern > "$RUNNER_TEMP/core-pattern-before.txt"
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/gc-cores/core.%e.%p"
+      - name: Three complete failover trials with original accounting
+        run: |
+          ulimit -c unlimited
+          python3 harness/scripts/gc_failover_review.py run \
+            --source source --binaries "$RUNNER_TEMP/binaries" --output "$RUNNER_TEMP/gc-review" \
+            --engine '${{ matrix.engine }}' --mode '${{ matrix.mode }}' --jit '${{ matrix.jit }}' \
+            --repetitions 3 --seconds 45 --timeout 360
+      - name: Preserve runtime binary and compress crash cores
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/runtime"
+          cp "$HOME/.local/tarantool/bin/tarantool" "$RUNNER_TEMP/runtime/"
+          sha256sum "$RUNNER_TEMP/runtime/tarantool" > "$RUNNER_TEMP/runtime/SHA256SUMS"
+          tar -czf "$RUNNER_TEMP/crash-cores.tar.gz" -C "$RUNNER_TEMP" gc-cores core-pattern-before.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: gc-${{ matrix.revision }}-${{ matrix.engine }}-${{ matrix.mode }}-${{ matrix.jit }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/gc-review
+            !${{ runner.temp }}/gc-review/trial-*/cluster/s*.*/*
+            !${{ runner.temp }}/gc-review/trial-*/cluster/s*.*/*/**
+            ${{ runner.temp }}/runtime
+            ${{ runner.temp }}/crash-cores.tar.gz
+          retention-days: 30
+          compression-level: 1
+          if-no-files-found: error

@@ -1,0 +1,17 @@
+https://github.com/cstheorist/tarn/actions/runs/40922484589/job/123619158620
+2026-10-29T17:51:34.9771091Z Traceback (most recent call last):
+2026-10-29T17:51:34.9781041Z   File "/home/runner/work/tarn/tarn/tests/sql/integritytest.py", line 286, in <module>
+2026-10-29T17:51:34.9782038Z     main()
+2026-10-29T17:51:34.9782824Z   File "/home/runner/work/tarn/tarn/tests/sql/integritytest.py", line 265, in main
+2026-10-29T17:51:34.9783740Z     assert first == second, [(x,y) for x,y in zip(first,second) if x != y]
+2026-10-29T17:51:34.9784413Z            ^^^^^^^^^^^^^^^
+2026-10-29T17:51:34.9786018Z AssertionError: [({'sql': 'ALTER TABLE validation_rows MODIFY n INT NOT NULL', 'outcome': {'error': 1265, 'state': 'HY000'}, 'rows': ((1, 1, None), (2, 1, 2))}, {'sql': 'ALTER TABLE validation_rows MODIFY n INT NOT NULL', 'outcome': {'error': 1138, 'state': '22004'}, 'rows': ((1, 1, None), (2, 1, 2))})]
+2026-10-29T17:51:34.9980105Z ##[error]Traceback (most recent call last):
+2026-10-29T17:51:34.9992132Z ##[error]AssertionError: [({'sql': 'ALTER TABLE validation_rows MODIFY n INT NOT NULL', 'outcome': {'error': 1265, 'state': 'HY000'}, 'rows': ((1, 1, None), (2, 1, 2))}, {'sql': 'ALTER TABLE validation_rows MODIFY n INT NOT NULL', 'outcome': {'error': 1138, 'state': '22004'}, 'rows': ((1, 1, None), (2, 1, 2))})]
+2026-10-29T17:51:35.0005692Z ##[error]Process completed with exit code 1.
+2026-10-29T17:51:35.0125696Z ##[group]Run actions/upload-artifact@v4
+2026-10-29T17:51:35.0126037Z with:
+2026-10-29T17:51:35.0126259Z   name: integrity-40922484589-1
+2026-10-29T17:51:35.0126543Z   path: integrity-evidence
+2026-10-29T17:51:35.0126803Z   retention-days: 30
+2026-10-29T17:51:35.0127044Z   if-no-files-found: warn

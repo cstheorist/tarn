@@ -1,0 +1,54 @@
+cluster up: 2 shard(s) x 3 replica(s); SQL on 127.0.0.1:4100..4100; dir /tmp/tarn-issue135-vinyl-repeat
+20:34:20 box.ctl.promote() on s1.2 (port 3512), attempt 1; the leader on 3511 will be demoted with its connections open
+The term is outdated: old - 3, new - 4
+20:34:22 shard 1 leader is now 3512; 3511 still running: yes
+20:34:31 killing shard 1 leader on port 3512 (s1.2)
+20:34:34 shard 1 new leader on 3513 after 3.706 s
+20:34:38 killing shard 2 leader on port 3521 (s2.1)
+20:34:46 shard 2 new leader on 3522 after 7.980 s
+    bank: 7051 commits, 1846 conflicts, 98 audits, 1618 other errors (3 commits with unknown outcome, 2 of them committed), final sum 64000
+    counters: 10133 acknowledged increments, 347 with unknown outcome
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+      error: (1180, 'Lost connection to shard 1 during commit (tarantool connection closed); the statement may or may not have been applied')
+      error: (1180, 'Lost connection to shard 1 during commit (2003 (HY000): shard 1 has no reachable leader (127.0.0.1:3513 is read-only); recovery will finish transaction 1-9094f04a-16724); the statement may or may not have been applied')
+      error: (1180, 'Lost connection to shard 1 during commit (2003 (HY000): shard 1 has no reachable leader (127.0.0.1:3513 is read-only); recovery will finish transaction 1-9094f04a-16730); the statement may or may not have been applied')
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    commits per 3 s: 488 523 573 497 610 571 342 413 608 193 60 351 650 582 583 7
+ok   test_bank (45.1s)
+1 tests, 0 failures
+    bank (READ COMMITTED): 6621 commits, 42 deadlocks, 0 lock timeouts, 3 unknown outcomes, 0 other errors
+ok   test_zz_bank (45.1s)
+1 tests, 0 failures
+1 SQL server(s), shards [1, 2], 30000 buckets; moving the 24 buckets of the rows for 45 s
+  74 buckets moved (38 moves failed); 3419 transfers, 424 conflicts; 5017 READ COMMITTED increments; 148 audits, 1687 READ COMMITTED reads of every shard; 2818 other errors
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    error: rc read: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    error: rc read: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    error: increment: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    error: increment: (1180, 'Lost connection to shard 1 during commit (tarantool connection closed); the statement may or may not have been applied')
+    error: increment: (1180, 'Lost connection to shard 1 during commit (tarantool connection closed); the statement may or may not have been applied')
+  ok   buckets moved under load (74)
+  ok   serializable ordered reads committed under load
+  ok   READ COMMITTED ordered reads completed under load
+  ok   reads saw every row once, and the sum unchanged: []
+  ok   final balance sum
+  ok   balances match the ledger: []
+  ok   every acknowledged COMMIT is in the ledger (0 missing)
+  ok   no COMMIT that failed with 1213 committed: []
+  ok   no increment lost or applied twice (id, n, ok, unknown): []
+  ok   transfers and increments committed
+  ok   no move left half done: []
+PASSED
+direct KV sum on new leaders: 64000
+shard 1 leader, native procedures:	{"validations_to_lua":1524,"commits_to_lua":0,"served":0,"to_lua":0,"validations":918,"commits":0,"ready":1,"fallbacks":{"validate":{"w_lock":1462,"bucket":62}},"writes":0,"writes_to_lua":0}
+shard 2 leader, native procedures:	{"validations_to_lua":946,"commits_to_lua":0,"served":0,"to_lua":0,"validations":631,"commits":0,"ready":1,"fallbacks":{"validate":{"w_lock":908,"bucket":38}},"writes":0,"writes_to_lua":0}
+2026-10-28 20:34:45.667 [33740] main/121/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-9094f04a-22010 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+2026-10-28 20:34:45.672 [33740] main/121/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-9094f04a-22027 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+2026-10-28 20:34:45.676 [33740] main/121/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-9094f04a-22106 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+2026-10-28 20:34:45.679 [33740] main/121/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-9094f04a-22171 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+2026-10-28 20:34:45.681 [33740] main/121/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-9094f04a-22164 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+FAILOVER TEST PASSED

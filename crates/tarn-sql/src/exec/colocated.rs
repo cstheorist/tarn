@@ -263,6 +263,7 @@ mod tests {
     fn table(name: &str, cols: &str, pk: &str, shard: &str) -> Arc<TableDef> {
         let cat = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
@@ -341,6 +342,7 @@ mod tests {
         let cat = Catalog::new(1, vec!["d".into()], vec![(*ints("t")).clone()]);
         let params = [Value::UInt(7), Value::Int(5)];
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &params,

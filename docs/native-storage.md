@@ -7,6 +7,13 @@ stored tuples as MessagePack. It uses the same memtx or Vinyl engine,
 replication and WAL as Lua; changing the procedure language does not
 remove those costs.
 
+External clients can use the versioned, read-only
+[strong Key/Value API](strong-kv.md) for full-primary-key points and bounded
+multi-get. It reuses Tarn's strong read guards and exposes schema/ownership
+handles. Direct native GET/SELECT remains available with Tarantool's local
+visibility; it does not acquire Tarn's request-specific freshness or
+prepared-write checks. These two contracts must be measured separately.
+
 [Issue #28](https://github.com/cstheorist/tarn/issues/28) is closed. It
 introduced native reads, autocommit writes, one-shard commits and read-only
 validation, followed by narrower key/range lock checks and stream guards.
@@ -92,6 +99,17 @@ boundary, so an allocating Lua error does not unwind across Rust. The shim
 uses `luaT_state()` as an entry stack, restores its stack top and returns
 unavailable on a missing helper, invalid result or protected error. Exact
 transaction IDs enter Lua as uint64 values.
+
+A ready bucket cache before the barrier is not a promise that the native
+path will serve after it. The actual `box.status` callback conservatively
+invalidates that cache even for a notification with unchanged role/term.
+Native entries must recheck it and can hand back without reading data.
+The RF3 fixture separates a controlled native-path input/stream witness
+from delivery of that real callback during the pending stream barrier;
+the latter requires the stale-bucket handback and exact owned-transaction
+cleanup. Neither refreshes caches while the native call is pending or
+weakens a production guard. [Verification](verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130)
+documents the original failure, diagnostic limits and exported evidence.
 
 These guards do not yield, publish/access native State or perform I/O.
 Their heap eligibility predicate observes free space without requesting a

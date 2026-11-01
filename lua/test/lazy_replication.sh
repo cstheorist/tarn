@@ -21,7 +21,8 @@ MODE=native
 [ -d /proc/self ] || { echo 'FAIL lazy RF3 requires Linux process identity checks'; exit 1; }
 mkdir "$WORK"
 printf 'lazy-replication-rf3\n' > "$WORK/owner"
-printf 'source=%s\nnative=%s\nexpected_mode=%s\n' "$SOURCE" "$NATIVE" "$MODE" > "$WORK/manifest.txt"
+printf 'route_parts=%s\n' "${LAZY_ROUTE_PARTS:-1}" >> "$WORK/manifest.txt"
+printf 'source=%s\nnative=%s\nexpected_mode=%s\n' "$SOURCE" "$NATIVE" "$MODE" >> "$WORK/manifest.txt"
 for f in "$SOURCE/storage.lua" "$SOURCE/tarn.lua" "$SOURCE/tarn_lazy.lua" "$SOURCE/tarn_lazy_meter.lua" \
          "$DIR/test/lazy_replication_test.lua" "$DIR/test/lazy_replication.sh"; do
   sha256sum "$f" >> "$WORK/manifest.txt"

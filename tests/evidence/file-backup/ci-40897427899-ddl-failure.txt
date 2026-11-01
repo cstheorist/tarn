@@ -1,0 +1,19 @@
+Workflow https://github.com/cstheorist/tarn/actions/runs/40897427899/job/123530491048
+2026-10-29T15:25:27.8195145Z     13856 writes, 134 schema changes, 2548 transaction retries, 0 unknown outcomes; SUM(n) 8324 (acknowledged 8324), SUM(x) 5460 (acknowledged 5460)
+2026-10-29T15:25:27.8195744Z       error x1: autocommit UPDATE acc SET n = n + 1 WHERE id = %s: (1205, 'Vinyl write attempt deadline ex
+2026-10-29T15:25:27.8196253Z     FAILED: 1 errors
+2026-10-29T15:25:27.8196459Z FAIL test_online (20.1s)
+2026-10-29T15:25:27.8196685Z ok   test_refusals (0.1s)
+2026-10-29T15:25:27.8196895Z ok   test_table_trees (0.2s)
+2026-10-29T15:25:27.8197111Z ok   test_txn_across_alter (0.5s)
+2026-10-29T15:25:27.8197336Z 21 tests, 1 failures
+2026-10-29T15:25:27.8379883Z ##[error]      error x1: autocommit UPDATE acc SET n = n + 1 WHERE id = %s: (1205, 'Vinyl write attempt deadline ex
+2026-10-29T15:25:27.8387624Z ##[error]    FAILED: 1 errors
+2026-10-29T15:25:27.8397832Z ##[error]FAIL test_online (20.1s)
+2026-10-29T15:25:27.8417004Z ##[error]Process completed with exit code 1.
+2026-10-29T15:25:27.8476209Z ##[group]Run for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log /tmp/tarn-movefaults/*.log /tmp/tarn-bucketcount/*.log /tmp/tarn-join*/*.log /tmp/tarn-growshrink/*.log; do
+2026-10-29T15:25:27.8477455Z for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log /tmp/tarn-movefaults/*.log /tmp/tarn-bucketcount/*.log /tmp/tarn-join*/*.log /tmp/tarn-growshrink/*.log; do
+2026-10-29T15:25:27.8478274Z   [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
+2026-10-29T15:25:27.8478597Z done
+2026-10-29T15:25:27.8479151Z for f in /tmp/tarn-lazyfaults-*/manifest.json /tmp/tarn-lazyfaults-*/events.jsonl; do
+2026-10-29T15:25:27.8479602Z   [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }

@@ -1,0 +1,179 @@
+{
+  "issue": 205,
+  "original_run": "https://github.com/cstheorist/tarn/actions/runs/41052637085",
+  "job": 124052751597,
+  "original_artifact_id": 12975634300,
+  "original_zip_bytes": 59591474,
+  "original_zip_sha256": "9e74a27bf011700971190cfc5fda0e3286eb461c2f431bb6568c41556a59a56a",
+  "scope": "Original failed Vinyl rolling gate. Binary/build source receipts, events and logs retained. Full immutable artifacts and storage state remain in the original workflow artifact and local download.",
+  "archive": "original-41052637085.tar.gz",
+  "bytes": 30222,
+  "sha256": "3d766f63e8023dfa93b6aa2307e1d615627c20b9a3edeb46a15f9b9b54dbbf93",
+  "members": [
+    {
+      "path": "artifacts/new-build.json",
+      "bytes": 10124,
+      "sha256": "b676aeeafe98ed46cca8363cd365259deced0e5296e5a1f13c2f904487cabaa7"
+    },
+    {
+      "path": "artifacts/old-build.json",
+      "bytes": 9806,
+      "sha256": "692282214ee8aac40be9b0e66438246a191bbbb6167f2f0dcb6627939ebce0d9"
+    },
+    {
+      "path": "new-build.log",
+      "bytes": 5093,
+      "sha256": "75f95b77101f3a2d0ee654b4cd1183c9a453956da3658e7510b04e07f07006f5"
+    },
+    {
+      "path": "old-build.log",
+      "bytes": 5184,
+      "sha256": "6e1bb943c76a45d3323e179ae139545415f56ea7ca6ebccbd231032f58d167e6"
+    },
+    {
+      "path": "results/events.jsonl",
+      "bytes": 8316,
+      "sha256": "2c9f5a3e430a9359a362df2ec1fec192c0f57ce4280a419f6d8b17bbd509596c"
+    },
+    {
+      "path": "results/fresh-compatible/cluster.json",
+      "bytes": 212,
+      "sha256": "0a2eaf0eee100b1a3008b1f2e6d6ecb12a7fd84404b0d0aab870c3652e5067e0"
+    },
+    {
+      "path": "results/fresh-compatible/g0-1793362977849954026.log",
+      "bytes": 939,
+      "sha256": "ebbacfc1d43034b7bd8daa91863ba2a312475e43606e5679382df3de76fc9464"
+    },
+    {
+      "path": "results/fresh-compatible/s1.1-1793362974968431501.log",
+      "bytes": 1838,
+      "sha256": "3fe527003ddba00cf26c0d112d0750ec80dea20bb59aa0d93a8b2f895c69e632"
+    },
+    {
+      "path": "results/fresh-compatible/s1.2-1793362974969302467.log",
+      "bytes": 2112,
+      "sha256": "eff831dd6c3f4c983d47f907e15cfb43da09e16d39c65839ef68a0254d807303"
+    },
+    {
+      "path": "results/fresh-compatible/s1.3-1793362974970361525.log",
+      "bytes": 2969,
+      "sha256": "52a5bab99e06db7daedf2a03332008abd049870504e80be4383686ac5e4c139d"
+    },
+    {
+      "path": "results/fresh-compatible/s2.1-1793362974971422467.log",
+      "bytes": 1838,
+      "sha256": "e06bc2c63cce87c5476b492f2454205e32558c099a473858d5b70ff69844952b"
+    },
+    {
+      "path": "results/fresh-compatible/s2.2-1793362974973490800.log",
+      "bytes": 2268,
+      "sha256": "507f21d09538dbacbb00617933d3b6b5cd7fcf53a6f4a6c667f5dcb32d526226"
+    },
+    {
+      "path": "results/fresh-compatible/s2.3-1793362974974383335.log",
+      "bytes": 2730,
+      "sha256": "f6515bfe4befe9c646f70c40d8d002102bd3ecffa07d23b543b9df3ab39083ed"
+    },
+    {
+      "path": "results/manifest.json",
+      "bytes": 72245,
+      "sha256": "3c2a64cb86ddc89e6c8a44bdb7ab32509fab27ca7a664b4834a5256ba7142330"
+    },
+    {
+      "path": "results/rolling/cluster.json",
+      "bytes": 212,
+      "sha256": "37809c3b1970984a3d303fb293a90e14d288655b825a7696f4b08e6f453f7371"
+    },
+    {
+      "path": "results/rolling/g0-1793362982458053190.log",
+      "bytes": 2786,
+      "sha256": "1d6fef0b5bd2177f9f76ab864a81c92afe669c66074de013c1a2349af60c2029"
+    },
+    {
+      "path": "results/rolling/g0-1793363009091683115.log",
+      "bytes": 629,
+      "sha256": "e7cdf7393c9043873151f3a09304fd1fdc4ce799f79ef7c708e12f5a9b6e2ca1"
+    },
+    {
+      "path": "results/rolling/g0-1793363011708411935.log",
+      "bytes": 629,
+      "sha256": "20ec7c794148008bb9ddf35af34c2837302a050fbdf2e2d1342de5c3ea8118fa"
+    },
+    {
+      "path": "results/rolling/g1-1793362983052463167.log",
+      "bytes": 269,
+      "sha256": "b64553122fb45826d3f15485828a2485af59167082b6a1eb350b7d44e3b5420b"
+    },
+    {
+      "path": "results/rolling/g1-1793363004020559113.log",
+      "bytes": 1283,
+      "sha256": "2de3316bd60029b6420edf76ad1d307e9086a44e291c59aea731d7769c80f9da"
+    },
+    {
+      "path": "results/rolling/s1.1-1793362979832184040.log",
+      "bytes": 4236,
+      "sha256": "31fb88e94aabff9bc3069a3b4210d80bc602ceb926547e88ae8679867d88d008"
+    },
+    {
+      "path": "results/rolling/s1.1-1793362990575117538.log",
+      "bytes": 3089,
+      "sha256": "7cb3f1e9dd094272754fcd0c88bda0b26c60e87cf156129b8ed63862a1602fbc"
+    },
+    {
+      "path": "results/rolling/s1.2-1793362979833102643.log",
+      "bytes": 1270,
+      "sha256": "d469386491262c385918e009de59c1c24d6a62b2c7162cf4fb1af22f2156a038"
+    },
+    {
+      "path": "results/rolling/s1.2-1793362983641737489.log",
+      "bytes": 3112,
+      "sha256": "4ba94ca760dcbe5453dce8b13438bcbe7b3f0598d27500eb0dd28e879d0e9c7e"
+    },
+    {
+      "path": "results/rolling/s1.2-1793363012335740505.log",
+      "bytes": 2322,
+      "sha256": "8fda31034a35f349faa971e65d7e201083b10c5fd2a97850d12f56a14ec03fae"
+    },
+    {
+      "path": "results/rolling/s1.3-1793362979834061573.log",
+      "bytes": 3013,
+      "sha256": "6c793aa106a664ffe47207f6a12c99b08843a1b434975ccc327a025a4f5fddf6"
+    },
+    {
+      "path": "results/rolling/s1.3-1793362986951064214.log",
+      "bytes": 3564,
+      "sha256": "4c2beb44725eb01f61b11ae02988251afaaed7358d57231cdd929c1d05d33ae5"
+    },
+    {
+      "path": "results/rolling/s2.1-1793362979835228723.log",
+      "bytes": 4236,
+      "sha256": "ade1dae671cabebb934e259d89efc4bfba9b66d3aef9f0d3f825e852e265dfaf"
+    },
+    {
+      "path": "results/rolling/s2.1-1793363001504522927.log",
+      "bytes": 2266,
+      "sha256": "a55f7994ab051b69648d436a0c13f7ab28e48d01aac55329cfcabc705741306c"
+    },
+    {
+      "path": "results/rolling/s2.2-1793362979837400207.log",
+      "bytes": 1270,
+      "sha256": "09fd15d043538423ef692e261616c467ef556e8ab01f5d2bde86875314d8e209"
+    },
+    {
+      "path": "results/rolling/s2.2-1793362993461248215.log",
+      "bytes": 3112,
+      "sha256": "b6cd3696ea3f6889a6b674d5ae69b241078d0e920782b8773b94b3e9848289ce"
+    },
+    {
+      "path": "results/rolling/s2.3-1793362979839365334.log",
+      "bytes": 3013,
+      "sha256": "885d036fce45b73aab689c6c0940f78d5b89c6e282e50ad4a46a61bbb27c513d"
+    },
+    {
+      "path": "results/rolling/s2.3-1793362997107692298.log",
+      "bytes": 2717,
+      "sha256": "ba6cc8943d07859505afc0cc7553a4870d96c6b72eb2e8ecc7aabb879185f52c"
+    }
+  ]
+}

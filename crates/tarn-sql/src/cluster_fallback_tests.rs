@@ -2,10 +2,33 @@
 use super::*;
 use crate::{Output, Session};
 
-#[path = "../../tarn-iproto/tests/common/mod.rs"]
-mod common;
+use super::test_support as common;
 
 const MARK: u32 = 1; // Session's autocommit native-unavailable mark.
+
+#[tokio::test]
+async fn uncertain_native_reply_never_replays_a_committed_increment() {
+    for mode in [
+        "malformed_error",
+        "malformed_lua",
+        "malformed_returns",
+        "malformed_missing",
+        "unknown",
+    ] {
+        let (_t, _c, control, mut s) = setup(1).await;
+        eval(
+            &control,
+            &format!("fallback_mode = '{mode}'; fallback_log = {{native = {{}}, lua = {{}}, active = {{}}}}"),
+        )
+        .await;
+        let err = s.query("UPDATE t SET v = v + 1 WHERE id = 1").await.unwrap_err();
+        assert_eq!((err.code, err.sqlstate), (1180, *b"40003"), "{mode}: {err}");
+        assert_eq!(value(&mut s).await, 1, "{mode}: no replay after effects");
+        let got = log(&control).await;
+        assert_eq!(ids(&got, "native").len(), 1, "{mode}: {got}");
+        assert!(ids(&got, "lua").is_empty(), "{mode}: no handback after effects: {got}");
+    }
+}
 
 async fn setup(n: usize) -> (common::Tarantool, Arc<Cluster>, Client, Session) {
     let lua = concat!(env!("CARGO_MANIFEST_DIR"), "/../../lua");
@@ -17,6 +40,13 @@ async fn setup(n: usize) -> (common::Tarantool, Arc<Cluster>, Client, Session) {
     }))
     .unwrap();
     let c = Cluster::connect(cfg).await.unwrap();
+    // Exercise the complete configured pool despite lazy creation: external
+    // owners keep each existing socket busy while the next one is requested.
+    let mut pinned = Vec::new();
+    for _ in 0..n {
+        pinned.push(c.shards[0].client(&c).await.unwrap());
+    }
+    drop(pinned);
     let mut s = Session::new(c.clone(), 1);
     for sql in [
         "CREATE DATABASE f",
@@ -94,15 +124,17 @@ async fn warmed_unavailable_autocommit_uses_every_connection() {
                 p.next.store(i, Ordering::Relaxed);
                 affected(s.query("UPDATE t SET v = v + 1 WHERE id = 1").await.unwrap());
             }
-            assert!(p.clients.iter().all(|c| c.marked(MARK)));
+            assert_eq!(p.clients.lock().len(), n);
+            assert!(p.clients.lock().iter().all(|(c, _)| c.marked(MARK)));
             eval(
                 &control,
                 "fallback_log = {native = {}, lua = {}, active = {}}; fallback_hold = true",
             )
             .await;
 
-            // Poll all statements to their first IO wait without yielding to
-            // maintenance tasks. The held calls charge real physical clients.
+            // Start each statement's owned RPC worker. Observe actual held
+            // Lua calls below: the SQL future may first wait on its worker,
+            // before that worker selects the physical connection.
             let mut sessions: Vec<_> = (0..n).map(|i| Session::new(c.clone(), i as u32 + 10)).collect();
             for s in &mut sessions {
                 s.use_db("f").unwrap();
@@ -112,9 +144,7 @@ async fn warmed_unavailable_autocommit_uses_every_connection() {
                 .map(|s| Box::pin(s.query("UPDATE t SET v = v + 1 WHERE id = 1")))
                 .collect();
             for call in &mut calls {
-                let before = p.next.load(Ordering::Relaxed);
                 assert!(futures::poll!(call.as_mut()).is_pending());
-                assert_eq!(p.next.load(Ordering::Relaxed) - before, 1, "one pool selection per DML");
             }
             let got = tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
@@ -154,7 +184,8 @@ async fn matched_handback_keeps_its_physical_client() {
         .await;
         let p = pool(&c);
         // Identify the selected client by its server session, without a pick.
-        let r = p.clients[0].eval(0, "return box.session.id()", &[0x90]).await.unwrap();
+        let client = p.clients.lock()[0].0.clone();
+        let r = client.eval(0, "return box.session.id()", &[0x90]).await.unwrap();
         let selected = common::decode_array(&r.data().unwrap())[0].as_i64().unwrap() as u64;
         p.next.store(0, Ordering::Relaxed);
         affected(s.query("UPDATE t SET v = v + 1 WHERE id = 1").await.unwrap());
@@ -164,7 +195,7 @@ async fn matched_handback_keeps_its_physical_client() {
             if mode == "missing" { vec![] } else { vec![selected] }
         );
         assert_eq!(ids(&got, "lua"), if mode == "ok" { vec![] } else { vec![selected] });
-        assert_eq!(p.clients[0].marked(MARK), matches!(mode, "all" | "missing"));
+        assert_eq!(p.clients.lock()[0].0.marked(MARK), matches!(mode, "all" | "missing"));
         assert_eq!(value(&mut s).await, 1);
     }
 }

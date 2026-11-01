@@ -56,11 +56,33 @@ class Test:
         c.close()
         return out
 
-    def lua(self, shard, code):
-        r = subprocess.run([T, "-e", f"local c = require('net.box').connect('tarn:tarn@{self.shards[shard]}') "
-                            f"local r = c:eval([[{code}]]) print(require('json').encode(r)) os.exit(0)"],
-                           capture_output=True, text=True, stdin=subprocess.DEVNULL, check=True)
+    def lua(self, shard, code, timeout=30):
+        r = subprocess.run([T, "-e", f"local c = require('net.box').connect('tarn:tarn@{self.shards[shard]}', {{wait_connected=2}}) "
+                            f"local r = c:eval([[{code}]], {{}}, {{timeout={timeout}}}) print(require('json').encode(r)) os.exit(0)"],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, check=True, timeout=timeout+3)
         return r.stdout.strip().splitlines()[-1]
+
+    def wait_storage(self):
+        # A listening socket may still belong to recovery/read-only startup.
+        # Never retry the gateway's work or bypass a storage health fence.
+        for i in range(len(self.shards)):
+            with open(self.pidfile(f"s{i+1}.1")) as f:
+                expected = int(f.read())
+            deadline = time.monotonic() + 30
+            last = None
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(expected, 0)
+                    last = json.loads(self.lua(i, "return box.info.status == 'running' and not box.info.ro "
+                                               "and type(rawget(_G,'tarn_catalog_version')) == 'function' "
+                                               "and {pid=box.info.pid,version=tarn_catalog_version()}", timeout=2))
+                    if last and last['pid'] == expected:
+                        break
+                except (subprocess.SubprocessError, json.JSONDecodeError) as e:
+                    last = str(e)
+                time.sleep(.1)
+            else:
+                raise RuntimeError(f"storage shard {i+1} did not become ready (expected PID {expected}): {last}")
 
     # ---- the SQL server and the storage nodes ------------------------------
     def pidfile(self, name):
@@ -126,6 +148,7 @@ class Test:
                        + [f"s{i + 1}.1" for i in range(len(self.shards))], check=True,
                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
         self.configure(count)
+        self.wait_storage()
         self.start_server()
 
     # ---- checks -----------------------------------------------------------

@@ -1,0 +1,3823 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/40923920014",
+  "job": 123624831307,
+  "head": "a0513223cc50ad6ce19d9a419156d12053f0929c",
+  "source": "23fc693cb9c38746f5da2eb44dc878c7663b28a8",
+  "artifact": 12920947288,
+  "files": {
+    "pressure-attempts.jsonl": "6538b5f2865a4177740742de4e20638c7dba721df64fd619d8e34a8eac167dbd",
+    "pressure-summary.json": "b8f9e6aa6ca0e953d4b6e69b84c27514bbe48efafa3dd64a5f5beb21d2f635ec",
+    "pressure-native-samples.jsonl": "1921a9e05eeaed8e2b43fb2f5bb846c79370a12148ee45fdf2082af30801cd85",
+    "events.jsonl": "fab4193632edb8eb1577c53c67e74cdd7e0a92a5c4a1104eab8217685ca84be5",
+    "manifest.json": "dc91d1982aa21ee73cef516beb6ec375a3056e8c0868aa6a1bfe750155469719"
+  },
+  "failure": {
+    "stage": "native pressure witness",
+    "type": "AssertionError",
+    "message": "no actual queued compaction input; pressure fixture did not exercise compaction"
+  },
+  "attempts": 4589,
+  "acknowledged": 4445,
+  "refused_1205": 144,
+  "stored_ids_match_acknowledgements": true,
+  "refused_ids_absent": true,
+  "samples": [
+    {
+      "realtime": 1793297358.1753,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0,
+        "tasks_inprogress": 0,
+        "dump_output": 0,
+        "compaction_queue": 0,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 0,
+        "tasks_failed": 0,
+        "tasks_completed": 0,
+        "dump_input": 0,
+        "compaction_input": 0
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 0,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 0,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297358.5258,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0,
+        "tasks_inprogress": 0,
+        "dump_output": 0,
+        "compaction_queue": 0,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 0,
+        "tasks_failed": 0,
+        "tasks_completed": 0,
+        "dump_input": 0,
+        "compaction_input": 0
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 0,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 0,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297358.8826,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0,
+        "tasks_inprogress": 0,
+        "dump_output": 0,
+        "compaction_queue": 0,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 0,
+        "tasks_failed": 0,
+        "tasks_completed": 0,
+        "dump_input": 0,
+        "compaction_input": 0
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 0,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 0,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297359.2207,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.031585682999548,
+        "tasks_inprogress": 0,
+        "dump_output": 6606730,
+        "compaction_queue": 0,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 3,
+        "tasks_failed": 0,
+        "tasks_completed": 8,
+        "dump_input": 6594668,
+        "compaction_input": 0
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297359.5666,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.031585682999548,
+        "tasks_inprogress": 0,
+        "dump_output": 6606730,
+        "compaction_queue": 0,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 3,
+        "tasks_failed": 0,
+        "tasks_completed": 8,
+        "dump_input": 6594668,
+        "compaction_input": 0
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "count": 0
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297359.9062,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.1403672899994,
+        "tasks_inprogress": 0,
+        "dump_output": 12116613,
+        "compaction_queue": 0,
+        "compaction_output": 12991187,
+        "compaction_time": 0.10432965200016,
+        "dump_count": 33,
+        "tasks_failed": 0,
+        "tasks_completed": 81,
+        "dump_input": 12094312,
+        "compaction_input": 12991362
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 5,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 12954375,
+              "pages": 1575,
+              "bytes_compressed": 12758520,
+              "rows": 1575
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.088593519000142,
+            "output": {
+              "bytes": 12954375,
+              "pages": 1575,
+              "bytes_compressed": 9919145,
+              "rows": 1575
+            },
+            "count": 5
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 7,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 36987,
+              "pages": 36,
+              "bytes_compressed": 37671,
+              "rows": 1597
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.015736133000019,
+            "output": {
+              "bytes": 36812,
+              "pages": 11,
+              "bytes_compressed": 11692,
+              "rows": 1597
+            },
+            "count": 8
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297360.2753,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.16122119899956,
+        "tasks_inprogress": 0,
+        "dump_output": 16496324,
+        "compaction_queue": 0,
+        "compaction_output": 29305771,
+        "compaction_time": 0.23712114099999,
+        "dump_count": 35,
+        "tasks_failed": 0,
+        "tasks_completed": 87,
+        "dump_input": 16466035,
+        "compaction_input": 29305996
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 29223425,
+              "pages": 3553,
+              "bytes_compressed": 26225777,
+              "rows": 3553
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.213749065,
+            "output": {
+              "bytes": 29223425,
+              "pages": 3553,
+              "bytes_compressed": 22375916,
+              "rows": 3553
+            },
+            "count": 6
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 82571,
+              "pages": 48,
+              "bytes_compressed": 58154,
+              "rows": 3575
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.023372075999987,
+            "output": {
+              "bytes": 82346,
+              "pages": 16,
+              "bytes_compressed": 22172,
+              "rows": 3575
+            },
+            "count": 9
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297360.6081,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.1736503679997,
+        "tasks_inprogress": 0,
+        "dump_output": 20216187,
+        "compaction_queue": 0,
+        "compaction_output": 29305771,
+        "compaction_time": 0.23712114099999,
+        "dump_count": 36,
+        "tasks_failed": 0,
+        "tasks_completed": 89,
+        "dump_input": 20179118,
+        "compaction_input": 29305996
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 29223425,
+              "pages": 3553,
+              "bytes_compressed": 26225777,
+              "rows": 3553
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.213749065,
+            "output": {
+              "bytes": 29223425,
+              "pages": 3553,
+              "bytes_compressed": 22375916,
+              "rows": 3553
+            },
+            "count": 6
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 82571,
+              "pages": 48,
+              "bytes_compressed": 58154,
+              "rows": 3575
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.023372075999987,
+            "output": {
+              "bytes": 82346,
+              "pages": 16,
+              "bytes_compressed": 22172,
+              "rows": 3575
+            },
+            "count": 9
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297360.9537,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.1736503679997,
+        "tasks_inprogress": 0,
+        "dump_output": 20216187,
+        "compaction_queue": 0,
+        "compaction_output": 29305771,
+        "compaction_time": 0.23712114099999,
+        "dump_count": 36,
+        "tasks_failed": 0,
+        "tasks_completed": 89,
+        "dump_input": 20179118,
+        "compaction_input": 29305996
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 29223425,
+              "pages": 3553,
+              "bytes_compressed": 26225777,
+              "rows": 3553
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.213749065,
+            "output": {
+              "bytes": 29223425,
+              "pages": 3553,
+              "bytes_compressed": 22375916,
+              "rows": 3553
+            },
+            "count": 6
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 82571,
+              "pages": 48,
+              "bytes_compressed": 58154,
+              "rows": 3575
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.023372075999987,
+            "output": {
+              "bytes": 82346,
+              "pages": 16,
+              "bytes_compressed": 22172,
+              "rows": 3575
+            },
+            "count": 9
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297361.3105,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.1736503679997,
+        "tasks_inprogress": 0,
+        "dump_output": 20216187,
+        "compaction_queue": 0,
+        "compaction_output": 29305771,
+        "compaction_time": 0.23712114099999,
+        "dump_count": 36,
+        "tasks_failed": 0,
+        "tasks_completed": 89,
+        "dump_input": 20179118,
+        "compaction_input": 29305996
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 29223425,
+              "pages": 3553,
+              "bytes_compressed": 26225777,
+              "rows": 3553
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.213749065,
+            "output": {
+              "bytes": 29223425,
+              "pages": 3553,
+              "bytes_compressed": 22375916,
+              "rows": 3553
+            },
+            "count": 6
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 82571,
+              "pages": 48,
+              "bytes_compressed": 58154,
+              "rows": 3575
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.023372075999987,
+            "output": {
+              "bytes": 82346,
+              "pages": 16,
+              "bytes_compressed": 22172,
+              "rows": 3575
+            },
+            "count": 9
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297361.6267,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297361.9441,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297362.2609,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297362.5739,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297362.8876,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297363.2012,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297363.5155,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297363.8336,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297364.154,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297364.474,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297364.7941,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297365.1122,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297365.429,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297365.7467,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297366.0636,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297366.3768,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297366.6977,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297367.0138,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297367.327,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297367.6378,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297367.9554,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297368.2702,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297368.5835,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297368.9036,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.19750478799961,
+        "tasks_inprogress": 0,
+        "dump_output": 28464218,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 95,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297369.22,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297369.5359,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297369.8547,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297370.1694,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297370.488,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297370.8036,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297371.1211,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297371.4365,
+      "io_limit": 0.5,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297371.7678,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297372.1014,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297372.4334,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297372.7631,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297373.1,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297373.4215,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297373.7367,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297374.0553,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297374.3718,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    },
+    {
+      "realtime": 1793297374.6923,
+      "io_limit": 0,
+      "scheduler": {
+        "dump_time": 0.20103081699949,
+        "tasks_inprogress": 1,
+        "dump_output": 28475688,
+        "compaction_queue": 0,
+        "compaction_output": 57761442,
+        "compaction_time": 0.387859725,
+        "dump_count": 38,
+        "tasks_failed": 0,
+        "tasks_completed": 96,
+        "dump_input": 28412118,
+        "compaction_input": 57761682
+      },
+      "index_compactions": [
+        {
+          "id": 0,
+          "run_count": 2,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 50817716,
+              "rows": 7003
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.35832406899999,
+            "output": {
+              "bytes": 57599675,
+              "pages": 7003,
+              "bytes_compressed": 44101848,
+              "rows": 7003
+            },
+            "count": 7
+          }
+        },
+        {
+          "id": 1,
+          "run_count": 3,
+          "range_count": 1,
+          "compaction": {
+            "input": {
+              "bytes": 162007,
+              "pages": 59,
+              "bytes_compressed": 102650,
+              "rows": 7025
+            },
+            "queue": {
+              "bytes": 0,
+              "pages": 0,
+              "bytes_compressed": 0,
+              "rows": 0
+            },
+            "time": 0.029535656000007,
+            "output": {
+              "bytes": 161767,
+              "pages": 25,
+              "bytes_compressed": 40421,
+              "rows": 7025
+            },
+            "count": 10
+          }
+        }
+      ]
+    }
+  ],
+  "scope": "Original failed execution: periodic queues were all zero despite completed compaction. Selected native series and original file hashes; no claim about unobserved instants or production failure."
+}

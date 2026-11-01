@@ -1,0 +1,63 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/41051026290",
+  "scope": "Current-main study: 256 B and 4 KiB samples complete; 64 KiB setup refused by default memory budget. Not a complete new performance study.",
+  "archive": "run-41051026290.tar.gz",
+  "bytes": 131766,
+  "sha256": "5902f338a7d9041b0fd4c749aee339f9707c49a86643227d45ee38932b82fecf",
+  "results": [
+    {
+      "path": "pushdown-memtx-enabled-41051026290/pushdown-results/width-256.json",
+      "sha256": "f9c12029ebd1dae3756149fffc8fc33bca942503b0c18610978b9c7dec397f25",
+      "complete": true,
+      "error": null,
+      "source": "67c7a65db78a9641b264a7da8fe0a94b5684870c",
+      "samples": 160,
+      "payload": 256
+    },
+    {
+      "path": "pushdown-memtx-enabled-41051026290/pushdown-results/width-4096.json",
+      "sha256": "fb0ee6e523fb9584475b791a0e393ea42cba31fde94f448c6870611e071ee5b5",
+      "complete": true,
+      "error": null,
+      "source": "67c7a65db78a9641b264a7da8fe0a94b5684870c",
+      "samples": 160,
+      "payload": 4096
+    },
+    {
+      "path": "pushdown-memtx-enabled-41051026290/pushdown-results/width-65536.json",
+      "sha256": "822a958f4ef956b0da9502fbc5219d20d700a8557f91343f82fc2aa432d2fb34",
+      "complete": false,
+      "error": "OperationalError(1041, 'Tarn resource limit: query memory budget (0 + 125902336 > 67108864)')",
+      "source": "67c7a65db78a9641b264a7da8fe0a94b5684870c",
+      "samples": 0,
+      "payload": 65536
+    },
+    {
+      "path": "pushdown-vinyl-enabled-41051026290/pushdown-results/width-256.json",
+      "sha256": "d5d12fef27720e870007e63989bdcf76eabbc487adecc59843e0f16d59d70acc",
+      "complete": true,
+      "error": null,
+      "source": "67c7a65db78a9641b264a7da8fe0a94b5684870c",
+      "samples": 160,
+      "payload": 256
+    },
+    {
+      "path": "pushdown-vinyl-enabled-41051026290/pushdown-results/width-4096.json",
+      "sha256": "34d6d6a12b36839a257198a9bd297a0bf279a381f8604285e575c27a158d79b8",
+      "complete": true,
+      "error": null,
+      "source": "67c7a65db78a9641b264a7da8fe0a94b5684870c",
+      "samples": 160,
+      "payload": 4096
+    },
+    {
+      "path": "pushdown-vinyl-enabled-41051026290/pushdown-results/width-65536.json",
+      "sha256": "3508c0237595e03aec385c207e857fc4d1630c1eca93cb5329781aa23e730829",
+      "complete": false,
+      "error": "OperationalError(1041, 'Tarn resource limit: query memory budget (0 + 125902336 > 67108864)')",
+      "source": "67c7a65db78a9641b264a7da8fe0a94b5684870c",
+      "samples": 0,
+      "payload": 65536
+    }
+  ]
+}

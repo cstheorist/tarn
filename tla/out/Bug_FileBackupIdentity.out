@@ -1,0 +1,158 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 1 and seed -8045947805656360774 with 1 worker on 1 cores with 228MB heap and 64MB offheap memory [pid: 127] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/FileBackup.tla
+Parsing file /tmp/tlc-5217125708046713988/Naturals.tla (jar:file:/tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5217125708046713988/FiniteSets.tla (jar:file:/tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5217125708046713988/_TLCTrace.tla (jar:file:/tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-5217125708046713988/Sequences.tla (jar:file:/tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5217125708046713988/TLC.tla (jar:file:/tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5217125708046713988/TLCExt.tla (jar:file:/tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-5217125708046713988/Integers.tla (jar:file:/tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module FileBackup
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module FileBackup
+Starting... (2026-10-29 12:39:07)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-29 12:39:08.
+Error: Invariant SeedDistinct is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ publishedHeld = FALSE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = FALSE
+/\ identity = "none"
+/\ copied = {}
+/\ sound = {}
+/\ registered = FALSE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "none"
+
+State 2: <Start line 19, col 10 to line 21, col 105 of module FileBackup>
+/\ publishedHeld = FALSE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = FALSE
+/\ identity = "none"
+/\ copied = {}
+/\ sound = {}
+/\ registered = FALSE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "held"
+
+State 3: <Copy("snapshot") line 28, col 12 to line 33, col 107 of module FileBackup>
+/\ publishedHeld = FALSE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = FALSE
+/\ identity = "none"
+/\ copied = {"snapshot"}
+/\ sound = {"snapshot"}
+/\ registered = FALSE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "held"
+
+State 4: <Copy("run") line 28, col 12 to line 33, col 107 of module FileBackup>
+/\ publishedHeld = FALSE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = FALSE
+/\ identity = "none"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"snapshot", "run"}
+/\ registered = FALSE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "held"
+
+State 5: <Publish line 34, col 12 to line 39, col 92 of module FileBackup>
+/\ publishedHeld = TRUE
+/\ restoreComplete = FALSE
+/\ restored = {}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = TRUE
+/\ identity = "none"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"snapshot", "run"}
+/\ registered = FALSE
+/\ restoredSound = {}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "released"
+
+State 6: <Restore("snapshot") line 46, col 15 to line 51, col 95 of module FileBackup>
+/\ publishedHeld = TRUE
+/\ restoreComplete = FALSE
+/\ restored = {"snapshot"}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = TRUE
+/\ identity = "none"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"snapshot", "run"}
+/\ registered = FALSE
+/\ restoredSound = {"snapshot"}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "released"
+
+State 7: <Restore("run") line 46, col 15 to line 51, col 95 of module FileBackup>
+/\ publishedHeld = TRUE
+/\ restoreComplete = FALSE
+/\ restored = {"snapshot", "run"}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = TRUE
+/\ identity = "none"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"snapshot", "run"}
+/\ registered = FALSE
+/\ restoredSound = {"snapshot", "run"}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "released"
+
+State 8: <FinishRestore line 52, col 18 to line 57, col 103 of module FileBackup>
+/\ publishedHeld = TRUE
+/\ restoreComplete = TRUE
+/\ restored = {"snapshot", "run"}
+/\ available = {"snapshot", "run"}
+/\ following = FALSE
+/\ complete = TRUE
+/\ identity = "source"
+/\ copied = {"snapshot", "run"}
+/\ sound = {"snapshot", "run"}
+/\ registered = FALSE
+/\ restoredSound = {"snapshot", "run"}
+/\ writable = FALSE
+/\ failed = FALSE
+/\ lease = "released"
+
+571 states generated, 244 distinct states found, 64 states left on queue.
+The depth of the complete state graph search is 8.
+Finished in 00s at (2026-10-29 12:39:08)
+Trace exploration spec path: ./FileBackup_TTrace_1793277547.tla

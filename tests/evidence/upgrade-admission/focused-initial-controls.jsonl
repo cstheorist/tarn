@@ -1,0 +1,21 @@
+{"event": "prepare_attempt_started", "txid": "live-0", "attempt": 0, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "live-0", "node": "127.0.0.1:3851", "result": {"state": "aborted", "reply": ["no", 1205, "Vinyl write exceeds the current pressure burst allowance"]}}
+{"event": "prepare_refusal_cleanup_started", "txid": "live-0"}
+{"event": "prepare_refusal_cleanup_verified", "txid": "live-0", "evidence": [{"node": "127.0.0.1:3851", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "aborted", "locks": 0, "range_locks": 0}}, {"node": "127.0.0.1:3861", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "none", "locks": 0, "range_locks": 0}}]}
+{"event": "prepare_attempt_started", "txid": "live-0-admission-1", "attempt": 1, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "live-0-admission-1", "node": "127.0.0.1:3851", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "prepare_attempt_reply", "txid": "live-0-admission-1", "node": "127.0.0.1:3861", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "durable_YES_before_restart", "txid": "live-0-admission-1"}
+{"event": "prepared_applied_once_after_restart", "txid": "live-0-admission-1"}
+{"control": "confirmed-refusal", "participant": 1, "status": "pass"}
+{"event": "prepare_attempt_started", "txid": "live-1", "attempt": 0, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "live-1", "node": "127.0.0.1:3851", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "prepare_attempt_reply", "txid": "live-1", "node": "127.0.0.1:3861", "result": {"state": "aborted", "reply": ["no", 1205, "Vinyl write exceeds the current pressure burst allowance"]}}
+{"event": "prepare_refusal_cleanup_started", "txid": "live-1"}
+{"event": "prepare_refusal_cleanup_verified", "txid": "live-1", "evidence": [{"node": "127.0.0.1:3851", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "aborted", "locks": 0, "range_locks": 0}}, {"node": "127.0.0.1:3861", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "none", "locks": 0, "range_locks": 0}}]}
+{"event": "prepare_attempt_started", "txid": "live-1-admission-1", "attempt": 1, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "live-1-admission-1", "node": "127.0.0.1:3851", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "prepare_attempt_reply", "txid": "live-1-admission-1", "node": "127.0.0.1:3861", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "durable_YES_before_restart", "txid": "live-1-admission-1"}
+{"event": "prepared_applied_once_after_restart", "txid": "live-1-admission-1"}
+{"control": "confirmed-refusal", "participant": 2, "status": "pass"}

@@ -6,7 +6,6 @@ use parking_lot::Mutex;
 use sha1::{Digest, Sha1};
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::tokenizer::{Token, Tokenizer};
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::ops::Deref;
@@ -117,22 +116,22 @@ struct Trace {
     buckets: BTreeSet<u32>,
     unknown_buckets: bool,
     rpc_attempts: u64,
+    storage_rows: u64,
     grouped_reads: u64,
     commit_parts: Option<usize>,
 }
 
 tokio::task_local! {
-    static CURRENT: RefCell<Trace>;
+    static CURRENT: Arc<Mutex<Trace>>;
 }
 
 fn edit(f: impl FnOnce(&mut Trace)) {
     let _ = CURRENT.try_with(|cell| {
-        // Telemetry must not turn an unexpected nested observation into a
-        // SQL panic. No borrow is held across a storage call or an await.
-        if let Ok(mut t) = cell.try_borrow_mut() {
-            if !t.disabled {
-                f(&mut t);
-            }
+        // Owned foreground workers can report concurrently. These edits
+        // never recurse or hold the lock across a storage call or await.
+        let mut t = cell.lock();
+        if !t.disabled {
+            f(&mut t);
         }
     });
 }
@@ -187,12 +186,20 @@ pub(crate) fn grouped() {
     edit(|t| t.grouped_reads = t.grouped_reads.saturating_add(1));
 }
 
+/// Successfully decoded tuples returned by SELECT/select_keys/grouped
+/// reads, including repeated attempts. Not index entries examined, COUNT
+/// work, response bytes, or the final SQL result cardinality.
+pub(crate) fn storage_rows(n: usize) {
+    edit(|t| t.storage_rows = t.storage_rows.saturating_add(n as u64));
+}
+
 pub(crate) fn commit(parts: usize) {
     edit(|t| t.commit_parts = Some(parts));
 }
 
 #[derive(Clone)]
 struct Entry {
+    storage_rows: u64,
     descriptor: Descriptor,
     seen: u64,
     calls: u64,
@@ -215,6 +222,7 @@ struct Entry {
 impl Entry {
     fn new(descriptor: Descriptor) -> Self {
         Self {
+            storage_rows: 0,
             descriptor,
             seen: 0,
             calls: 0,
@@ -292,6 +300,7 @@ impl Metrics {
         e.known_buckets = e.known_buckets.saturating_add(trace.buckets.len() as u64);
         e.unknown_bucket_calls = e.unknown_bucket_calls.saturating_add(u64::from(trace.unknown_buckets));
         e.rpc_attempts = e.rpc_attempts.saturating_add(trace.rpc_attempts);
+        e.storage_rows = e.storage_rows.saturating_add(trace.storage_rows);
         e.grouped_reads = e.grouped_reads.saturating_add(trace.grouped_reads);
         if let Some(parts) = trace.commit_parts {
             if error {
@@ -348,6 +357,7 @@ impl Metrics {
                         e.distributed_commits,
                         e.commit_errors,
                         e.total_us,
+                        e.storage_rows,
                     ]
                     .map(Value::UInt),
                 );
@@ -376,16 +386,28 @@ impl Drop for Completion<'_> {
     }
 }
 
+/// Carry only the foreground observation into an owned RPC/commit worker.
+/// Ordinary background maintenance still starts without a diagnostic scope.
+pub(crate) fn inherit<T>(future: impl Future<Output = T>) -> impl Future<Output = T> {
+    let scope = CURRENT.try_with(Arc::clone).ok();
+    async move {
+        match scope {
+            Some(scope) => CURRENT.scope(scope, future).await,
+            None => future.await,
+        }
+    }
+}
+
 pub(crate) async fn track<T>(metrics: &Metrics, future: impl Future<Output = SqlResult<T>>) -> SqlResult<T> {
     if CURRENT.try_with(|_| ()).is_ok() {
         return future.await;
     }
     let mut completion = Completion { metrics, done: false };
     CURRENT
-        .scope(RefCell::new(Trace::default()), async move {
+        .scope(Arc::new(Mutex::new(Trace::default())), async move {
             let start = Instant::now();
             let result = future.await;
-            let trace = CURRENT.with(|cell| cell.take());
+            let trace = CURRENT.with(|cell| std::mem::take(&mut *cell.lock()));
             metrics.record(
                 trace,
                 result.is_err(),
@@ -457,6 +479,39 @@ mod tests {
             .unwrap();
         assert_eq!((write.distributed, write.errors, write.commit_errors), (1, 1, 1));
         assert_eq!(m.cancelled.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn owned_foreground_workers_keep_fanout_and_commit_attribution() {
+        let metrics = Metrics::default();
+        track(&metrics, async {
+            describe(Descriptor::new(Some("d"), "UPDATE t SET v = ?"));
+            let workers = (0..2).map(|id| {
+                tokio::spawn(inherit(async move {
+                    shard(id);
+                    rpc();
+                    commit(2);
+                }))
+            });
+            for worker in futures::future::join_all(workers).await {
+                worker.unwrap();
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let registry = metrics.registry.lock();
+        let entry = registry.entries.values().next().unwrap();
+        assert_eq!(
+            (
+                entry.calls,
+                entry.distributed,
+                entry.max_shards,
+                entry.rpc_attempts,
+                entry.distributed_commits
+            ),
+            (1, 1, 2, 2, 1)
+        );
     }
 
     #[tokio::test]

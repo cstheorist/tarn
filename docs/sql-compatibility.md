@@ -115,7 +115,8 @@ than equivalent index membership. See [the full contract and supported identitie
 * `CREATE DATABASE`, `DROP DATABASE`, `USE`.
 * `CREATE TABLE` with column types (below), `NOT NULL`, `DEFAULT`,
   `AUTO_INCREMENT`, `PRIMARY KEY`, `UNIQUE [KEY]`, `KEY` / `INDEX` (with
-  `VISIBLE` / `INVISIBLE` and `COMMENT`), `FOREIGN KEY` (recorded, not enforced, below),
+  `VISIBLE` / `INVISIBLE` and `COMMENT`),
+  [explicit integrity admission](integrity.md),
   the table options `AUTO_INCREMENT = n`, `COMMENT` and `ENGINE`, and the
   shard key clause `PARTITION BY KEY(col, ...) [PARTITIONS n]` (the
   partition count is ignored: rows are spread over the cluster's buckets).
@@ -173,13 +174,14 @@ left half done is finished by the next schema change or server start.
 | `MODIFY`, `CHANGE` | type changes within one family (integers, `CHAR`/`VARCHAR`/`TEXT`/`JSON`, `DECIMAL` with the same scale, `DATETIME`/`TIMESTAMP`, binary strings, floats), `NULL` / `NOT NULL`, defaults, position, name. Existing rows are checked against the narrower type (1264 / 1265, as MariaDB reports them); writes wait while they are checked, so a change that needs the check is refused (1846) when a shard holds more than a million rows of the table (`tarn.cfg.alter_check_rows`) |
 | `RENAME COLUMN`, `ALTER [COLUMN] SET DEFAULT / DROP DEFAULT` | instant |
 | `ADD [UNIQUE] INDEX / KEY` (with `COMMENT`), `DROP INDEX`, `RENAME INDEX`, `ALTER INDEX ... VISIBLE / INVISIBLE` | indexes are built on every shard before the change takes effect; duplicates fail it with 1062. An index on an instant-added non-NULL fill materializes missing fields first; see below. Other vinyl builds run before writes are held, so they wait only for the switch at the end; meanwhile a new unique index already refuses rows that would break it (1062), as in TiDB |
-| `ADD [CONSTRAINT] FOREIGN KEY`, `DROP FOREIGN KEY`, `DROP CONSTRAINT` | recorded and shown, not enforced; an index on the columns is added as MySQL does |
+| `ADD [CONSTRAINT] FOREIGN KEY`, `CHECK`, `ALTER CHECK/CONSTRAINT` enforcement, ENUM/SET columns | rejected with 1235/42000; no unenforced declaration is silently accepted |
+| `DROP FOREIGN KEY`, `DROP CONSTRAINT` | remove recorded legacy metadata / supported UNIQUE indexes; do not certify old rows |
 | `RENAME [TO]`, `AUTO_INCREMENT = n`, `COMMENT` | yes |
 | `ENGINE` | `ENGINE=memtx` / `ENGINE=vinyl` moves the whole table online using a replacement space, with a final fence for catch-up and index construction; see [Online engine changes](operations.md#online-engine-changes). An actual engine change must run separately from other schema changes (1235). Requesting the current engine is a no-op; MySQL engine names such as `InnoDB` remain accepted without changing the engine |
 | `[DEFAULT] CHARSET`, `COLLATE` | the default collation of columns added later |
 | `CONVERT TO CHARACTER SET utf8mb4 [COLLATE c]`, `MODIFY` / `CHANGE` to another collation | for columns no index orders by; changing the collation of an indexed column would reorder its index: refused (1235) |
 | `ADD INDEX` (or a foreign key's index) on a case-insensitive column | for a column that is already in an index (it has a weight field, see [Collations](#collations)) or that the same statement adds; on any other existing case-insensitive column its rows would have to be rewritten: refused (1235) |
-| `ROW_FORMAT`, `ALGORITHM`, `LOCK`, `FORCE`, `DISABLE` / `ENABLE KEYS`, `CHECK` constraints | accepted and ignored |
+| `ROW_FORMAT`, `ALGORITHM`, `LOCK`, `FORCE`, `DISABLE` / `ENABLE KEYS` | accepted and ignored |
 | Not supported (1235) | conversions that need every row rewritten (`INT` to `VARCHAR`, a different `DECIMAL` scale, `VARCHAR` to `DATETIME`), changing or dropping the primary key, `FULLTEXT` / `SPATIAL` indexes, partition maintenance, invisible columns |
 
 An instant-added column's **fill** is its value for rows written before the
@@ -291,7 +293,7 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   participants; its JSON fields are engine-specific. `SHOW TARN PLAN FOR`
   diagnoses unbound prepared statements and `SHOW TARN QUERIES` reports
   bounded completed-query observations. Neither executes the diagnosed
-  query. ANALYZE, other plan formats and unsupported complex shapes fail
+  query. EXPLAIN ANALYZE, other plan formats and unsupported complex shapes fail
   explicitly. See [query plans and fanout](operations.md#query-plans-and-fanout).
 * `information_schema.TABLES`, with MySQL 8's columns: one row per table
   (`TABLE_TYPE` `BASE TABLE`, `ENGINE` memtx or vinyl, `TABLE_COMMENT`) and
@@ -299,7 +301,10 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   is read from the catalog, so it takes no locks and needs no transaction
   (`FOR UPDATE` on it alone is a plain read); writing it is 1044, and the
   other `information_schema` tables are 1109.
-* `UNLOCK`, `FLUSH`, `ANALYZE`, `OPTIMIZE`, `CHECKSUM`, `DO` are accepted
+* `ANALYZE TABLE one_table` collects bounded, gateway-local integer-prefix
+  hints and implicitly commits. `SHOW TARN STATISTICS` and EXPLAIN expose
+  the advisory estimates; [scope and limits](operations.md#optional-cardinality-statistics).
+* `UNLOCK`, `FLUSH`, `OPTIMIZE`, `CHECKSUM`, `DO` are accepted
   and do nothing; `LOCK TABLES` commits the open transaction.
 
 ## Isolation and locking
@@ -449,6 +454,12 @@ characters their tables weigh differently. An unknown name fails with 1273.
 
 ## Differences from MySQL
 
+The [executable MySQL release contracts](mysql-contracts.md) pin the exact
+MySQL 8.4 InnoDB oracle and classify tested histories as equivalent,
+intentional differences or explicit refusals. Their generated manifest is
+checked in CI alongside the existing MariaDB suites. Read its scope before
+interpreting general compatibility statements as exact equivalence.
+
 * **Isolation:** the default is strict serializability (MySQL's default is
   REPEATABLE READ, which Tarn runs strictly serializable). Conflicting
   serializable transactions abort with 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE
@@ -461,7 +472,10 @@ characters their tables weigh differently. An unknown name fails with 1273.
   nothing (InnoDB still locks the rows it matched).
 * **Outcome unknown:** if the connection to a shard breaks while a commit is
   in flight, the statement fails with 1180 and SQLSTATE 40003: it may or may
-  not have been applied. Tarn never re-sends such a write.
+  not have been applied. Native uncertainty and malformed write replies preserve
+  this same code/state. Tarn never re-sends such a write. See the
+  [outcome/transaction-state contract](outcomes.md), including SQL connection
+  loss and successful COMMIT with pending APPLY.
 * **Collations** ([above](#collations)): the server's default is
   `utf8mb4_bin` (MySQL's is case-insensitive) unless `--default-collation`
   says otherwise; `utf8mb4_bin` counts trailing spaces; collations other
@@ -474,12 +488,13 @@ characters their tables weigh differently. An unknown name fails with 1273.
   have no such limit.
 * **Hash sharding:** range predicates on the shard key and lookups through
   non-unique secondary indexes are sent to every shard.
-* **Foreign keys** are recorded (`SHOW CREATE TABLE`, `DROP FOREIGN KEY`)
-  but not enforced, as in MyISAM or TiDB before 6.6: `ON DELETE CASCADE`
-  does not cascade and a missing parent row is not an error. `CHECK`
-  constraints are accepted and not enforced either.
-* **ENUM and SET** columns are stored as text without checking the value
-  list.
+* **Integrity declarations:** new FOREIGN KEY, CHECK and ENUM/SET declarations
+  fail explicitly with 1235/42000. Existing legacy metadata stays visibly
+  unenforced, and SQL writes require an explicit session opt-in. CHECK/list
+  history discarded by older catalogs cannot be recovered or certified.
+  [Inspection, migration, exact errors and supported NOT NULL/UNIQUE behavior](integrity.md)
+  are tied to the executable integrity compatibility manifest.
+
 
 ## Not supported
 

@@ -184,6 +184,13 @@ def seed():
 
 # (sql, kind): 'q', 'rows', 'plan' (engine-specific JSON), 'dml' (table dumps), or 'err'.
 CASES = [
+    # Explicit optional optimizer statistics and reordered integer joins;
+    # status rows and logical SELECT * column order match MariaDB.
+    ("ANALYZE TABLE t1", "rows"),
+    ("ANALYZE TABLE t2", "rows"),
+    ("SELECT * FROM t1 a JOIN t2 b ON a.id=b.t1_id WHERE b.id=1 ORDER BY a.id,b.id", "q"),
+    ("SELECT b.*,a.* FROM t1 a JOIN t2 b ON a.id=b.t1_id WHERE b.id=2 ORDER BY a.id,b.id", "q"),
+    ("SELECT a.id,b.name FROM t1 a LEFT JOIN t2 b ON a.id=b.t1_id WHERE a.id=1 ORDER BY b.id", "q"),
     # Engine plans differ; compare the JSON result envelope and subsequent
     # exact data/transaction behavior, never cost or plan field equality.
     ("EXPLAIN FORMAT=JSON SELECT * FROM t1 WHERE id=1", "plan"),
@@ -646,9 +653,8 @@ CASES = [
     ("ALTER TABLE al ENGINE = InnoDB, ALGORITHM = INPLACE, LOCK = NONE", "ddl:al"),
     ("ALTER TABLE al DISABLE KEYS", "q"),
     ("ALTER TABLE al ENABLE KEYS", "q"),
-    ("ALTER TABLE fkc ADD CONSTRAINT fk1 FOREIGN KEY (p) REFERENCES t1 (id)", "ddl:fkc"),
-    ("ALTER TABLE fkc DROP COLUMN p", "err"),
-    ("ALTER TABLE fkc DROP FOREIGN KEY fk1", "ddl:fkc"),
+    # New unenforced declarations are refused (intentional MySQL divergence).
+    # Their exact errors/atomicity and legacy migration are in integritytest.py.
     ("ALTER TABLE fkc DROP FOREIGN KEY fk1", "err"),
     ("RENAME TABLE fkc TO fkc2", "q"),
     ("SELECT * FROM fkc", "err"),
@@ -1233,6 +1239,13 @@ CASES = [
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
+    # Bounded unindexed ORDER/LIMIT (#134): NULLs, collation keys and
+    # offsets; computed and floating-point sort keys retain the normal path.
+    ("SELECT id,b FROM t1 ORDER BY b DESC,id LIMIT 3 OFFSET 1", "q"),
+    ("SELECT id,a FROM t1 ORDER BY a DESC,id LIMIT 4 OFFSET 1", "q"),
+    ("SELECT id,d FROM t1 ORDER BY d DESC,id LIMIT 4 OFFSET 1", "q"),
+    ("SELECT id,a FROM t1 ORDER BY a+1,id LIMIT 4 OFFSET 1", "q"),
+    ("SELECT id,name FROM ci ORDER BY name COLLATE utf8mb4_bin DESC,id LIMIT 3 OFFSET 1", "q"),
     # joins whose inner lookups are read in batches (issue #84): 600 outer
     # rows, keys repeated, NULL or without rows
     ("SELECT jo.id, jc.n, jc.v FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
@@ -1469,8 +1482,53 @@ CASES += [
 ]
 
 
+# Composite routing uses the same SQL identities and typed ordering as the
+# local index. Add it over committed rows so the backfill barrier, rather
+# than an arbitrary sleep, makes the differential reads comparable. Seed a
+# local CI index to establish its stored weights, then drop that alternative
+# after lazy backfill; adding the first CI weight to populated rows is an
+# independently unsupported ALTER.
+CASES += [
+    ("CREATE TABLE lazy185 (tenant_id INT,id BIGINT UNSIGNED,k VARCHAR(12) COLLATE utf8mb4_general_ci,n BIGINT,PRIMARY KEY(tenant_id,id),KEY local_k(k,n)) PARTITION BY KEY(tenant_id)", "q"),
+    ("INSERT INTO lazy185 VALUES (1,256,'A',10),(2,2,'a',2),(3,128,'a',10),(4,255,NULL,-1),(5,9007199254740993,'a',9007199254740993)", "dml:lazy185"),
+    ("ALTER TABLE lazy185 ADD KEY lk(k,n) COMMENT 'tarn:lazy=2'", "q"),
+    ("ALTER TABLE lazy185 DROP KEY local_k", "q"),
+    ("SELECT id,n FROM lazy185 WHERE k='A ' ORDER BY n,id", "q"),
+    ("SELECT id,n FROM lazy185 WHERE k='a' ORDER BY n DESC,id DESC LIMIT 2 OFFSET 1", "q"),
+    ("SELECT id FROM lazy185 WHERE k='a' AND n=10 ORDER BY id", "q"),
+    ("SELECT id FROM lazy185 WHERE k IS NULL ORDER BY n,id", "q"),
+    ("DROP TABLE lazy185", "q"),
+]
+
+
 # Run on connections with CLIENT_FOUND_ROWS (issue #39): UPDATE reports the
 # rows it matched, and an upsert that changes nothing reports 1.
+# Typed partial aggregates (#135): exact integer partials, independent NULL
+# counts, expressions over the final aggregate row, and complete fallback.
+CASES += [
+    (f"SELECT {agg} FROM {table} {where}", "rows")
+    for table, where in [
+        ("t1", ""), ("t1", "WHERE a BETWEEN 5 AND 25"),
+        ("t1", "WHERE a IN (5, 10, NULL)"), ("t1", "WHERE a IS NULL"),
+        ("t1", "WHERE id < 0"), ("t1", "WHERE a < 20 AND b = 'b2'"),
+    ]
+    for agg in ["SUM(a), MIN(a), MAX(a)", "COUNT(*), COUNT(a), SUM(a), MIN(id), MAX(id)",
+                "SUM(a) + COUNT(*), COALESCE(MIN(a), 0)"]
+] + [
+    ("SELECT SUM(n), MIN(n), MAX(n), SUM(u), MIN(u), MAX(u), COUNT(*) FROM sgn", "rows"),
+    ("SELECT SUM(c), MIN(c), MAX(c), SUM(a) FROM t1", "rows"),
+    ("SELECT SUM(d), MIN(d), MAX(d), SUM(a) FROM t1", "rows"),
+    ("SELECT SUM(DISTINCT a), MIN(a), MAX(a) FROM t1", "rows"),
+    ("SELECT MIN(name), MAX(name), COUNT(*) FROM ci WHERE id IN (1, 3, 5)", "rows"),
+    ("SELECT SUM(a + 1), MIN(a * 2) FROM t1", "rows"),
+    ("SELECT SUM(a), MAX(a) FROM t1 HAVING COUNT(*) > 0", "rows"),
+    ("SELECT SUM(a), MAX(a) FROM t1 LIMIT 0", "rows"),
+    ("SELECT id, a FROM t1 WHERE a >= 10", "rows"),
+    ("SELECT id, b FROM t1 WHERE a IN (10, 20, NULL)", "rows"),
+    ("SELECT id, d FROM t1 WHERE a IS NOT NULL", "rows"),
+    ("SELECT id, e FROM t1 WHERE a BETWEEN 5 AND 25", "rows"),
+]
+
 FOUND_ROWS_CASES = [
     ("UPDATE t1 SET a = a WHERE id = 3", "dml:t1"),
     ("UPDATE t1 SET a = 4 WHERE id BETWEEN 1 AND 6", "dml:t1"),

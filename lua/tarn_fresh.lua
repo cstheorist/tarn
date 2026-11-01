@@ -168,7 +168,9 @@ function M.new(c)
             -- A partially registered hook is harmless without a token.
             box.on_commit(clear)
             box.on_rollback(rollback_hook)
-            F.streams[k] = true
+            local gen, partial = 0, false
+            if c.movement then gen, partial = c.movement() end
+            F.streams[k] = {movement = gen, partial = partial}
             F.count = F.count + 1
         end
         if not pcall(install) then
@@ -185,8 +187,22 @@ function M.new(c)
     function F.ok(id)
         return box.is_in_txn() and key(id) == key(current()) and F.streams[key(id)] and 1 or 0
     end
+    -- A snapshot opened during physical movement can contain a strict subset
+    -- of the bucket even after publication. Its original quorum certificate
+    -- remains valid, but it cannot be used as a complete movement view.
+    function F.move_safe()
+        if not c.movement or not box.is_in_txn() then return true end
+        local token = F.streams[key(current())]
+        if not token then return true end -- raw streams are refused by F.stream
+        local gen = c.movement()
+        return not token.partial and token.movement == gen
+    end
     function F.native_mark(id) return native_guard(F.mark, id) end
-    function F.native_ok(id) return native_guard(F.ok, id) end
+    local function native_ok(id)
+        if not F.move_safe() then return 0 end -- Lua returns the movement refusal
+        return F.ok(id)
+    end
+    function F.native_ok(id) return native_guard(native_ok, id) end
     function F.stream()
         c.writable()
         if F.ok(current()) ~= 1 then unavailable('ambient stream has no first-read freshness proof') end

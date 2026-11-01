@@ -1,0 +1,90 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 80 and seed -1320058996490512076 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 64117] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue134-work/tla/QueryBudget.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7774723179934427729/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7774723179934427729/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7774723179934427729/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7774723179934427729/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7774723179934427729/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7774723179934427729/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7774723179934427729/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module QueryBudget
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module QueryBudget
+Starting... (2026-10-28 17:01:21)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-28 17:01:21.
+Error: Invariant NoPartialBudgetDML is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ validated = (a :> FALSE @@ b :> FALSE)
+/\ wire = (a :> FALSE @@ b :> FALSE)
+/\ rows = (a :> 0 @@ b :> 0)
+/\ staged = (a :> FALSE @@ b :> FALSE)
+/\ phase = (a :> "idle" @@ b :> "idle")
+/\ effect = (a :> 0 @@ b :> 0)
+/\ charged = (a :> 0 @@ b :> 0)
+/\ failed = (a :> FALSE @@ b :> FALSE)
+
+State 2: <Start(a) line 17, col 13 to line 21, col 64 of module QueryBudget>
+/\ validated = (a :> FALSE @@ b :> FALSE)
+/\ wire = (a :> TRUE @@ b :> FALSE)
+/\ rows = (a :> 0 @@ b :> 0)
+/\ staged = (a :> FALSE @@ b :> FALSE)
+/\ phase = (a :> "read" @@ b :> "idle")
+/\ effect = (a :> 0 @@ b :> 0)
+/\ charged = (a :> 1 @@ b :> 0)
+/\ failed = (a :> FALSE @@ b :> FALSE)
+
+State 3: <Read(a) line 22, col 12 to line 27, col 58 of module QueryBudget>
+/\ validated = (a :> FALSE @@ b :> FALSE)
+/\ wire = (a :> FALSE @@ b :> FALSE)
+/\ rows = (a :> 1 @@ b :> 0)
+/\ staged = (a :> FALSE @@ b :> FALSE)
+/\ phase = (a :> "active" @@ b :> "idle")
+/\ effect = (a :> 0 @@ b :> 0)
+/\ charged = (a :> 2 @@ b :> 0)
+/\ failed = (a :> FALSE @@ b :> FALSE)
+
+State 4: <Stage(a) line 28, col 13 to line 31, col 68 of module QueryBudget>
+/\ validated = (a :> FALSE @@ b :> FALSE)
+/\ wire = (a :> FALSE @@ b :> FALSE)
+/\ rows = (a :> 1 @@ b :> 0)
+/\ staged = (a :> TRUE @@ b :> FALSE)
+/\ phase = (a :> "active" @@ b :> "idle")
+/\ effect = (a :> 0 @@ b :> 0)
+/\ charged = (a :> 3 @@ b :> 0)
+/\ failed = (a :> FALSE @@ b :> FALSE)
+
+State 5: <Decide(a) line 40, col 14 to line 44, col 61 of module QueryBudget>
+/\ validated = (a :> TRUE @@ b :> FALSE)
+/\ wire = (a :> FALSE @@ b :> FALSE)
+/\ rows = (a :> 1 @@ b :> 0)
+/\ staged = (a :> TRUE @@ b :> FALSE)
+/\ phase = (a :> "decided" @@ b :> "idle")
+/\ effect = (a :> 1 @@ b :> 0)
+/\ charged = (a :> 3 @@ b :> 0)
+/\ failed = (a :> FALSE @@ b :> FALSE)
+
+State 6: <Refuse(a) line 32, col 14 to line 39, col 51 of module QueryBudget>
+/\ validated = (a :> TRUE @@ b :> FALSE)
+/\ wire = (a :> FALSE @@ b :> FALSE)
+/\ rows = (a :> 0 @@ b :> 0)
+/\ staged = (a :> FALSE @@ b :> FALSE)
+/\ phase = (a :> "done" @@ b :> "idle")
+/\ effect = (a :> 1 @@ b :> 0)
+/\ charged = (a :> 0 @@ b :> 0)
+/\ failed = (a :> TRUE @@ b :> FALSE)
+
+58 states generated, 39 distinct states found, 17 states left on queue.
+The depth of the complete state graph search is 6.
+Finished in 00s at (2026-10-28 17:01:21)
+Trace exploration spec path: ./QueryBudget_TTrace_1793221281.tla

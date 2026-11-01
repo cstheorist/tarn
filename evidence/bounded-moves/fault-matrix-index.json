@@ -1,0 +1,935 @@
+{
+  "archive": {
+    "path": "fault-matrix-runs.tar.gz",
+    "sha256": "297fd95241b574f8af1bef862c86b658f1021eaaa6799100dc71b49abdc06ba3",
+    "files": 300
+  },
+  "runs": [
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-lua-coordinator",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "coordinator",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected coordinator at bucket_rows",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 3.16173875099048,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9"
+      },
+      "directory": "tarn176-accept-lua-coordinator",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 21,
+          "committed": 21,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "2013": 1,
+            "2003": 492
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 316,
+          "committed": 316,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {}
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-lua-disk",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "disk",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected disk at bucket_rows",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 3.3142683769692667,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9"
+      },
+      "directory": "tarn176-accept-lua-disk",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 370,
+          "committed": 370,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 356,
+          "committed": 356,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 1
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-lua-lazy",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "lazy",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "lazy target RPC unavailable with acknowledged source outbox retained",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "unavailable lazy target blocks ownership withdrawal and publication",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "lazy exact membership and transferred counter/frontier continue without reset",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 3.286884418979753,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9"
+      },
+      "directory": "tarn176-accept-lua-lazy",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 33,
+          "committed": 33,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 340,
+          "error_codes": {
+            "1213": 340
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 22,
+          "committed": 22,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1213": 1
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-lua-memtx",
+        "engine": "memtx",
+        "mib": 1,
+        "moves": 1,
+        "fault": "none",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 0.23560650000581518,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9"
+      },
+      "directory": "tarn176-accept-lua-memtx",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 29,
+          "committed": 29,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 25,
+          "committed": 25,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {}
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-lua-mixed",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "none",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 0.23982854100177065,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9"
+      },
+      "directory": "tarn176-accept-lua-mixed",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 27,
+          "committed": 27,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 24,
+          "committed": 24,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1412": 1
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-lua-receiver",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "receiver",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected receiver at move_install_batch",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 5.949336001998745,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9"
+      },
+      "directory": "tarn176-accept-lua-receiver",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 37,
+          "committed": 37,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 5,
+            "2003": 748
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 34,
+          "committed": 34,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1412": 1,
+            "2003": 742,
+            "1213": 4
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-lua-reply",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "reply",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "executed page reply lost; durable receipt recovered without duplicate effects",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 0.8204643750214018,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9"
+      },
+      "directory": "tarn176-accept-lua-reply",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 78,
+          "committed": 78,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 4,
+          "error_codes": {
+            "1213": 4
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 77,
+          "committed": 77,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1412": 1
+          }
+        }
+      ],
+      "dropped_page_replies": 1
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-lua-source",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "source",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected source at bucket_rows",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 5.40895221097162,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9"
+      },
+      "directory": "tarn176-accept-lua-source",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 361,
+          "committed": 361,
+          "unknown": 1,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1180": 1,
+            "2003": 297,
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 349,
+          "committed": 349,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1213": 1,
+            "2003": 297
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-lua-vinyl",
+        "engine": "vinyl",
+        "mib": 1,
+        "moves": 1,
+        "fault": "none",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 0.31816066696774215,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9"
+      },
+      "directory": "tarn176-accept-lua-vinyl",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 34,
+          "committed": 34,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 31,
+          "committed": 31,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {}
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-native-coordinator",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "coordinator",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected coordinator at bucket_rows",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 3.1618257940281183,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+        "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+      },
+      "directory": "tarn176-accept-native-coordinator",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 24,
+          "committed": 24,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "2013": 1,
+            "2003": 497
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 316,
+          "committed": 316,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1412": 1
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-native-disk",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "disk",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected disk at bucket_rows",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 3.332730126043316,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+        "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+      },
+      "directory": "tarn176-accept-native-disk",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 380,
+          "committed": 380,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 370,
+          "committed": 370,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1412": 1
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-native-lazy",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "lazy",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "lazy target RPC unavailable with acknowledged source outbox retained",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "unavailable lazy target blocks ownership withdrawal and publication",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "lazy exact membership and transferred counter/frontier continue without reset",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 3.2692928350297734,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+        "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+      },
+      "directory": "tarn176-accept-native-lazy",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 29,
+          "committed": 29,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 348,
+          "error_codes": {
+            "1213": 348
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 20,
+          "committed": 20,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {}
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-native-memtx",
+        "engine": "memtx",
+        "mib": 1,
+        "moves": 1,
+        "fault": "none",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 0.24463095801183954,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+        "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+      },
+      "directory": "tarn176-accept-native-memtx",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 28,
+          "committed": 28,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 27,
+          "committed": 27,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1213": 1
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-native-mixed",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "none",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 0.241988499998115,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+        "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+      },
+      "directory": "tarn176-accept-native-mixed",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 27,
+          "committed": 27,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 25,
+          "committed": 25,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {}
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-native-receiver",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "receiver",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected receiver at move_install_batch",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 5.95356004498899,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+        "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+      },
+      "directory": "tarn176-accept-native-receiver",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 38,
+          "committed": 38,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "2003": 684
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 34,
+          "committed": 34,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1412": 1,
+            "2003": 728,
+            "1213": 2
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-native-reply",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "reply",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "executed page reply lost; durable receipt recovered without duplicate effects",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 0.9151926669874229,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+        "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+      },
+      "directory": "tarn176-accept-native-reply",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 93,
+          "committed": 93,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 5,
+          "error_codes": {
+            "1213": 5
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 80,
+          "committed": 80,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {}
+        }
+      ],
+      "dropped_page_replies": 1
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-native-source",
+        "engine": "mixed",
+        "mib": 1,
+        "moves": 1,
+        "fault": "source",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected source at bucket_rows",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 5.333046460989863,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+        "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+      },
+      "directory": "tarn176-accept-native-source",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 339,
+          "committed": 339,
+          "unknown": 1,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1180": 1,
+            "2003": 289,
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 326,
+          "committed": 326,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1412": 1,
+            "2003": 288
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    },
+    {
+      "settings": {
+        "work": "/tmp/tarn176-accept-native-vinyl",
+        "engine": "vinyl",
+        "mib": 1,
+        "moves": 1,
+        "fault": "none",
+        "traffic": true
+      },
+      "source_revision": "37ee46b9761827872cf4dd6645ebe7cf7e4dc044",
+      "passed": true,
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "elapsed_seconds": 0.28419983299681917,
+      "binaries": {
+        "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+        "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+      },
+      "directory": "tarn176-accept-native-vinyl",
+      "traffic": [
+        {
+          "isolation": "SERIALIZABLE",
+          "acknowledged": 34,
+          "committed": 34,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 1,
+          "error_codes": {
+            "1213": 1
+          }
+        },
+        {
+          "isolation": "READ COMMITTED",
+          "acknowledged": 32,
+          "committed": 32,
+          "unknown": 0,
+          "unknown_committed": 0,
+          "aborted": 0,
+          "error_codes": {
+            "1213": 1
+          }
+        }
+      ],
+      "dropped_page_replies": null
+    }
+  ]
+}

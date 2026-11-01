@@ -24,7 +24,7 @@ PORT=${PORT:-4100}
 SECS=${SECS:-60}
 ENGINE=${ENGINE:-}   # vinyl: the workloads' tables are vinyl tables
 "$ROOT/scripts/cluster.sh" stop -d "$DIR" 2>/dev/null
-"$ROOT/scripts/cluster.sh" start -n 2 -r 3 -d "$DIR" -b "$BASE" -p "$PORT" -m 256 ${ENGINE:+-e "$ENGINE"} || exit 1
+"$ROOT/scripts/cluster.sh" start -n 2 -r 3 -d "$DIR" -b "$BASE" -p "$PORT" -m "${MEMORY_MB:-256}" -w "${WAL_MODE:-write}" ${ENGINE:+-e "$ENGINE"} || exit 1
 exec > >(tee -a "$DIR/events.out") 2>&1   # keep the event log for the failure report
 
 leader_of() {  # shard -> port of its current writable node

@@ -14,7 +14,108 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   observe changes at execution, EXPLAIN reports consistency/fallback
   reasons, and switching policies preserves session catch-up obligations.
 
+- Explicit composite lazy-index routing with `COMMENT 'tarn:lazy=N'`,
+  bounded typed merging for partial prefixes, single-destination complete
+  keys, routing diagnostics and guarded incarnation migration (#185).
+
+- A churn and outage soak test for lazy indexes, `lua/test/lazy_soak.sh`,
+  on memtx and vinyl ([#177](https://github.com/cstheorist/tarn/issues/177)).
+  Single-shard writes and cross-shard transactions run over many protocol
+  record lifetimes and checkpoints. The run includes a stopped destination
+  with a capped outbox, and a killed and restarted shard with transactions
+  in flight. Then the rows and the index must converge exactly, and
+  tombstones and records must be reclaimed. `bench/lazy_footprint.py
+  study` measures two commits in matched pairs, with source and build
+  receipts. It reports memory, disk, latency tails, WAL bytes per change
+  and restart time. See [Memory and disk](docs/lazy-indexes.md#memory-and-disk).
+
+- A versioned, read-only strong Key/Value API for full-primary-key points
+  and bounded independent-point batches, with dedicated-reader grants,
+  ownership/schema handles and a generic Rust client. Complete responses
+  preserve input positions, duplicates and misses; unsupported snapshot,
+  transaction and mutation requests fail explicitly. See the
+  [contract and raw-native visibility boundaries](docs/strong-kv.md).
+
+- Reject new unsupported FOREIGN KEY, CHECK and ENUM/SET declarations before
+  schema effects. Expose legacy integrity history with SHOW TARN INTEGRITY
+  and SHOW CREATE; legacy SQL writes require explicit session opt-in. Preserve
+  old catalog decoding and provide inspection/migration and pinned-reference
+  mutation/refusal controls. Declaration provenance does not certify old data.
+
+- A quiescent whole-cluster backup/restore workflow with durable replica fences,
+  complete membership/routing and transaction/DDL/lazy drain checks, source-bound
+  physical manifests, exact isolated restore audits and guarded activation
+  ([#137](https://github.com/cstheorist/tarn/issues/137)). Interrupted copies and
+  restores remain unavailable; source release requires explicit process restart.
+  See [the procedure and RPO/RTO boundaries](docs/cluster-backup.md).
+
 ### Fixed
+
+- A SQL server's catalog poller no longer reloads a catalog that a
+  statement already reloaded when it met the new version. Each such reload
+  discarded every cached plan once more after a schema change made on
+  another server, and made a statistics test's plan-cache check fail
+  intermittently ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
+- Storage nodes delete the tombstone floors of retired lazy incarnations
+  once the target is dropped ([#177](https://github.com/cstheorist/tarn/issues/177)).
+  They used to keep them forever, one per target and source bucket, for
+  every index a DROP or a rotation retired. The deletion runs in the
+  background, at most 128 in a transaction, only in buckets the node may
+  write. Late frames for a retired incarnation are still acknowledged from
+  its retirement (`tla/LazyBaseline.tla`, `Bug_LazyBaselineClearLiveFloors`).
+
+- A schema change sends APPLY again at once, up to five times, to a shard
+  where a transaction conflict rolled it back. A DDL statement of APPLY, such
+  as an index rename, can be aborted by a conflict while writers use the
+  table; the statement used to report 1180 ("did not finish on every shard")
+  and leave the change to finish in the background about 30 s later
+  ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
+- Prepared administrative assignments capture prior diagnostic counts before
+  clearing messages on each execution, including reused statement handles.
+  Register the exact text/binary diagnostic-reader differences from pinned
+  MySQL, with explicit unsupported-expression refusals.
+
+- Preserve 1180/40003 for native commit uncertainty, missing write DATA and
+  malformed mutation replies. Require complete error and handback envelopes
+  before retry/fallback so a plausible prefix cannot replay an increment.
+  Register the cross-client outcome contract and RF3/fsync fault histories,
+  including statement/transaction rollback, pending APPLY and operation IDs.
+  The primary contract manifest includes SQL/public-KV/Rust-SDK outcome
+  histories with preserved error domains and exact strong/raw visibility.
+
+- Initial timing-policy installation waits for the confirmed shard marker and
+  configured replicas to finish joining, avoiding an early synchronous write
+  that can block a joining replica's first checkpoint. Existing confirmed
+  policies can still load during restart with an unavailable voter (#209).
+
+- Gateway sockets now grow on demand and share a hard physical-connection
+  budget with completion capacity. Idle eviction preserves transaction and
+  pending-reply owners. Read fanouts have bounded windows and admission;
+  response frames retain byte charges until their last owner drops.
+  Concurrent refreshes coalesce and diagnostic polling rotates through a
+  fixed shard budget. Saturation returns an explicit failure, preserving
+  unknown mutation outcomes ([#188](https://github.com/cstheorist/tarn/issues/188)).
+  See [configuration and limits](docs/gateway-resources.md).
+
+- Lazy-index owner hints now expire immediately when the local bucket map
+  changes. A completed handoff can no longer leave immediate garbage
+  collection contacting the old source owner until the cache TTL expires;
+  frontier and floor proof checks remain unchanged
+  ([#163](https://github.com/cstheorist/tarn/issues/163)).
+- The native RF3 freshness fixture distinguishes a controlled native-path
+  witness from a legitimate post-barrier stale-bucket handback (#170).
+  It schedules the actual production status callback without replacing
+  freshness/cache checks, preserves stream/read-set and no-replay assertions,
+  records the real status payload, and exports source/module/process and
+  pre-pause/pending/post-yield evidence from CI on success or failure.
+- The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
+  across the warmup, limited-I/O and release windows, so fast writers cannot
+  consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).
+  Exact bounded acknowledged/refused-key readback and raw attempt evidence
+  are retained before a failed pressure assertion, without replaying unknown
+  writes. Virtual-time controls exercise the same scheduler and finalizer.
 
 - An engine BUILD could return 1213 after a status notification revoked its
   transaction cut between successful stages
@@ -83,6 +184,54 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whose reply is invalid remains 1180/40003 and is never replayed.
 
 ### Added
+
+- Exact integer SUM/MIN/MAX partials and filtered column projections over
+  eligible range scans ([#135](https://github.com/cstheorist/tarn/issues/135)).
+  Preserve NULLs, buffered writes, physical-layout defaults, full scanned
+  ranges and the existing snapshot/lock/routing checks. Unsupported SQL
+  shapes and missing optional storage procedures retain ordinary execution.
+  Opt in with `query_pushdown: true` after measuring the workload; the
+  default `false` retains ordinary execution because narrow-row cases can
+  regress. New status counters
+  expose reduction RPCs and projected scan attempts.
+- Define a tested rolling-upgrade/rollback pair with protocol/format
+  admission on every new gateway storage connection, explicit native
+  fallback diagnostics, and RF3/fsync mixed-version regressions for memtx
+  and vinyl. See [rolling upgrades](docs/upgrades.md).
+- Bounded SQL execution ([#134](https://github.com/cstheorist/tarn/issues/134)):
+  configurable query, transaction and gateway allocation/work envelopes refuse
+  oversized operations with 1041/HY000 before commit. Eligible unindexed
+  `ORDER BY ... LIMIT` scans retain bounded top-K candidates. Pending reads,
+  results awaiting socket delivery, prepared state and transaction buffers
+  retain their charges until released. See [resource limits](docs/resources.md)
+  for defaults, cleanup, supported shapes and proof boundaries.
+- Optional bounded cardinality hints and conservative two-table inner-join
+  reordering ([#136](https://github.com/cstheorist/tarn/issues/136)).
+  `ANALYZE TABLE` now collects gateway-local integer-prefix statistics,
+  invalidates plans by generation and reports MariaDB analyze status.
+  `SHOW TARN STATISTICS`/EXPLAIN expose uncertainty, and query diagnostics
+  count actual decoded storage tuples separately from RPCs.
+- Add a pinned MySQL 8.4 executable compatibility manifest and RF3 native/Lua,
+  memtx/vinyl release controls for text/binary protocols. Expose effective,
+  active and pending isolation, refuse an exact MySQL-isolation mode, and
+  report gateway-global isolation/lock timeout independently of session values.
+  Duplicate rows skipped by `INSERT IGNORE` now report 1062 warnings; retain
+  at most 64 messages while preserving the total count, without accumulating
+  diagnostics from aborted autocommit attempts.
+
+- Physical per-shard file backups and verified restores with bounded copy
+  rates, owned expiring GC leases and incomplete-directory refusal
+  ([#56](https://github.com/cstheorist/tarn/issues/56)). Backups can seed a
+  separately registered replica identity; the seed starts as a voter until
+  an operator verifies WAL catch-up. The agent preserves SQL tuples and
+  protocol metadata, with native/Lua RF3 recovery tests and opt-in scale
+  evidence. This does not provide a coordinated cross-shard SQL snapshot.
+- Source-bound RF3 native-GC crash investigation controls
+  ([#160](https://github.com/cstheorist/tarn/issues/160)), with historical,
+  Lua-only, JIT-off and current-source trials, retained successful/failed
+  logs and crash cores. The original fault remains unexplained; no
+  production fix or successful-repeat-as-fix claim is made. See
+  [the investigation boundary](docs/native-gc-investigation.md).
 
 - Request-specific quorum freshness for default SQL and strong storage
   reads ([#130](https://github.com/cstheorist/tarn/issues/130)). An empty
@@ -515,6 +664,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Lazy indexes keep no per-row state on the source
+  ([#177](https://github.com/cstheorist/tarn/issues/177)). Every captured
+  write used to keep an entry for its row in `_tarn_lazy_version`, in
+  memtx even for vinyl tables, only for bootstrap to give the row's
+  baseline assignment its last sequence. A bootstrap now gives it the
+  bucket's counter, read in the same view as the row. Any sequence up to
+  the counter is correct, which `tla/LazyBaseline.tla` checks
+  (`Bug_LazyBaselineAboveCounter` must fail it). Storage nodes delete the
+  entries older releases left, in bounded batches, in the background. In
+  three matched pairs at 1,000,000 rows on one storage node, the ledger
+  held 83 bytes a row of memtx (79 MiB) and cost 80 MiB of process RSS
+  with a memtx table and 72 MiB with a vinyl one. After a restart, which
+  also brought back an MVCC story per ledger entry, the vinyl node's RSS
+  falls from 595 to 54 MiB and its restart from 1.6 to 0.1 s. See
+  [the measurements](docs/lazy-indexes.md#memory-and-disk) and
+  `bench/lazy_footprint.py`.
 - The native storage procedures check locks key by key
   ([#28](https://github.com/cstheorist/tarn/issues/28)): a read with the
   lock check, a commit or a validation goes to Lua only when a prepared

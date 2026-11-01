@@ -1,0 +1,22 @@
+{
+  "predecessor": "eb54a7d1262baef24498fcc724c66c6e9ea9d12f",
+  "reviewed_fix": "15dd53713b7f15970eb1f9e11d27a5666a719006",
+  "applied_fix": "898e445",
+  "changed_runtime_files": [
+    "lua/tarn.lua",
+    "lua/tarn_clock.lua"
+  ],
+  "checks": {
+    "before": "policy loaded/admitted while marker absent; controlled test refuses",
+    "after_lua": 5,
+    "after_native_enabled": 5
+  },
+  "boundary": "Owned same-host RF3/fsync publication ordering and established-policy restart; not whole Tarantool/Raft correctness or performance.",
+  "files": {
+    "before.json": "c13dce4b53dbbc0c33f257ffff04f5371e2e45f163b7dc018c36306eec197417",
+    "after-lua.json": "4154aef3d464470b16dc5bb7fa1ae1ef95de8e0ec30a6fd6f48901ce7c34b181",
+    "after-native.json": "a61523f7ac127f9095f4d280beaf4b228d875764104cf0b68f6b9b9b70957bee",
+    "before.out": "d64ae209ba8348d4c0eeb0f1ac43a8f831efc15ba9365fc68964174148205d7f",
+    "after.out": "2a73bc987af9041156a8ceb691a113e6dc38294cf6a8eaa54460ca8f0949e823"
+  }
+}

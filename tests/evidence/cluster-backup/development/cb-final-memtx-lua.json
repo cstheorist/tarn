@@ -1,0 +1,51 @@
+{
+  "format": "tarn-cluster-backup-drill-v1",
+  "settings": {
+    "work": "/tmp/cb-final-memtx-lua",
+    "engine": "memtx",
+    "rows": 256,
+    "output": "/work/cb-final-memtx-lua.json"
+  },
+  "checks": [
+    "two RF3/fsync shards loaded through Tarn mutation procedures"
+  ],
+  "source_revision": "77931ec",
+  "source_sha256": {
+    "scripts/cluster_backup.py": "d764242eb578b2b85ad92f8fe5513b0b857c3d0e39923d7b9016bbcb990b829a",
+    "scripts/backup.py": "30735453ade038e53e6a18b23867519d37cb07368ecd152d18a14b3d2f197435",
+    "scripts/backup_rpc.lua": "87aba68182c2595bd6d2a2ab45bf6e6a424f3e130f7fe4497b80560b2ed0aced",
+    "tests/cluster_backup.py": "e82022c63a1326fcd36f592eb6c41aeb628dc2b24e0ff342046f3ce68bf4a53c",
+    "tests/cluster_backup_setup.lua": "98d61af73bb811fc67e43dc387ce5994f678d08292caef787d2e7c489576a99e",
+    "lua/storage.lua": "75a38e76134b55d01a5bb4e74befba0e72bb34a114bcdc18f2f55a13e5aa0b40",
+    "lua/tarn.lua": "6de5f2ead48f707a0d04526cf08d40f1407ac4241a10066aee1180d8c9bbfb83",
+    "lua/tarn_backup.lua": "6553ee7d54755680a79247929f12b21cfc81a55b6972f85b435c68437d9f20f3",
+    "lua/tarn_clock.lua": "8868417bc1ce33cdaa6a1589e3df9067936b870995e9b239fea589dc737e26e9",
+    "lua/tarn_engine.lua": "23bd5cc896244757760082b49b6d9c26c80a4d60bfbc93abeade8e74097a1f2f",
+    "lua/tarn_fresh.lua": "0adfcb894eace1fb9e69db9baa718dd9b321ab487a957457dd74f6f697b370f2",
+    "lua/tarn_lazy.lua": "717989b887f34aaf352f6cd20d50015055c1a5d5bd6838a5d2e9a50798a83808",
+    "lua/tarn_lazy_meter.lua": "163f3b32824051c2035a787e9c7044046f6627aa06f5faeb1d64ec82eb07c6ab",
+    "lua/tarn_vinyl.lua": "71a928397640a66f55f742b1d75cc6956a4f2db6132750480bc52b49dfe23abd"
+  },
+  "native": "0",
+  "boundary": "same-host RF3 correctness and outage timings; not independent failure domains or production capacity",
+  "native_sha256": null,
+  "environment": {
+    "uname": [
+      "Linux",
+      "9b9a22591d4b",
+      "6.10.14-linuxkit",
+      "#1 SMP Thu Mar 20 16:32:56 UTC 2025",
+      "aarch64"
+    ],
+    "python": "3.11.2 (main, Oct  7 2026, 12:35:07) [GCC 12.2.0]",
+    "tarantool": "Tarantool 3.9.0-0-g8b9a0f59a9",
+    "cgroup": {
+      "cpu.max": "200000 100000\n",
+      "memory.max": "1610612736\n",
+      "cpu.stat": "usage_usec 242847983\nuser_usec 77014512\nsystem_usec 165833471\nnr_periods 3475\nnr_throttled 92\nthrottled_usec 4971595\nnr_bursts 0\nburst_usec 0\n",
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+    }
+  },
+  "status": "failed",
+  "error": "Can't modify data on a read-only instance {\"type\":\"ClientError\",\"code\":7,\"name\":\"READONLY\",\"trace\":[{\"file\":\"/work/lua/tarn.lua\",\"line\":380}]}\nfatal error, exiting the event loop\n"
+}

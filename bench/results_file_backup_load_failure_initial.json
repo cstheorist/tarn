@@ -1,0 +1,34 @@
+{
+  "format": "tarn-backup-study-v1",
+  "source_revision": "a87201ca017f85fbb6d6394bbe40690db49732e9",
+  "source_sha256": {
+    "scripts/backup.py": "77029b73adcd11c3df0ce33e307b0d6b90e3788ac826ef4da1f2889fa4fe8727",
+    "scripts/backup_rpc.lua": "9fda1890f99f30399af899fdabb10ea64c0c6c1a7649e14d10187eda016aa729",
+    "tests/backup.py": "98f013f093ad2860cc1a6ea5ce9d281eb93e3bd1c200dc1a3fa71863e816f21c",
+    "tests/backup_rpc.lua": "9157f0a314887d0b7bed1b8b9367696814414ac1430753ca52055207743ba459",
+    "lua/storage.lua": "a68b63be7d0593a494702d8644c1f5f95b66cd9f19b0060de6f2a5037cb8470f",
+    "lua/tarn.lua": "470ded5ec0aaece6b7a74f21036e326cedfd217f5ec3317cc339e409afc1c050",
+    "lua/tarn_clock.lua": "8868417bc1ce33cdaa6a1589e3df9067936b870995e9b239fea589dc737e26e9",
+    "lua/tarn_engine.lua": "dccacf57b693f7148b899a56d0308b26869a4b6cd14f893c0d5c5b2f5629dbcf",
+    "lua/tarn_fresh.lua": "0adfcb894eace1fb9e69db9baa718dd9b321ab487a957457dd74f6f697b370f2",
+    "lua/tarn_lazy.lua": "28be6f7154909294f9b4f260acf050c8ec7cd46193da7da0ac9bd19df72005ca",
+    "lua/tarn_lazy_meter.lua": "163f3b32824051c2035a787e9c7044046f6627aa06f5faeb1d64ec82eb07c6ab",
+    "lua/tarn_vinyl.lua": "71a928397640a66f55f742b1d75cc6956a4f2db6132750480bc52b49dfe23abd"
+  },
+  "settings": {
+    "work": "/tmp/tarn-backup-reference-10g",
+    "rows": 163840,
+    "payload": 65536,
+    "repetitions": 3,
+    "rate_mib": 128.0,
+    "replicas": 3,
+    "min_backup_bytes": 10737418240,
+    "output": "/out/reference-10g.json",
+    "functional": false,
+    "foreground": "read"
+  },
+  "samples": [],
+  "boundary": "owned same-host component; RF and resources explicit; no cross-shard snapshot or production-capacity claim",
+  "error": "command failed: ['tarantool', '/work/tests/backup_rpc.lua', 'tarn:tarn@127.0.0.1:35331', '/tmp/tarn-backup-reference-10g/request-a21b715c4e8145a98ca7dda96f446401.lua', '1800']\n\nCan't modify data on a read-only instance {\"type\":\"ClientError\",\"code\":7,\"name\":\"READONLY\",\"trace\":[{\"file\":\"/work/lua/tarn.lua\",\"line\":380}]}\nfatal error, exiting the event loop\n",
+  "completed": false
+}

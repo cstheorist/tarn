@@ -12,6 +12,8 @@ import threading
 import time
 
 import pymysql
+import mysql.connector
+from outcome_client import Client
 
 
 def q(c, sql):
@@ -32,6 +34,8 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("--arm", required=True)
     ap.add_argument("--scope", choices=("connection", "shard", "global"), required=True)
+    ap.add_argument("--client", choices=("pymysql", "connector", "prepared"), default="pymysql")
+    ap.add_argument("--evidence", type=pathlib.Path)
     args = ap.parse_args()
     host, port = args.tarn.split(":")
     config = json.loads(pathlib.Path(args.config).read_text())["rpc"]
@@ -47,7 +51,7 @@ def main():
     q(observer, f"CREATE TABLE {db}.t(id INT PRIMARY KEY,v INT)")
     count = 24
     q(observer, f"INSERT INTO {db}.t VALUES" + ",".join(f"({i},0)" for i in range(count)))
-    clients = [connect() for _ in range(count)]
+    clients = [Client(args.tarn, args.client, timeout=8) for _ in range(count)]
     barrier = threading.Barrier(count + 1)
     capture = threading.local()
     original_error = pymysql.err.raise_mysql_exception
@@ -62,12 +66,16 @@ def main():
         capture.sqlstate = None
         try:
             # Do not retry this statement on any error.
-            q(clients[i], f"UPDATE {db}.t SET v=v+1 WHERE id={i}")
+            clients[i].query(f"UPDATE {db}.t SET v=v+1 WHERE id={i}")
             return i, 0, None, time.monotonic() - start, ""
-        except pymysql.MySQLError as e:
-            return i, e.args[0], capture.sqlstate, time.monotonic() - start, str(e)
+        except (pymysql.MySQLError, mysql.connector.Error) as e:
+            code = e.errno if isinstance(e, mysql.connector.Error) else e.args[0]
+            state = e.sqlstate if isinstance(e, mysql.connector.Error) else capture.sqlstate
+            return i, code, state, time.monotonic() - start, str(e)
 
     samples = []
+    receipt = {"client": args.client, "scope": args.scope, "rpc": config, "passed": False,
+               "samples": samples}
     arm = pathlib.Path(args.arm)
     try:
         pymysql.err.raise_mysql_exception = error
@@ -81,6 +89,7 @@ def main():
                 assert time.monotonic() < deadline, "connected blackhole did not retire by deadline"
                 time.sleep(.01)
             outcomes = [f.result() for f in futures]
+        receipt["outcomes"] = outcomes
         arm.unlink()
         samples.extend(rpc_rows(observer))
         refused = [o for o in outcomes if o[1:3] == (1205, "HY000")]
@@ -103,6 +112,7 @@ def main():
         assert any(r["Scope"] == "global" and r["Deadline_retirements"] > 0 for r in samples), samples
         assert any((r["Oldest_ms"] or 0) >= 100 for r in samples), samples
         values = dict(q(observer, f"SELECT id,v FROM {db}.t ORDER BY id"))
+        receipt["values"] = values
         for i, code, state, elapsed, message in outcomes:
             if code == 1205:
                 assert values[i] == 0, (i, code, state, values[i])
@@ -112,7 +122,13 @@ def main():
         print(f"{args.scope}: {count} sessions, {len(refused)} before-enqueue refusals, {len(unknown)} uncertain; "
               f"{sum(values.values())} physical increments, max response {max(o[3] for o in outcomes):.3f}s")
         print("RPC PRESSURE TEST PASSED: scope bounds, deadline retirement, no replay, before-effect refusals")
+        receipt["passed"] = True
+    except Exception as e:
+        receipt["error"] = repr(e)
+        raise
     finally:
+        if args.evidence:
+            args.evidence.write_text(json.dumps(receipt, indent=2) + "\n")
         arm.unlink(missing_ok=True)
         pymysql.err.raise_mysql_exception = original_error
         for c in clients:
