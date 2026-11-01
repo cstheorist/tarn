@@ -9,7 +9,11 @@ local expected_mode = assert(os.getenv('LAZY_RF3_EXPECT_MODE'))
 assert(expected_mode == 'native' or expected_mode == 'lua')
 local mode_label = expected_mode == 'native' and 'native ABI' or 'Lua'
 local sid, gen, name, bucket = 64001, 64002, 'test.lazy_rf3', 1
+-- The prepared transaction's id; setup may retry it under a new id, which
+-- it records here for the later stages.
+local txid_file = work .. '/txid'
 local txid = 'lazy-rf3-' .. engine
+do local f = io.open(txid_file); if f then txid = f:read('*l'); f:close() end end
 local ids = {}
 for i = 1, 1000 do
     if tonumber(digest.crc32(mp.encode(i))) % 16 + 1 == bucket then ids[#ids + 1] = i end
@@ -159,9 +163,19 @@ local function exact(i, label)
           and mode_ok(s), s)
     return s
 end
+local METER_REBUILDING = 'Lazy admission meter is rebuilding; retry'
 local function write(i, op, id, key)
-    return ok(call(i, 'tarn_autocommit', {{op, sid, op == 'delete' and {id} or {id, key, bucket}}},
-                   {fence = {sid, 0}, wb = {bucket}}))
+    -- A write refused because the admission meter is rebuilding (an
+    -- election or box.status event cut it after the caller saw it ready)
+    -- changed nothing: retry once the meter is ready again.
+    for attempt = 1, 5 do
+        local r = call(i, 'tarn_autocommit', {{op, sid, op == 'delete' and {id} or {id, key, bucket}}},
+                       {fence = {sid, 0}, wb = {bucket}})
+        if type(r) ~= 'table' or r[1] ~= 'error' or r[2] ~= 1213 or r[3] ~= METER_REBUILDING
+           or attempt == 5 then return ok(r) end
+        event('write refused while the admission meter rebuilt; retried', {op = op, id = id, reply = r})
+        await('admission meter ready again', function() return ev(i, 'return tarn.lazy.quota.ready()') end)
+    end
 end
 local function deliver(i)
     local events = ok(call(i, 'tarn_lazy_control', 'pending'))[2]
@@ -214,11 +228,23 @@ local function main()
         -- Empty/local entry readiness does not establish the distributed
         -- clock-peer certificate, and the admission meter can still be
         -- rebuilding its confirmed cut (PREPARE then votes NO, 1213). Wait
-        -- for both before the one-shot PREPARE.
-        await('prepared transaction clock peer and admission meter ready', function()
-            return ev(l, 'return tarn.clock.check({1}) == nil and tarn.lazy.quota.ready()')
-        end)
-        local r=call(l,'tarn_prepare',txid,1,{1},{{'insert',sid,{ids[2],'prepared',bucket}}},{},{},require('clock').realtime(),box.NULL,{sid,0},{bucket})
+        -- for both before the PREPARE. The meter can be cut again after
+        -- the wait (every election or box.status event invalidates it), so
+        -- PREPARE can still vote NO with 1213, before promising anything.
+        -- That NO is recorded, so, as a coordinator would, retry the
+        -- transaction under a new id.
+        local r
+        for attempt = 1, 5 do
+            await('prepared transaction clock peer and admission meter ready', function()
+                return ev(l, 'return tarn.clock.check({1}) == nil and tarn.lazy.quota.ready()')
+            end)
+            r=call(l,'tarn_prepare',txid,1,{1},{{'insert',sid,{ids[2],'prepared',bucket}}},{},{},require('clock').realtime(),box.NULL,{sid,0},{bucket})
+            if r[1]~='no' or r[2]~=1213 or r[3]~=METER_REBUILDING or attempt==5 then break end
+            event('PREPARE refused before its promise; retried under a new id', {txid=txid, reply=r})
+            txid='lazy-rf3-'..engine..'-'..(attempt+1)
+            local f=assert(io.open(txid_file,'w')); f:write(txid,'\n'); f:close()
+            l=leader()
+        end
         assert(r[1]=='yes',json.encode(r))
         assert(call(l,'tarn_txn_cas',txid,'staging','committed',{1})=='committed')
         -- Release every held observer before any loss, so later real role
