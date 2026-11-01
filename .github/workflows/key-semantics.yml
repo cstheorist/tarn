@@ -71,9 +71,9 @@ jobs:
           if [ '${{ matrix.native }}' = 0 ]; then export TARN_NATIVE=0; else export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"; fi
           scripts/cluster.sh start -n 2 -r 3 -m 128 -w fsync -p 4180 -t 2 -e '${{ matrix.engine }}' -d "$RUNNER_TEMP/key-cluster"
       - name: Paired pinned-MySQL histories
-        run: python3 tests/sql/key_semantics.py --tarn 127.0.0.1:4180 --ref 127.0.0.1:3408 --engine '${{ matrix.engine }}' --output key-evidence/paired.json
+        run: ci/annotate.sh key-paired python3 tests/sql/key_semantics.py --tarn 127.0.0.1:4180 --ref 127.0.0.1:3408 --engine '${{ matrix.engine }}' --output key-evidence/paired.json
       - name: Exact keys through leader loss, movement and restart
-        run: python3 tests/sql/key_semantics_faults.py --tarn 127.0.0.1:4180 --cluster-dir "$RUNNER_TEMP/key-cluster" --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' --output key-evidence/faults.json
+        run: ci/annotate.sh key-faults python3 tests/sql/key_semantics_faults.py --tarn 127.0.0.1:4180 --cluster-dir "$RUNNER_TEMP/key-cluster" --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' --output key-evidence/faults.json
       - name: Export cluster and stop owned processes
         if: always()
         run: |
