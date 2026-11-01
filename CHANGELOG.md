@@ -115,6 +115,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Inside a transaction, a read of a shard it had already read no longer
+  asks for 4096 rows in one page whatever their size. Such a read (a scan,
+  or a non-unique prefix) used plain IPROTO SELECT, which cuts pages by
+  count alone. 4096 rows of over 2 KiB exceeded the 8 MiB storage frame, so
+  the statement failed with 1041 ("storage reply exceeds 8 MiB") whatever
+  the budgets. Narrower wide rows made pages of up to 8 MiB, twice the pager
+  target, which the default 64 MiB budget refused for a filtered scan. Such a
+  read now asks for no more rows than the table's widest rows fit in 4 MiB.
+  Reads of rows that TEXT, BLOB, JSON or dropped columns leave unbounded go
+  to the procedures that cut pages by size
+  ([#259](https://github.com/cstheorist/tarn/issues/259)).
+
 - An online lazy-index build no longer fails its ALTER when a shard's leader
   changes during it. A start, scan batch or publication that the new leader
   rolled back took no effect, and now returns 1213, which the gateway sends
