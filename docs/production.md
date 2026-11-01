@@ -41,6 +41,14 @@ the Lua clients to verified remote TLS endpoints. Certificates must match the
 host/IP in `tls://HOST:PORT`; there is no name override, insecure verifier,
 plaintext fallback, or reconnect/replay within an application stream. The local
 service UID and root can access these private sockets and are trusted.
+A bridge bounds the streams it accepts and its own outbound streams separately,
+each by `max_connections`; peers' TLS handshakes in progress take at most a
+quarter of the accepted budget, so idle unauthenticated connections cannot take
+the streams of authenticated peers or of the node's replication links. A failed
+accept (out of file descriptors, say) drops that connection, not the bridge.
+Every bridge TCP link uses keepalive as Tarantool sets it on its own sockets
+(probes after 30 s idle, five of them 60 s apart): a peer host that vanishes
+without closing its connections loses its storage sessions, and their row locks.
 [Upstream TLS availability](https://www.tarantool.io/en/doc/latest/singlepage/).
 
 The fixed `tarn_service` account has SESSION/USAGE, READ only on SQL data
@@ -68,12 +76,15 @@ upgrades or downgrades.
    directory, and service supervisor. Keep the runtime directory on local
    storage. The profile checks ownership/modes and never unlinks a socket for
    you; after a crash, verify the old owner is stopped before removing stale
-   sockets. Set supervisor restart/backoff and OS process/file-descriptor limits.
-2. Issue a storage CA and distinct node/gateway identities. Node certificates
-   need serverAuth and clientAuth EKUs and the node's DNS/IP SAN. The gateway
-   needs a clientAuth storage identity and a separate serverAuth MySQL
-   identity matching the SQL address. Use your managed CA/secret store;
-   distribute only the required trust roots and identities to each host.
+   sockets. Set supervisor restart/backoff and OS process/file-descriptor limits;
+   a bridge needs about four descriptors per `max_connections`.
+2. Issue a storage CA dedicated to this cluster's storage links (a bridge
+   admits any clientAuth certificate it issued) and distinct node/gateway
+   identities. Node certificates need serverAuth and clientAuth EKUs and the
+   node's DNS/IP SAN. The gateway needs a clientAuth storage identity and a
+   separate serverAuth MySQL identity matching the SQL address. Use your
+   managed CA/secret store; distribute only the required trust roots and
+   identities to each host.
 3. Create two **different**, random 32..128-byte base64url storage secrets in
    `service.secret` and `replication.secret`. Create a private JSON account map
    in `mysql-users.json`, for example `{"operator":"<random password>"}`;

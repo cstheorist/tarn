@@ -656,8 +656,14 @@ async fn role_probe(
     match role {
         Err(e) if e.server_code() == Some(tarn_iproto::errcode::ER_NO_SUCH_PROC) => {
             if production {
-                return Err(SqlError::unsupported(
-                    "production storage requires the bounded tarn_role RPC",
+                // A restarted node defines tarn_role in `_func` before its
+                // storage code loads. Production never falls back to EVAL:
+                // the node is skipped like a read-only one, as below.
+                return Err(SqlError::new(
+                    2003,
+                    "HY000",
+                    "storage procedures are not loaded: a node still starting, or Tarn storage without \
+                     the bounded tarn_role RPC that production requires (see docs/upgrades.md)",
                 ));
             }
             // Neither procedure: a node still loading its storage code after
@@ -3004,10 +3010,11 @@ mod tests {
             assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
             rd.string().unwrap()
         }
-        // Production refuses a missing bounded RPC. Development falls back
-        // only after a valid compatibility contract; a node that defines
-        // neither procedure (still starting, or older) is skipped (2003);
-        // one with another contract is refused (1235).
+        // Production skips a node without the bounded RPC (2003) and never
+        // asks it anything else. Development falls back only after a valid
+        // compatibility contract; a node that defines neither procedure
+        // (still starting, or older) is skipped (2003); one with another
+        // contract is refused (1235).
         for mode in 0..4 {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
@@ -3073,7 +3080,7 @@ mod tests {
             let c = Client::connect(&Opts::new(addr.to_string())).await.unwrap();
             let got = role_probe(&c, 1, 120.0, false, mode == 0).await;
             match mode {
-                0 | 3 => assert_eq!(got.unwrap_err().code, 1235),
+                3 => assert_eq!(got.unwrap_err().code, 1235),
                 1 => {
                     let (reply, admitted) = got.unwrap();
                     assert!(admitted);

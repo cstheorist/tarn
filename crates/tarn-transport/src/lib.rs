@@ -210,7 +210,43 @@ pub async fn connect(
     let (addr, name) = tls_endpoint(uri)?;
     let tcp = TcpStream::connect(addr).await?;
     tcp.set_nodelay(true)?;
+    keepalive(&tcp)?;
     TlsConnector::from(config).connect(name, tcp).await
+}
+
+/// TCP keepalive as Tarantool sets it on its own sockets: probes after 30 s
+/// idle, five of them 60 s apart (Linux). Behind a bridge Tarantool sees
+/// only a Unix socket, so a peer host that vanishes without closing its
+/// connection (a gateway holding row locks, say) is detected here instead.
+pub fn keepalive(tcp: &TcpStream) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let fd = tcp.as_raw_fd();
+    let set = |level: libc::c_int, name: libc::c_int, value: libc::c_int| {
+        // SAFETY: `fd` is the open socket of `tcp`, borrowed for this call;
+        // the option value is a live c_int of the length passed.
+        let r = unsafe {
+            libc::setsockopt(
+                fd,
+                level,
+                name,
+                (&value as *const libc::c_int).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        };
+        if r == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    };
+    set(libc::SOL_SOCKET, libc::SO_KEEPALIVE, 1)?;
+    #[cfg(target_os = "linux")]
+    {
+        set(libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, 30)?;
+        set(libc::IPPROTO_TCP, libc::TCP_KEEPINTVL, 60)?;
+        set(libc::IPPROTO_TCP, libc::TCP_KEEPCNT, 5)?;
+    }
+    Ok(())
 }
 
 /// A MySQL SSLRequest and TLS ClientHello may share one TCP read. Preserve

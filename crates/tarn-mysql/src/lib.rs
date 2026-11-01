@@ -440,7 +440,9 @@ impl<B: Backend> Conn<B> {
         }
     }
 
-    async fn handshake(&mut self) -> io::Result<bool> {
+    /// The network part of the handshake: greeting, TLS and authentication.
+    /// Returns the authenticated user and database, or None once refused.
+    async fn authenticate(&mut self) -> io::Result<Option<(String, Option<String>)>> {
         let mut scramble = [0u8; 20];
         {
             let mut rng = rand::thread_rng();
@@ -454,18 +456,21 @@ impl<B: Backend> Conn<B> {
         let server_caps = packets::SERVER_CAPS | if self.opts.tls.is_some() { cap::SSL } else { 0 };
         self.send(|p| packets::handshake_v10_caps(p, &ver, id, &scramble, SERVER_STATUS_AUTOCOMMIT, server_caps));
         let Some((mut payload, mut seq)) = self.read_packet().await? else {
-            return Ok(false);
+            return Ok(None);
         };
         self.seq = seq.wrapping_add(1);
-        let requests_tls = payload
-            .get(..4)
-            .is_some_and(|b| u32::from_le_bytes(b.try_into().unwrap()) & cap::SSL != 0);
+        // A client may set CLIENT_SSL although the server did not offer it.
+        // Like MySQL, ignore a capability that was not advertised.
+        let requests_tls = server_caps & cap::SSL != 0
+            && payload
+                .get(..4)
+                .is_some_and(|b| u32::from_le_bytes(b.try_into().unwrap()) & cap::SSL != 0);
         let mut encrypted = false;
         if requests_tls && payload.len() == 32 {
             let Some(config) = self.opts.tls.clone() else {
                 self.send_err(&SqlError::new(1043, "08S01", "TLS is not configured"));
                 self.flush().await?;
-                return Ok(false);
+                return Ok(None);
             };
             let transport = PrefixedIo {
                 prefix: self.rbuf.split().freeze(),
@@ -486,7 +491,7 @@ impl<B: Backend> Conn<B> {
             self.stream = Some(Box::new(tls));
             encrypted = true;
             let Some(next) = self.read_packet().await? else {
-                return Ok(false);
+                return Ok(None);
             };
             (payload, seq) = next;
             self.seq = seq.wrapping_add(1);
@@ -498,7 +503,7 @@ impl<B: Backend> Conn<B> {
                 "Connections using insecure transport are prohibited",
             ));
             self.flush().await?;
-            return Ok(false);
+            return Ok(None);
         }
         if requests_tls && !encrypted {
             self.send_err(&SqlError::new(
@@ -507,12 +512,12 @@ impl<B: Backend> Conn<B> {
                 "Expected an SSLRequest before TLS authentication",
             ));
             self.flush().await?;
-            return Ok(false);
+            return Ok(None);
         }
         let Some(hs) = packets::parse_handshake_response(&payload) else {
             self.send_err(&SqlError::new(1043, "08S01", "Bad handshake"));
             self.flush().await?;
-            return Ok(false);
+            return Ok(None);
         };
         self.caps = hs.caps & server_caps;
         let user = text(hs.user).into_owned();
@@ -531,7 +536,7 @@ impl<B: Backend> Conn<B> {
             if plugin != packets::NATIVE_PASSWORD {
                 self.send(|p| packets::auth_switch(p, &scramble));
                 let Some((resp, seq)) = self.read_packet().await? else {
-                    return Ok(false);
+                    return Ok(None);
                 };
                 self.seq = seq.wrapping_add(1);
                 response = resp.to_vec();
@@ -551,13 +556,19 @@ impl<B: Backend> Conn<B> {
                     ),
                 ));
                 self.flush().await?;
-                return Ok(false);
+                return Ok(None);
             }
         }
         self.collation = hs.collation;
+        Ok(Some((user, db)))
+    }
+
+    /// Open the session (database, collation) after authentication. This may
+    /// wait for storage, so the handshake timeout does not cover it.
+    async fn connect(&mut self, user: String, db: Option<String>) -> io::Result<bool> {
         match self
             .backend
-            .on_connect(&user, db.as_deref(), self.found_rows(), hs.collation)
+            .on_connect(&user, db.as_deref(), self.found_rows(), self.collation)
             .await
         {
             Ok(()) => {
@@ -870,10 +881,13 @@ impl<B: Backend> Conn<B> {
     }
 
     async fn run(&mut self) -> io::Result<()> {
-        let handshake = tokio::time::timeout(self.opts.handshake_timeout, self.handshake())
+        let login = tokio::time::timeout(self.opts.handshake_timeout, self.authenticate())
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "MySQL handshake timed out"))??;
-        if !handshake {
+        let Some((user, db)) = login else {
+            return Ok(());
+        };
+        if !self.connect(user, db).await? {
             return Ok(());
         }
         loop {
@@ -1036,6 +1050,83 @@ mod tests {
             .is_err());
         assert_eq!(disconnected.load(Ordering::Relaxed), 1);
         drop(client);
+    }
+
+    /// Accepts every login after `delay`; nothing else is used.
+    struct Login(Duration);
+    impl Backend for Login {
+        async fn on_connect(&mut self, _: &str, _: Option<&str>, _: bool, _: u8) -> SqlResult<()> {
+            tokio::time::sleep(self.0).await;
+            Ok(())
+        }
+        async fn on_query(&mut self, _: &str) -> SqlResult<QueryResult> {
+            unreachable!()
+        }
+        async fn on_prepare(&mut self, _: u32, _: &str) -> SqlResult<PrepareInfo> {
+            unreachable!()
+        }
+        async fn on_execute(&mut self, _: u32, _: &[Value]) -> SqlResult<QueryResult> {
+            unreachable!()
+        }
+        async fn on_close_stmt(&mut self, _: u32) {
+            unreachable!()
+        }
+        async fn on_init_db(&mut self, _: &str) -> SqlResult<()> {
+            unreachable!()
+        }
+        fn status_flags(&self) -> u16 {
+            0
+        }
+        async fn on_disconnect(&mut self) {}
+    }
+
+    /// Log in over plaintext with `caps`; returns the first byte of the
+    /// server's reply to the handshake response (0x00 OK, 0xFF error).
+    async fn plaintext_login(opts: ServerOpts, delay: Duration, caps: u32) -> u8 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let client_side = async move {
+            let mut head = [0u8; 4];
+            client.read_exact(&mut head).await.unwrap();
+            let mut greeting = vec![0u8; u32::from_le_bytes([head[0], head[1], head[2], 0]) as usize];
+            client.read_exact(&mut greeting).await.unwrap();
+            let mut body = caps.to_le_bytes().to_vec();
+            body.extend_from_slice(&(1u32 << 24).to_le_bytes());
+            body.push(45);
+            body.extend_from_slice(&[0; 23]);
+            body.extend_from_slice(b"u\0\0"); // user "u", empty auth response
+            let mut packet = vec![body.len() as u8, 0, 0, 1];
+            packet.extend_from_slice(&body);
+            client.write_all(&packet).await.unwrap();
+            client.read_exact(&mut head).await.unwrap();
+            let mut first = [0u8; 1];
+            client.read_exact(&mut first).await.unwrap();
+            first[0]
+        };
+        let (_, first) = tokio::join!(serve_connection(server, 1, Arc::new(opts), Login(delay)), client_side);
+        first
+    }
+
+    #[tokio::test]
+    async fn a_plaintext_server_ignores_an_unadvertised_ssl_capability() {
+        // Some clients set CLIENT_SSL in a full plaintext handshake response
+        // although the server did not offer TLS; MySQL logs them in.
+        let caps = cap::PROTOCOL_41 | cap::SECURE_CONNECTION | cap::SSL;
+        assert_eq!(plaintext_login(ServerOpts::default(), Duration::ZERO, caps).await, 0x00);
+    }
+
+    #[tokio::test]
+    async fn the_handshake_timeout_does_not_cover_opening_the_session() {
+        // Opening the session may wait for storage (a database refresh during
+        // a failover); only the network part of the handshake is bounded.
+        let opts = ServerOpts {
+            handshake_timeout: Duration::from_millis(100),
+            ..ServerOpts::default()
+        };
+        let caps = cap::PROTOCOL_41 | cap::SECURE_CONNECTION;
+        assert_eq!(plaintext_login(opts, Duration::from_millis(300), caps).await, 0x00);
     }
 
     #[test]
