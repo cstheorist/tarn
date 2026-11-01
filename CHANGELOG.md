@@ -124,6 +124,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Vinyl memory quota, for up to a minute each
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
+- An online lazy-index build also rides out a leader change in the middle
+  of its start, a scan batch or its publication. Such a step found its
+  replica read-only at its write, which changed nothing, but returned the
+  refusal as an error status, so the ALTER failed with 1105 ("storage error
+  7"). It now raises ER_READONLY, as every other storage procedure does,
+  and the SQL server sends it to the new leader
+  ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
 - A scan whose WHERE the SQL server evaluates (one it cannot push to the
   shards) is now charged for the rows it keeps, not for every page it reads.
   Each page stayed charged until the statement ended, so a scan of 50,000

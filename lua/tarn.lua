@@ -8145,8 +8145,14 @@ function UIX.lazy_start(name, a, gen)
         -- A registry rebuilt while the commit was in flight did not see it.
         M.lazy.invalidate()
         -- A leader change that rolled the marker back: the coordinator
-        -- starts again (1213), as for a local commit.
-        if not ok then return lower(commit_failure(err)) end
+        -- starts again (1213), as for a local commit. A replica that
+        -- stopped leading while the start drained wrote nothing: the start
+        -- goes to the new leader (reraise_readonly), its fence lowered here.
+        if not ok then
+            lower()
+            reraise_readonly(err)
+            return commit_failure(err)
+        end
         yield_point('lazy_capture_start')
     end
     -- Also when a start that turned capture on did not return: a write

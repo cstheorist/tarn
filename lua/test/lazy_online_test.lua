@@ -70,10 +70,11 @@ for i, engine in ipairs({'memtx', 'vinyl'}) do
     tarn.cfg.alter_check_rows = math.floor(ROWS / 2)
 
     -- A writer changes keys, deletes and inserts while the build runs.
-    local stop, writes, failures, next_id = false, 0, {}, ROWS + 1
+    local stop, paused, writes, failures, next_id = false, false, 0, {}, ROWS + 1
     local writer = fiber.new(function()
         local n = 0
         while not stop do
+            while paused and not stop do fiber.sleep(0.01) end
             n = n + 1
             local id, res = (n * 37) % ROWS + 1, nil
             if n % 5 == 0 then
@@ -123,6 +124,28 @@ for i, engine in ipairs({'memtx', 'vinyl'}) do
     ok(tarn_test_hook('lazy_bootstrap', 'release'))
     local _, res = held:join()
     check(engine .. ': the held batch is written', res[1] == 'ok', res)
+
+    -- A batch whose replica stops leading while it is held writes nothing,
+    -- and raises the ER_READONLY its write met. That sends it to the new
+    -- leader, where an error status would fail the ALTER. (A trigger stands
+    -- in for the replica's loss of leadership: toggling read_only would
+    -- also rebuild the lazy admission meter, which refuses first.)
+    paused = true
+    ok(tarn_test_hook('lazy_bootstrap', 'hold'))
+    held = fiber.new(function() return tarn_lazy_bootstrap(name, alt, 2) end)
+    held:set_joinable(true)
+    ok(tarn_test_hook('lazy_bootstrap', 'reached'))
+    local cursor = require('msgpack').encode(box.space._tarn_lazy_defs:get{gen}.cursor)
+    local function readonly() box.error(box.error.READONLY) end
+    box.space._tarn_lazy_defs:before_replace(readonly)
+    ok(tarn_test_hook('lazy_bootstrap', 'release'))
+    local wrote, err = held:join()
+    box.space._tarn_lazy_defs:before_replace(nil, readonly)
+    paused = false
+    check(engine .. ': a batch that meets ER_READONLY raises it',
+          not wrote and type(err) == 'cdata' and err.code == box.error.READONLY, {wrote, tostring(err)})
+    check(engine .. ': and leaves the durable cursor where it was',
+          require('msgpack').encode(box.space._tarn_lazy_defs:get{gen}.cursor) == cursor)
 
     -- A takeover: the next owner continues from the durable cursor, and the
     -- previous owner's batches are refused.
