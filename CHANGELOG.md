@@ -8,6 +8,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `bench/strong_kv_summary.py` summarizes a matched SQL / strong KV / raw
+  native read study: per batch/clients cell and path, key throughput,
+  operation p99, requests and bytes to storage, client protocol bytes and CPU
+  per key, and strong KV against SQL paired by trial. The SQL phase now reads
+  its gateway's storage counters, so SQL's requests to storage are counted
+  like the KV clients' own. `docs/strong-kv.md` publishes the measured tables
+  for memtx and vinyl, and the qualification's new `measurements` scope runs
+  just the two measurement cohorts
+  ([#181](https://github.com/cstheorist/tarn/issues/181)).
+
 - The generated MySQL contracts page (`docs/mysql-contracts.md`) lists the
   lazy-index contracts with the release manifest, each with its regression
   tests, from `tests/contracts/lazy-index.json`. A new entry,
