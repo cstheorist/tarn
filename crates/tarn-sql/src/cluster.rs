@@ -2545,6 +2545,15 @@ impl Cluster {
                     }
                 }
             }
+            // New lazy indexes are built while writes go on (issue #184),
+            // before PREPARE fences the table.
+            let mut lazy_checked = false;
+            if failed.is_none() && job.kind == JobKind::Alter {
+                match self.online_lazy(job, &call.0, &live).await {
+                    Ok(checked) => lazy_checked = checked,
+                    Err(e) => failed = Some(e),
+                }
+            }
             let mut applied = false;
             if failed.is_none() {
                 for r in crate::topology::collect(
@@ -2570,7 +2579,7 @@ impl Cluster {
             }
             if failed.is_none() && !applied && matches!(job.kind, JobKind::Alter | JobKind::Create | JobKind::Truncate)
             {
-                if let Err(e) = self.bootstrap_lazy(job, &call.0, &live).await {
+                if let Err(e) = self.bootstrap_lazy(job, &call.0, &live, lazy_checked).await {
                     failed = Some(e);
                 }
             }

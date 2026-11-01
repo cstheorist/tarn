@@ -1550,6 +1550,10 @@ idempotent steps per shard (lua/tarn.lua "Schema changes"):
    would hold NULL where SQL reads the fill, missing rows and failing to
    enforce logical uniqueness. PREPARE materializes that suffix before the
    index is built. NULL fills already have the correct native key.
+   New lazy indexes are then built while writes go on, when the change
+   leaves the columns they read as they are: their writes are captured
+   from a short drain on, and their baseline is scanned before PREPARE
+   (issue #184, [lazy indexes](lazy-indexes.md#bootstrap-ddl-and-native-writes)).
 2. PREPARE raises the table's fence to V in memory, waits until no local
    commit that passed the check is still in flight (`wait_commits`) and no
    prepared cross-shard transaction holds locks on the table (their writes
@@ -1561,7 +1565,8 @@ idempotent steps per shard (lua/tarn.lua "Schema changes"):
    generation before changing rows, so recovery retains it. Writes wait
    while it checks or materializes rows, so it refuses to scan more rows than
    `tarn.cfg.alter_check_rows` (one million by default) on a shard, with
-   1846, before raising the fence.
+   1846, before raising the fence. A lazy index whose scan ran in step 1
+   does not count.
 3. When every shard has prepared and any global unique-index fill succeeded,
    APPLY drops the indexes that go, changes the space format, renames
    indexes and the space, and stores the new
@@ -2377,8 +2382,11 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LazyBarrierSplitFrontierView | violates PrefixCovered | 197 | 400 | 13 | 00s | 13 |
 | Bug_LazyBarrierTrackOnlyWhenEnabled | violates OwnWritesCovered | 57 | 96 | 7 | 00s | 7 |
 | Bug_LazyBarrierWaitAfterSnapshot | violates OwnWritesCovered | 106 | 185 | 11 | 00s | 11 |
-| Bug_LazyBaselineAboveCounter | violates DrainedConverges | 762 | 1427 | 8 | 00s | 8 |
-| Bug_LazyBaselineClearLiveFloors | violates DrainedConverges | 87841 | 455369 | 14 | 04s | 14 |
+| Bug_LazyBaselineAboveCounter | violates DrainedConverges | 19142 | 62212 | 10 | 02s | 10 |
+| Bug_LazyBaselineClearLiveFloors | violates DrainedConverges | 315095 | 1921774 | 16 | 14s | 16 |
+| Bug_LazyBaselineNoPrepareDrain | violates DrainedConverges | 8243 | 15901 | 7 | 01s | 7 |
+| Bug_LazyBaselineReadyBeforeScan | violates DrainedConverges | 37 | 66 | 3 | 00s | 3 |
+| Bug_LazyBaselineScanBeforeCapture | violates DrainedConverges | 2011 | 4407 | 7 | 00s | 7 |
 | Bug_LazyCapacityAbortLeaks | violates AbortedReleased | 8 | 9 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoByteReserve | violates BytePromisesFit | 7 | 7 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoEntryReserve | violates EntryPromisesFit | 6 | 6 | 3 | 00s | 3 |
@@ -2540,7 +2548,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Join_ScanFailover | no errors | 58935 | 241904 | 26 | 03s |  |
 | LazyApplyConfirm | no errors | 14 | 20 | 7 | 00s |  |
 | LazyBarrier | no errors | 80 | 171 | 13 | 00s |  |
-| LazyBaseline | no errors | 323760 | 2914848 | 25 | 16s |  |
+| LazyBaseline | no errors | 2774949 | 28445716 | 35 | 02min 54s |  |
 | LazyCapacity | no errors | 71 | 147 | 9 | 00s |  |
 | LazyHandoff | no errors | 156 | 432 | 13 | 01s |  |
 | LazyHandoffLive | no errors | 76 | 196 | 12 | 01s |  |

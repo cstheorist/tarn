@@ -1,0 +1,81 @@
+{
+  "issue": 184,
+  "date": "2026-11-01T10:22:24+00:00",
+  "source": "7cacb4e78747f96e0ca956cf8458accb10e5209d",
+  "dirty": false,
+  "tarn_server_sha256": "1426077a0d4df11d38ed7ef48d755e4a2fd70804e69b15821e9738358f72ff42",
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f5",
+  "host": {
+    "cpus": 2,
+    "machine": "x86_64",
+    "kernel": "6.18.44-fc-v185"
+  },
+  "engine": "vinyl",
+  "shards": 2,
+  "rows_per_shard": 1200000,
+  "alter_check_rows": 1000000,
+  "writer_rate": 200,
+  "load_s": 186.6,
+  "load_vinyl_refusals": 10,
+  "alter_s": 261.74,
+  "build_rows_per_s": 9170,
+  "writes": {
+    "before": {
+      "writes": 1999,
+      "errors": 0,
+      "p50_ms": 1.1768949989345856,
+      "p99_ms": 3.1407870046678,
+      "max_ms": 7.596682997245807
+    },
+    "during": {
+      "writes": 42150,
+      "errors": 0,
+      "p50_ms": 2.7482769946800545,
+      "p99_ms": 20.777949997864198,
+      "max_ms": 145.99226499558426
+    },
+    "after": {
+      "writes": 979,
+      "errors": 0,
+      "p50_ms": 1.5010799979791045,
+      "p99_ms": 7.6598899977398105,
+      "max_ms": 21.829244004038628
+    }
+  },
+  "nodes_before": [
+    {
+      "check_rows": 1000000,
+      "rows": 1237327,
+      "engine": "vinyl",
+      "wal_bytes": 76959632,
+      "rss": 192905216
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1162673,
+      "engine": "vinyl",
+      "wal_bytes": 71606302,
+      "rss": 179466240
+    }
+  ],
+  "nodes_after": [
+    {
+      "check_rows": 1000000,
+      "rows": 1260520,
+      "lazy_entries": 1540012,
+      "engine": "vinyl",
+      "wal_bytes": 179154518,
+      "rss": 476049408
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1183508,
+      "lazy_entries": 923910,
+      "engine": "vinyl",
+      "wal_bytes": 156667638,
+      "rss": 447377408
+    }
+  ],
+  "checked_rows": 2400000,
+  "mismatched_keys": []
+}

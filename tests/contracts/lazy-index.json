@@ -41,6 +41,12 @@
       "tests": ["tests/sql/lazytest.py::T.test_catch_up_follows_a_moved_bucket"]
     },
     {
+      "id": "lazy.online_build",
+      "classification": "intentional_extension",
+      "behavior": "ALTER TABLE ... ADD INDEX ... COMMENT 'tarn:lazy' that changes no column the index reads builds the index while writes go on. Writes are captured from a short drain on, and the baseline scan does not count against alter_check_rows. Once the ALTER returns, the index answers as the strong path does, also after a shard leader crashed during the scan. A change that indexes a column it adds still builds behind the fence, and is refused above the limit with 1846.",
+      "tests": ["tests/sql/lazytest.py::T.test_online_build_while_writes_go_on", "tests/sql/lazyonlinefaults.py::main"]
+    },
+    {
       "id": "lazy.variable_refusals",
       "classification": "rejected",
       "behavior": "SET GLOBAL fails with 1228/HY000. Invalid tarn_lazy_consistency values fail with 1231/42000 before policy changes. DEFAULT restores eventual.",

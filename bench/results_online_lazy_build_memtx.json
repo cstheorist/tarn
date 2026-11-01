@@ -1,0 +1,81 @@
+{
+  "issue": 184,
+  "date": "2026-11-01T10:41:25+00:00",
+  "source": "7cacb4e78747f96e0ca956cf8458accb10e5209d",
+  "dirty": true,
+  "tarn_server_sha256": "1426077a0d4df11d38ed7ef48d755e4a2fd70804e69b15821e9738358f72ff42",
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f5",
+  "host": {
+    "cpus": 2,
+    "machine": "x86_64",
+    "kernel": "6.18.44-fc-v185"
+  },
+  "engine": "memtx",
+  "shards": 2,
+  "rows_per_shard": 1200000,
+  "alter_check_rows": 1000000,
+  "writer_rate": 200,
+  "load_s": 183.1,
+  "load_vinyl_refusals": 0,
+  "alter_s": 300.27,
+  "build_rows_per_s": 7993,
+  "writes": {
+    "before": {
+      "writes": 1998,
+      "errors": 0,
+      "p50_ms": 0.9014039969770238,
+      "p99_ms": 3.1061089975992218,
+      "max_ms": 11.875200994836632
+    },
+    "during": {
+      "writes": 23904,
+      "errors": 0,
+      "p50_ms": 7.6415820003603585,
+      "p99_ms": 50.305517004744615,
+      "max_ms": 6778.489304997493
+    },
+    "after": {
+      "writes": 972,
+      "errors": 0,
+      "p50_ms": 1.4457829965976998,
+      "p99_ms": 5.817128003400285,
+      "max_ms": 20.010401000035927
+    }
+  },
+  "nodes_before": [
+    {
+      "check_rows": 1000000,
+      "rows": 1237327,
+      "engine": "memtx",
+      "wal_bytes": 76928042,
+      "rss": 166600704
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1162673,
+      "engine": "memtx",
+      "wal_bytes": 71488379,
+      "rss": 162107392
+    }
+  ],
+  "nodes_after": [
+    {
+      "check_rows": 1000000,
+      "rows": 1237327,
+      "lazy_entries": 1513757,
+      "engine": "memtx",
+      "wal_bytes": 173298503,
+      "rss": 1133858816
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1162673,
+      "lazy_entries": 907564,
+      "engine": "memtx",
+      "wal_bytes": 150638408,
+      "rss": 960856064
+    }
+  ],
+  "checked_rows": 2400000,
+  "mismatched_keys": []
+}

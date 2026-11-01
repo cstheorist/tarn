@@ -590,31 +590,47 @@ tla/check.sh "${configs[@]}"
 | `Bug_LazyIndexSplitOutbox` | 44 | 9 | violates `DrainedConverges` |
 | `Bug_LazyIndexStaleOverwrite` | 249,637 | 21 | violates `DrainedConverges` |
 
-### Baseline sequences (issue #177)
+### Baseline sequences (issues #177, #184)
 
 Storage nodes keep no per-row version for lazy indexes. A bootstrap gives
-each row's baseline assignment its bucket's counter, read in the same
-confirmed view as the row; releases before #177 gave it the row's last
-sequence from a per-row ledger, or 0. `LazyBaseline.tla` checks that any
-sequence up to the counter is correct. One row of one source bucket, with
-index key A, B or none, changes:
-- before a new incarnation is bootstrapped (not captured for it);
+each row's baseline assignment its bucket's counter, read before the row;
+releases before #177 gave it the row's last sequence from a per-row ledger,
+or 0. `LazyBaseline.tla` checks that any sequence up to the counter is
+correct, also while writes go on during the build (#184). One row of one
+source bucket, with index key A, B or none, changes:
+- before a new incarnation exists (not captured for it), once, and through
+  a cross-shard transaction prepared then, whose APPLY uses the capture
+  plan of its PREPARE;
+- while it is built, twice: captured once the build has started;
 - after it is ready (captured: an old-key delete and a new-key put, both
   at the write's sequence).
 
-Delivery ships, loses, duplicates and reorders frames. Each key's target
-bucket applies a frame above both its floor and its marker, refuses a late
-baseline, and acknowledges the rest as obsolete. Floors install the
-bucket's completed prefix once the incarnation is ready, and collect the
-tombstones at or below them. Bootstrap reads the row and the counter in
-one step, the write fence's premise, and may give the baseline any
-sequence from 0 to the counter.
+The build starts under a short fence that drains the table's commits and
+prepared transactions (`tarn_lazy_start`), and writes capture the new
+incarnation from then on. The scan reads the row and the counter in one
+step and enqueues the baseline in a later one, with writes in between, and
+may give it any sequence from 0 to the counter it read. The incarnation is
+ready once the scan is done and the outbox is drained. Delivery ships,
+loses, duplicates and reorders frames. Each key's target bucket applies a
+frame above both its floor and its marker, refuses a late baseline, and
+acknowledges the rest as obsolete. Floors install the bucket's completed
+prefix once the incarnation is ready, and collect the tombstones at or
+below them.
 
 `DrainedConverges`: once the outbox is drained, the markers are the row's
 current key, however frames were reordered or duplicated, and also after
-collection. `BugBaselineAboveCounter` gives the baseline the counter plus
-one: the delete of a later write at that sequence no longer supersedes it,
-and the deleted row stays in the index.
+collection. Its controls:
+- `BugBaselineAboveCounter` gives the baseline the counter plus one: the
+  delete of a later write at that sequence no longer supersedes it, and the
+  deleted row stays in the index.
+- `BugScanBeforeCapture` lets the scan read the row before writes capture
+  the incarnation: a write in between reaches neither the baseline nor the
+  outbox.
+- `BugNoPrepareDrain` starts the build while the prepared transaction is
+  pending: its APPLY, after the scan read the row, captures nothing for
+  the new incarnation.
+- `BugReadyBeforeScan` declares the incarnation ready once the outbox is
+  drained, whether or not the scan is done.
 
 The incarnation can also be retired (DROP or a rotation): its target is
 dropped, every later frame is acknowledged from the retirement alone, and
@@ -624,14 +640,22 @@ tombstone was collected under a floor is applied again, and the row's old
 key comes back.
 
 ```sh
-tla/check.sh LazyBaseline Bug_LazyBaselineAboveCounter Bug_LazyBaselineClearLiveFloors
+tla/check.sh LazyBaseline Bug_LazyBaselineAboveCounter Bug_LazyBaselineClearLiveFloors \
+  Bug_LazyBaselineScanBeforeCapture Bug_LazyBaselineNoPrepareDrain Bug_LazyBaselineReadyBeforeScan
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
 |---|---:|---:|---|
-| `LazyBaseline` | 323,760 | 25 | passes |
-| `Bug_LazyBaselineAboveCounter` | 762 | 8 | violates `DrainedConverges` |
-| `Bug_LazyBaselineClearLiveFloors` | 87,841 | 14 | violates `DrainedConverges` |
+| `LazyBaseline` | 2,774,949 | 35 | passes |
+| `Bug_LazyBaselineAboveCounter` | 19,142 | 10 | violates `DrainedConverges` |
+| `Bug_LazyBaselineClearLiveFloors` | 315,095 | 16 | violates `DrainedConverges` |
+| `Bug_LazyBaselineScanBeforeCapture` | 2,011 | 7 | violates `DrainedConverges` |
+| `Bug_LazyBaselineNoPrepareDrain` | 8,243 | 7 | violates `DrainedConverges` |
+| `Bug_LazyBaselineReadyBeforeScan` | 37 | 3 | violates `DrainedConverges` |
+
+The storage test `lua/test/lazy_online_test.lua` runs the build against a
+writer on memtx and vinyl and checks the published index row by row. With
+capture disabled, it fails: the index misses rows the writer changed.
 
 ### Conservative capacity meter
 
@@ -2123,10 +2147,10 @@ tla/check.sh BoundedMove Bug_BoundedMoveDrain Bug_BoundedMoveDelta \
 
 ### Configuration counts
 
-The default list contains 323 unique configurations: 80 positive
-outcomes and 243 expected broken/trade-off outcomes. The 326 generated
+The default list contains 326 unique configurations: 80 positive
+outcomes and 246 expected broken/trade-off outcomes. The 329 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 336 total. Explicit
+placement and query-budget configurations are maintained directly, for 339 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
