@@ -42,6 +42,19 @@ def leaders(shards):
     return result
 
 
+def movement_ready(shards):
+    # Bounded movement refuses a move (1412) while any replica of either
+    # shard is down or still loading its procedures.
+    for shard in shards:
+        for address in shard["replicas"]:
+            try:
+                if ev(address, "return tarn_move_capabilities()")[0][:2] != ["ok", 2]:
+                    return False
+            except (tarantool.Error, OSError):
+                return False
+    return True
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--tarn", required=True)
@@ -187,6 +200,11 @@ def main():
                 owner = shard["id"]
         assert owner in (1, 2)
         target = 3 - owner
+        # The restarted replica must be serving before the move begins.
+        deadline = time.monotonic() + 30
+        while not movement_ready(config["shards"]):
+            assert time.monotonic() < deadline, "a replica never advertised bounded movement"
+            time.sleep(.1)
         c.q(f"TARN MOVE BUCKET {bucket} TO SHARD {target}")
         assert read_all() == expected
         report["events"].append({"move": bucket, "from": owner, "to": target})
