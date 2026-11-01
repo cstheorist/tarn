@@ -3,13 +3,13 @@ use super::*;
 use std::time::Duration;
 use tokio::io::DuplexStream;
 
-async fn bounded<F: std::future::Future>(f: F) -> F::Output {
+pub(super) async fn bounded<F: std::future::Future>(f: F) -> F::Output {
     tokio::time::timeout(Duration::from_secs(2), f)
         .await
         .expect("transport did not progress")
 }
 
-fn response(rtype: u32, sync: u64, body: &[u8]) -> Vec<u8> {
+pub(super) fn response(rtype: u32, sync: u64, body: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     encode_packet(&mut out, rtype, sync, 0, |o| o.extend_from_slice(body));
     out
@@ -69,7 +69,7 @@ async fn connecting_options(opts: Opts) -> (tokio::task::JoinHandle<Result<Clien
     (task, peer)
 }
 
-async fn connected() -> (Client, DuplexStream) {
+pub(super) async fn connected() -> (Client, DuplexStream) {
     let (task, mut peer) = connecting(false).await;
     peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
     (bounded(task).await.unwrap().unwrap(), peer)
@@ -278,7 +278,7 @@ async fn handshake_requires_unique_owned_terminal_replies() {
     assert!(matches!(bounded(task).await.unwrap(), Err(Error::Protocol(_))));
 }
 
-async fn connected_options(opts: Opts) -> (Client, DuplexStream) {
+pub(super) async fn connected_options(opts: Opts) -> (Client, DuplexStream) {
     let (task, mut peer) = connecting_options(opts).await;
     peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
     (bounded(task).await.unwrap().unwrap(), peer)

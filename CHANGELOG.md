@@ -27,8 +27,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and bounded independent-point batches, with dedicated-reader grants,
   ownership/schema handles and a generic Rust client. Complete responses
   preserve input positions, duplicates and misses; unsupported snapshot,
-  transaction and mutation requests fail explicitly. See the
-  [contract and raw-native visibility boundaries](docs/strong-kv.md).
+  transaction and mutation requests fail explicitly. The client reads
+  routes through the states of bounded moves, and refuses an advertised
+  response frame above 1 MiB plus 4 KiB before reading its body. RF3 fault
+  and clock-fault histories run in CI; matched SQL, strong KV and raw
+  native read measurements run from a manual CI input. See the
+  [contract and raw-native visibility boundaries](docs/strong-kv.md)
+  ([#181](https://github.com/cstheorist/tarn/issues/181)).
 
 - Reject new unsupported FOREIGN KEY, CHECK and ENUM/SET declarations before
   schema effects. Expose legacy integrity history with SHOW TARN INTEGRITY
@@ -52,6 +57,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A SQL server that takes over a bucket move whose server stopped gives the
+  move up when a step fails before the send, as the move's own server does.
+  It used to only try to go forward, so a move that could not go on (its
+  shards refuse to begin one while a replica of either is down) stayed half
+  done: the bucket could not move again until the replica was back. The
+  failover test, which kills replicas for good, failed on this
+  intermittently ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
 - A SQL server's catalog poller no longer reloads a catalog that a
   statement already reloaded when it met the new version. Each such reload
   discarded every cached plan once more after a schema change made on
@@ -72,6 +85,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   table; the statement used to report 1180 ("did not finish on every shard")
   and leave the change to finish in the background about 30 s later
   ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
+- Prepared administrative assignments capture prior diagnostic counts before
+  clearing messages on each execution, including reused statement handles.
+  Register the exact text/binary diagnostic-reader differences from pinned
+  MySQL, with explicit unsupported-expression refusals.
 
 - Preserve 1180/40003 for native commit uncertainty, missing write DATA and
   malformed mutation replies. Require complete error and handback envelopes

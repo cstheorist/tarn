@@ -40,6 +40,9 @@ use crate::iproto::{self, key};
 use crate::mp;
 use crate::{Error, Iter, Opts, TxnIsolation};
 
+mod cost_trace;
+#[cfg(test)]
+mod cost_trace_test;
 #[cfg(test)]
 mod tests;
 
@@ -463,6 +466,7 @@ impl Shared {
             }
         }
         tracing::debug!(pending = waiters.len(), "tarantool connection closed: {why}");
+        cost_trace::retired(self.id, waiters.len(), deadline);
         // Fail callers now, but retain capacity until the socket halves
         // have actually dropped. A cancelled caller cannot free its charge.
         self.physical.retire(waiters.into_values().map(|w| {
@@ -530,6 +534,7 @@ struct Frame {
     sync: u64,
     schema_version: u64,
     body: Bytes,
+    wire_bytes: usize,
 }
 
 /// Only OK and the 15-bit database-error family are terminal responses.
@@ -635,6 +640,7 @@ fn decode_frame(buf: &mut BytesMut, plen: usize, total: usize) -> Result<Frame, 
         sync,
         schema_version: schema_version.unwrap_or(0),
         body,
+        wire_bytes: total,
     })
 }
 
@@ -673,6 +679,7 @@ async fn reader_task<R: AsyncRead + Unpin>(
             }
             match next_frame_limited(&mut buf, max_response_bytes) {
                 Ok(Some(mut f)) => {
+                    cost_trace::frame(shared.id, f.sync, f.rtype, f.wire_bytes);
                     if let Some(p) = frame_permit.take() {
                         f.body = p.own(&f.body);
                     }
@@ -728,11 +735,14 @@ async fn reader_task<R: AsyncRead + Unpin>(
             shared.counters.replies.fetch_add(ready.len() as u64, Ordering::Relaxed);
             for (w, f) in ready.drain(..) {
                 drop(w.permit); // an exact terminal was drained
-                let _ = w.tx.send(Reply {
-                    rtype: f.rtype,
-                    schema_version: f.schema_version,
-                    body: f.body,
-                });
+                let delivered =
+                    w.tx.send(Reply {
+                        rtype: f.rtype,
+                        schema_version: f.schema_version,
+                        body: f.body,
+                    })
+                    .is_ok();
+                cost_trace::terminal(shared.id, f.sync, w.born, delivered);
             }
         }
         if buf.is_empty() && buf.capacity() > READ_CHUNK {
@@ -1215,6 +1225,7 @@ impl Client {
 
     /// Queue one request and register its waiter. Encoding happens under the
     /// connection lock straight into the shared write buffer.
+    #[cfg(test)]
     #[inline]
     fn enqueue(
         &self,
@@ -1224,9 +1235,23 @@ impl Client {
         class: Class,
         body: impl FnOnce(&mut Vec<u8>),
     ) -> Result<oneshot::Receiver<Reply>, Error> {
+        self.enqueue_observed(req_type, stream_id, charge, class, None, body)
+    }
+
+    #[inline]
+    fn enqueue_observed(
+        &self,
+        req_type: u32,
+        stream_id: u64,
+        charge: usize,
+        class: Class,
+        call: Option<cost_trace::Call>,
+        body: impl FnOnce(&mut Vec<u8>),
+    ) -> Result<oneshot::Receiver<Reply>, Error> {
         let (tx, rx) = oneshot::channel();
         let shared = &self.inner.shared;
-        let (was_empty, first_pending) = {
+        let trace = cost_trace::enabled();
+        let (was_empty, first_pending, observation) = {
             let mut st = shared.state.lock();
             if st.closed {
                 return Err(Error::Closed);
@@ -1254,12 +1279,13 @@ impl Client {
                 ));
             }
             st.wbuf_requests += 1;
+            let born = Instant::now();
             st.waiters.insert(
                 sync,
                 Waiter {
                     tx,
                     permit,
-                    born: Instant::now(),
+                    born,
                     wire_bytes,
                 },
             );
@@ -1273,13 +1299,17 @@ impl Client {
             if let Some(traffic) = &shared.traffic {
                 traffic.enqueued();
             }
-            (was_empty, first_pending)
+            (was_empty, first_pending, trace.then_some((sync, wire_bytes, born)))
         };
         if was_empty {
             shared.write_ready.notify_one();
         }
         if first_pending {
             shared.deadline_ready.notify_one();
+        }
+        // No log writer runs while the connection-state mutex is held.
+        if let Some((sync, bytes, born)) = observation {
+            cost_trace::request(shared, sync, stream_id, req_type, call.unwrap_or_default(), bytes, born);
         }
         Ok(rx)
     }
@@ -1293,7 +1323,21 @@ impl Client {
         class: Class,
         body: impl FnOnce(&mut Vec<u8>),
     ) -> Result<Response, Error> {
-        let rx = self.enqueue(req_type, stream_id, charge, class, body)?;
+        self.roundtrip_observed(req_type, stream_id, charge, class, None, body)
+            .await
+    }
+
+    #[inline]
+    async fn roundtrip_observed(
+        &self,
+        req_type: u32,
+        stream_id: u64,
+        charge: usize,
+        class: Class,
+        observation: Option<cost_trace::Call>,
+        body: impl FnOnce(&mut Vec<u8>),
+    ) -> Result<Response, Error> {
+        let rx = self.enqueue_observed(req_type, stream_id, charge, class, observation, body)?;
         match rx.await {
             Ok(reply) => {
                 let r = reply.into_response();
@@ -1460,11 +1504,12 @@ impl Client {
     }
 
     async fn call_class(&self, stream_id: u64, function: &str, args: &[u8], class: Class) -> Result<Response, Error> {
-        self.roundtrip(
+        self.roundtrip_observed(
             iproto::CALL,
             stream_id,
             function.len().saturating_add(args.len()).saturating_add(128),
             class,
+            cost_trace::Call::capture(function, args),
             |out| {
                 out.push(0x82);
                 out.push(key::FUNCTION_NAME);

@@ -1,0 +1,233 @@
+{
+  "schema": 1,
+  "scope": "Focused qualifier control only, not full current-head SQL validation. Fresh Linux ARM64 fixtures use the previously retained 6a120f1 diagnostic debug gateway/Lua sources; all owned processes stopped after each control.",
+  "helper_sha256": "423d257081723f316f3e3fbda0e2d2fb5c754f02b46165b45ebf20a882e96bad",
+  "positive": {
+    "wal": "fsync",
+    "exit_code": 0,
+    "nodes": [
+      {
+        "address": "127.0.0.1:3311",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "fsync",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3312",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "fsync",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3313",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "fsync",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3321",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "fsync",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3322",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "fsync",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3323",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "fsync",
+          "sync": true
+        }
+      }
+    ]
+  },
+  "negative": {
+    "wal": "write",
+    "exit_code": 1,
+    "nodes": [
+      {
+        "address": "127.0.0.1:3311",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "write",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3312",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "write",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3313",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "write",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3321",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "write",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3322",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "write",
+          "sync": true
+        }
+      },
+      {
+        "address": "127.0.0.1:3323",
+        "durability": {
+          "quorum_config": "N / 2 + 1",
+          "replica_count": 3,
+          "spaces": {
+            "_tarn_txn": true,
+            "_tarn_locks": true,
+            "_tarn_catalog": true,
+            "_tarn_part": true,
+            "_tarn_meta": true
+          },
+          "quorum": 2,
+          "wal_mode": "write",
+          "sync": true
+        }
+      }
+    ],
+    "failures": [
+      "RF3/quorum2/fsync configuration not established on 127.0.0.1:3311",
+      "RF3/quorum2/fsync configuration not established on 127.0.0.1:3312",
+      "RF3/quorum2/fsync configuration not established on 127.0.0.1:3313",
+      "RF3/quorum2/fsync configuration not established on 127.0.0.1:3321",
+      "RF3/quorum2/fsync configuration not established on 127.0.0.1:3322",
+      "RF3/quorum2/fsync configuration not established on 127.0.0.1:3323"
+    ]
+  },
+  "initial_control": {
+    "scope": "Initial qualifier incorrectly compared the configured expression to a number; retained failure led to checking box.info.synchro.quorum instead.",
+    "raw_receipt_sha256": "05cbd38dbe89aff5e9a64c61714ef73c59c81a51981e6101120d564b68b793f7"
+  }
+}

@@ -1,0 +1,155 @@
+{
+  "schema": 1,
+  "run": 41108078253,
+  "head": "8c33a9e844c148cdf39e92ed22865a6fa66763d2",
+  "compiled_merge_source": "6a6c59e98d3da86ac51020f273a884ebc0fabdde",
+  "conclusion": "failure",
+  "jobs": {
+    "storage": {
+      "id": 124243062178,
+      "step": "Storage protocol tests without the native procedures",
+      "engine": "memtx",
+      "expected_mode": "lua",
+      "stage": "kill-first",
+      "wait_error": "...nner/work/tarn/tarn/lua/test/engine_replication_test.lua:33: partial copy hook timed out: false",
+      "elapsed_seconds": 30.273291498,
+      "builder": {
+        "calls": 1,
+        "done": true,
+        "synthetic": false,
+        "control": "",
+        "attempts": 1,
+        "finished": 751.835678321,
+        "started": 751.740806604,
+        "result": [
+          "error",
+          1213,
+          "Engine-change transaction cut is rebuilding"
+        ],
+        "ok": true,
+        "fiber": {
+          "status": "suspended",
+          "csw": 10,
+          "id": 163
+        }
+      },
+      "capture": {
+        "capture_epoch": 4,
+        "epoch": 6,
+        "track": {
+          "dirty_keys": 0,
+          "valid": false,
+          "token": "f5112ddf-f06b-4be8-9e74-db51883867f3",
+          "bytes": 0,
+          "epoch": 2
+        },
+        "stale": false,
+        "tickets": {
+          "ready": false,
+          "outstanding": 0,
+          "building": false,
+          "epoch": 7
+        }
+      },
+      "source_rows": 300,
+      "target_rows": 0,
+      "receipt": {
+        "capture": "f5112ddf-f06b-4be8-9e74-db51883867f3",
+        "schema": {
+          "format": [
+            {
+              "name": "id",
+              "type": "unsigned"
+            },
+            {
+              "name": "v",
+              "type": "integer"
+            },
+            {
+              "name": "bucket_id",
+              "type": "unsigned"
+            }
+          ],
+          "indexes": [
+            {
+              "unique": true,
+              "parts": [
+                {
+                  "field": 1,
+                  "is_nullable": false,
+                  "type": "unsigned"
+                }
+              ],
+              "id": 0,
+              "type": "tree",
+              "name": "primary"
+            },
+            {
+              "unique": false,
+              "parts": [
+                {
+                  "field": 3,
+                  "is_nullable": false,
+                  "type": "unsigned"
+                }
+              ],
+              "id": 1,
+              "type": "tree",
+              "name": "bucket_id"
+            }
+          ]
+        },
+        "old_ver": 0,
+        "new_aux": [],
+        "old_uix": [],
+        "ver": 5,
+        "phase": "resetting",
+        "engine": "vinyl",
+        "old_name": "test.engine_rf3",
+        "old_id": 90800,
+        "old_aux": [],
+        "cursor": null,
+        "new_id": 90801,
+        "gen": 1,
+        "copied": 0,
+        "old_engine": "memtx",
+        "retired_name": "_tarn_engine_old_90800_90801",
+        "shadow_name": "_tarn_engine_90800_90801"
+      },
+      "native": false,
+      "ro": false,
+      "term": 2,
+      "synchro_queue": {
+        "owner": 1,
+        "size": 0,
+        "term": 2,
+        "busy": false,
+        "age": 0,
+        "confirm_lag": 0.090129295999986,
+        "len": 0
+      }
+    },
+    "upgrade_vinyl": {
+      "id": 124243062322,
+      "step": "Upgrade, mixed components, refusal and rollback",
+      "fixture_stage": "prepare witness before roll(old)",
+      "vote": [
+        "no",
+        1205,
+        "Vinyl writes are throttled while dump or compaction catches up"
+      ],
+      "context": "Existing #205 admission refusal; this tested source predates the merged #207 witness adapter."
+    }
+  },
+  "original_logs": {
+    "tests": {
+      "bytes": 891022,
+      "sha256": "e99bee0a5bb27d3ae40bd67455e9127d628714207848776309ade8dc44e4cf90"
+    },
+    "vinyl-upgrade": {
+      "bytes": 55142,
+      "sha256": "7370abbe540f0acbce346f184da3a6d7f1d35773eb812179a650a947f98e0b5b"
+    }
+  },
+  "scope": "Original failed gate retained. No environment-only diagnosis, safe mutation replay, engine-copy fix, or current-head passing-gate claim. Full logs retained locally; only selected generated diagnostics are published."
+}

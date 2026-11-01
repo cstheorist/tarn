@@ -1144,12 +1144,17 @@ class T:
                 seq += 1
                 lid = seed * 10_000_000 + seq
                 stage = "body"
+                statement = "begin"
                 try:
                     q(c, "BEGIN")
+                    statement = "debit"
                     q(c, "UPDATE acct SET bal = bal - %s WHERE id = %s", (amt, x))
+                    statement = "credit"
                     q(c, "UPDATE acct SET bal = bal + %s WHERE id = %s", (amt, y))
+                    statement = "ledger"
                     q(c, "INSERT INTO led VALUES (%s, %s, %s, %s)", (lid, x, y, amt))
                     stage = "commit"
+                    statement = "commit"
                     q(c, "COMMIT")
                     with lk:
                         st["ok"] += 1
@@ -1165,7 +1170,8 @@ class T:
                             if stage == "commit":
                                 st["unknown"].add(lid)
                             if code not in (1180, 2003, 2006, 2013):
-                                st["other"].append(e.args)
+                                st["other"].append(dict(time=time.time(), statement=statement,
+                                                        token=lid, error=e.args))
                     try:
                         q(c, "ROLLBACK")
                     except pymysql.MySQLError:

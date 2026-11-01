@@ -1,0 +1,21 @@
+{
+  "source": "harness-final-source-see-input-manifest",
+  "control": "Actual PREPARE before BUILD; must reject held/unfenced witness",
+  "qualified": true,
+  "rejected": true,
+  "failure": "AssertionError('write completed after the held BUILD phase ended')",
+  "replicas": [
+    {
+      "prepared": true,
+      "reply": [
+        "ok"
+      ]
+    },
+    {
+      "prepared": true,
+      "reply": [
+        "ok"
+      ]
+    }
+  ]
+}

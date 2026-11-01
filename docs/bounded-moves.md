@@ -94,7 +94,9 @@ A reset has its own durable sequence, so a late reset cannot delete later pages.
 The clear, install, reclaim and cancel cursors are their remaining durable rows.
 Each modern RPC commits at most one batch and returns `more` until complete.
 
-An abandoned SQL job resumes copying from its receiver checkpoint. A lost or
+An abandoned SQL job resumes copying from its receiver checkpoint; if a step
+then fails before the send (an inventoried replica down, headroom refused),
+the takeover cancels the move, as its own driver would. A lost or
 full volatile dirty tracker causes a complete frozen recopy. That copy uses the
 move identity as its generation: its write fence and drained cut survive source
 leadership changes. Explicit cancellation is recorded as a job phase before

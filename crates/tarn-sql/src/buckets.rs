@@ -17,7 +17,8 @@
 //! S sends b (deletes its rows) and R takes it over (inserts them). Before
 //! the send the move can be given up (both sides go back); from the send on
 //! it only goes forward. A server that finds the job abandoned finishes it
-//! (`Cluster::finish_move`).
+//! (`Cluster::finish_move`): forward from the send on; before it, forward
+//! from the copy's durable cursor, or back if a step fails.
 
 use crate::cluster::{Cluster, Job, JobKind};
 use crate::mpw::{lua_status, Mp, Rd};
@@ -970,7 +971,8 @@ impl Cluster {
     }
 
     /// Finish a move whose server stopped (the job is ours now): forward
-    /// from its durable cursor, or reclaim an explicitly cancelled move.
+    /// from phase 'flip'; back from phase 'abort'; else forward from its
+    /// durable cursor, or back if a step fails before the send.
     pub(crate) async fn finish_move(&self, job: &Job) -> SqlResult<()> {
         // The phase as it is now that the job is ours (its server can no
         // longer change it).
@@ -987,7 +989,18 @@ impl Cluster {
             self.abort_move(&mv).await?;
         } else {
             let mut flipped = false;
-            self.move_steps(&mv, &job, 10.0, &mut flipped).await?;
+            if let Err(e) = self.move_steps(&mv, &job, 10.0, &mut flipped).await {
+                if flipped {
+                    return Err(e);
+                }
+                // Before the send the move is given up, as its driver gives
+                // it up (move_bucket): a step that cannot succeed now (a
+                // replica of either shard down, a drain that timed out)
+                // must not leave the bucket half moved until it can.
+                tracing::warn!("giving the move of bucket {} up: {}", mv.bucket, e.message);
+                self.job_phase(&job, "abort").await?;
+                self.abort_move(&mv).await?;
+            }
         }
         self.job_end(&job.owner).await?;
         self.refresh_buckets().await?;

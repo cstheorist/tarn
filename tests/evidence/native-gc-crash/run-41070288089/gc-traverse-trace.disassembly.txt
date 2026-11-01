@@ -1,0 +1,104 @@
+
+tarantool (SHA-256 recorded in manifest.json):	file format elf64-x86-64
+
+Disassembly of section .text:
+
+000000000027e340 <gc_traverse_trace.part.0>:
+  27e340: 53                           	pushq	%rbx
+  27e341: 44 8b 46 18                  	movl	0x18(%rsi), %r8d
+  27e345: 48 89 fb                     	movq	%rdi, %rbx
+  27e348: 49 89 f3                     	movq	%rsi, %r11
+  27e34b: 41 81 f8 fc 7f 00 00         	cmpl	$0x7ffc, %r8d           # imm = 0x7FFC
+  27e352: 77 60                        	ja	0x27e3b4 <gc_traverse_trace.part.0+0x74>
+  27e354: 4c 8b 4e 10                  	movq	0x10(%rsi), %r9
+  27e358: 41 ba 08 42 60 00            	movl	$0x604208, %r10d        # imm = 0x604208
+  27e35e: eb 1f                        	jmp	0x27e37f <gc_traverse_trace.part.0+0x3f>
+  27e360: 0f b6 49 04                  	movzbl	0x4(%rcx), %ecx
+  27e364: 44 89 d2                     	movl	%r10d, %edx
+  27e367: d3 ea                        	shrl	%cl, %edx
+  27e369: 83 e2 01                     	andl	$0x1, %edx
+  27e36c: 74 04                        	je	0x27e372 <gc_traverse_trace.part.0+0x32>
+  27e36e: 3c 1b                        	cmpb	$0x1b, %al
+  27e370: 75 31                        	jne	0x27e3a3 <gc_traverse_trace.part.0+0x63>
+  27e372: 41 83 c0 01                  	addl	$0x1, %r8d
+  27e376: 41 81 f8 fc 7f 00 00         	cmpl	$0x7ffc, %r8d           # imm = 0x7FFC
+  27e37d: 77 35                        	ja	0x27e3b4 <gc_traverse_trace.part.0+0x74>
+  27e37f: 44 89 c0                     	movl	%r8d, %eax
+  27e382: 49 8d 0c c1                  	leaq	(%r9,%rax,8), %rcx
+  27e386: 0f b6 41 05                  	movzbl	0x5(%rcx), %eax
+  27e38a: 3c 18                        	cmpb	$0x18, %al
+  27e38c: 75 d2                        	jne	0x27e360 <gc_traverse_trace.part.0+0x20>
+  27e38e: 8b 31                        	movl	(%rcx), %esi
+  27e390: f6 46 04 03                  	testb	$0x3, 0x4(%rsi)
+  27e394: 75 5a                        	jne	0x27e3f0 <gc_traverse_trace.part.0+0xb0>
+  27e396: 0f b6 49 04                  	movzbl	0x4(%rcx), %ecx
+  27e39a: 44 89 d0                     	movl	%r10d, %eax
+  27e39d: d3 e8                        	shrl	%cl, %eax
+  27e39f: a8 01                        	testb	$0x1, %al
+  27e3a1: 74 cf                        	je	0x27e372 <gc_traverse_trace.part.0+0x32>
+  27e3a3: 41 83 c0 01                  	addl	$0x1, %r8d
+  27e3a7: 41 83 c0 01                  	addl	$0x1, %r8d
+  27e3ab: 41 81 f8 fc 7f 00 00         	cmpl	$0x7ffc, %r8d           # imm = 0x7FFC
+  27e3b2: 76 cb                        	jbe	0x27e37f <gc_traverse_trace.part.0+0x3f>
+  27e3b4: 41 0f b7 43 52               	movzwl	0x52(%r11), %eax
+  27e3b9: 66 85 c0                     	testw	%ax, %ax
+  27e3bc: 75 42                        	jne	0x27e400 <gc_traverse_trace.part.0+0xc0>
+  27e3be: 41 0f b7 43 56               	movzwl	0x56(%r11), %eax
+  27e3c3: 66 85 c0                     	testw	%ax, %ax
+  27e3c6: 75 68                        	jne	0x27e430 <gc_traverse_trace.part.0+0xf0>
+  27e3c8: 41 0f b7 43 58               	movzwl	0x58(%r11), %eax
+  27e3cd: 66 85 c0                     	testw	%ax, %ax
+  27e3d0: 0f 85 8a 00 00 00            	jne	0x27e460 <gc_traverse_trace.part.0+0x120>
+  27e3d6: 41 8b 73 30                  	movl	0x30(%r11), %esi
+  27e3da: f6 46 04 03                  	testb	$0x3, 0x4(%rsi)
+  27e3de: 0f 85 b0 00 00 00            	jne	0x27e494 <gc_traverse_trace.part.0+0x154>
+  27e3e4: 5b                           	popq	%rbx
+  27e3e5: c3                           	retq
+  27e3e6: 66 2e 0f 1f 84 00 00 00 00 00	nopw	%cs:(%rax,%rax)
+  27e3f0: 48 89 df                     	movq	%rbx, %rdi
+  27e3f3: e8 48 fe ff ff               	callq	0x27e240 <gc_mark>
+  27e3f8: eb 9c                        	jmp	0x27e396 <gc_traverse_trace.part.0+0x56>
+  27e3fa: 66 0f 1f 44 00 00            	nopw	(%rax,%rax)
+  27e400: 48 8b 93 c0 03 00 00         	movq	0x3c0(%rbx), %rdx
+  27e407: 8b 04 82                     	movl	(%rdx,%rax,4), %eax
+  27e40a: 0f b6 50 04                  	movzbl	0x4(%rax), %edx
+  27e40e: f6 c2 03                     	testb	$0x3, %dl
+  27e411: 74 ab                        	je	0x27e3be <gc_traverse_trace.part.0+0x7e>
+  27e413: 83 e2 fc                     	andl	$-0x4, %edx
+  27e416: 88 50 04                     	movb	%dl, 0x4(%rax)
+  27e419: 8b 53 68                     	movl	0x68(%rbx), %edx
+  27e41c: 89 50 0c                     	movl	%edx, 0xc(%rax)
+  27e41f: 89 43 68                     	movl	%eax, 0x68(%rbx)
+  27e422: 41 0f b7 43 56               	movzwl	0x56(%r11), %eax
+  27e427: 66 85 c0                     	testw	%ax, %ax
+  27e42a: 74 9c                        	je	0x27e3c8 <gc_traverse_trace.part.0+0x88>
+  27e42c: 0f 1f 40 00                  	nopl	(%rax)
+  27e430: 48 8b 93 c0 03 00 00         	movq	0x3c0(%rbx), %rdx
+  27e437: 8b 04 82                     	movl	(%rdx,%rax,4), %eax
+  27e43a: 0f b6 50 04                  	movzbl	0x4(%rax), %edx
+  27e43e: f6 c2 03                     	testb	$0x3, %dl
+  27e441: 74 85                        	je	0x27e3c8 <gc_traverse_trace.part.0+0x88>
+  27e443: 83 e2 fc                     	andl	$-0x4, %edx
+  27e446: 88 50 04                     	movb	%dl, 0x4(%rax)
+  27e449: 8b 53 68                     	movl	0x68(%rbx), %edx
+  27e44c: 89 50 0c                     	movl	%edx, 0xc(%rax)
+  27e44f: 89 43 68                     	movl	%eax, 0x68(%rbx)
+  27e452: 41 0f b7 43 58               	movzwl	0x58(%r11), %eax
+  27e457: 66 85 c0                     	testw	%ax, %ax
+  27e45a: 0f 84 76 ff ff ff            	je	0x27e3d6 <gc_traverse_trace.part.0+0x96>
+  27e460: 48 8b 93 c0 03 00 00         	movq	0x3c0(%rbx), %rdx
+  27e467: 8b 04 82                     	movl	(%rdx,%rax,4), %eax
+  27e46a: 0f b6 50 04                  	movzbl	0x4(%rax), %edx
+  27e46e: f6 c2 03                     	testb	$0x3, %dl
+  27e471: 0f 84 5f ff ff ff            	je	0x27e3d6 <gc_traverse_trace.part.0+0x96>
+  27e477: 83 e2 fc                     	andl	$-0x4, %edx
+  27e47a: 41 8b 73 30                  	movl	0x30(%r11), %esi
+  27e47e: 88 50 04                     	movb	%dl, 0x4(%rax)
+  27e481: 8b 53 68                     	movl	0x68(%rbx), %edx
+  27e484: 89 50 0c                     	movl	%edx, 0xc(%rax)
+  27e487: 89 43 68                     	movl	%eax, 0x68(%rbx)
+  27e48a: f6 46 04 03                  	testb	$0x3, 0x4(%rsi)
+  27e48e: 0f 84 50 ff ff ff            	je	0x27e3e4 <gc_traverse_trace.part.0+0xa4>
+  27e494: 48 89 df                     	movq	%rbx, %rdi
+  27e497: 5b                           	popq	%rbx
+  27e498: e9 a3 fd ff ff               	jmp	0x27e240 <gc_mark>
