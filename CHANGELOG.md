@@ -94,6 +94,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A lazy read of many rows no longer exhausts the statement's memory
+  budget (1041) where the strong read succeeds. Each candidate page and
+  each recheck stayed charged until the statement ended. Now each is
+  refunded once its candidates are rechecked, and the lazy limit counts
+  kept rows at the memory they are charged, so a large result falls back
+  to the strong read ([#247](https://github.com/cstheorist/tarn/issues/247)).
+
 - A statement reading two or more shards is no longer refused by its memory
   budget (1041) just because its shards' reads overlapped. Each concurrent
   read reserves a whole reply (16 MiB) before it is sent; with a full page
