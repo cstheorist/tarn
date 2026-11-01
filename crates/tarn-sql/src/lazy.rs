@@ -541,6 +541,16 @@ struct Lane {
     done: bool,
     rows: VecDeque<Candidate>,
     bytes: usize,
+    /// What decoding `rows` charged; refunded once they are consumed (#247).
+    page: Option<Arc<crate::budget::Frame>>,
+}
+
+/// `read`, with what it charges in a frame of its own (`budget::Frame`),
+/// which the caller drops to refund it once the result is consumed.
+async fn framed<T>(read: impl std::future::Future<Output = SqlResult<T>>) -> SqlResult<(T, Arc<crate::budget::Frame>)> {
+    let frame = crate::budget::Frame::new();
+    let value = frame.scope(read).await?;
+    Ok((value, frame))
 }
 
 fn next_lane(lanes: &[Lane], reverse: bool) -> Option<usize> {
@@ -619,6 +629,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
             done: false,
             rows: VecDeque::new(),
             bytes: 0,
+            page: None,
         })
         .collect();
     let mut seen = HashSet::new();
@@ -626,7 +637,15 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
     let (mut scanned, mut bytes, mut pages) = (0usize, 0usize, 0usize);
     let mut dummy = Txn::new(cluster, false);
     let mut page_limit = want.unwrap_or(PAGE_ENTRIES as u64).clamp(1, PAGE_ENTRIES as u64) as usize;
+    // A candidate page and a recheck fetch are each charged in a frame of
+    // their own, refunded once their rows are consumed; a kept row is owned
+    // and charged by itself. Otherwise every page read would stay charged
+    // to the end of the statement, and a result well under the lazy limits
+    // would exhaust the statement's memory budget (#247).
     loop {
+        // Pages consumed in this round: refunded after its rechecks, since
+        // the candidates taken from them are in use until then.
+        let mut spent = Vec::new();
         let mut candidates = Vec::with_capacity(page_limit);
         while candidates.len() < page_limit {
             // Every non-exhausted owner must have a head before choosing
@@ -645,7 +664,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                     }
                     let key = &key;
                     let count = map.count;
-                    reads.push(async move {
+                    reads.push(framed(async move {
                         let mut m = Mp::new();
                         m.arr(6)
                             .uint(l.space_id as u64)
@@ -673,7 +692,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                         // reservation. Returning guards to the fanout collector
                         // would pin every read permit while later heads wait.
                         Ok((n, rows, next, d.len()))
-                    });
+                    }));
                 }
                 let replies = if reads.len() == 1 {
                     vec![reads.into_iter().next().unwrap().await]
@@ -681,7 +700,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                     cluster.read_fanout(reads).await
                 };
                 for read in replies {
-                    let (n, rows, next, size) = read?;
+                    let ((n, rows, next, size), page) = read?;
                     scanned += rows.len();
                     if scanned > SCAN_ENTRIES {
                         return Ok(None);
@@ -691,6 +710,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                     lane.done = next.is_none();
                     lane.after = next;
                     lane.rows = rows.into();
+                    spent.extend(lane.page.replace(page));
                 }
             }
             if lanes.iter().map(|l| l.bytes).sum::<usize>() > limit {
@@ -718,7 +738,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
             }
             keys.push(k);
         }
-        let rows = exec::fetch_keys(
+        let (rows, fetched) = framed(exec::fetch_keys(
             cluster,
             &mut ReadMode::Committed(&mut dummy),
             t,
@@ -726,7 +746,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
             keys,
             true,
             Some(1),
-        )
+        ))
         .await?;
         let mut by_pk: HashMap<Bytes, Row> = rows.into_iter().map(|r| (key_bytes(&t.pk_key(&r)), r)).collect();
         for c in candidates {
@@ -742,15 +762,24 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
             if !seen.insert(c.pkid.clone()) {
                 continue;
             }
-            bytes = bytes.saturating_add(key_bytes(r).len()).saturating_add(c.pkid.len());
+            // (Owned: a shared row would keep its whole reply alive.)
+            let row = crate::budget::own_row(by_pk.remove(&c.pkid).unwrap());
+            // Counted as charged, so that the fallback comes before the
+            // statement's budget refuses the read.
+            let charged = crate::budget::row_bytes(&row).saturating_mul(2);
+            bytes = bytes
+                .saturating_add(usize::try_from(charged).unwrap_or(usize::MAX))
+                .saturating_add(c.pkid.len());
             if bytes > limit {
                 return Ok(None);
             }
-            kept.push(by_pk.remove(&c.pkid).unwrap());
+            crate::budget::row(&row)?;
+            kept.push(row);
             if want.is_some_and(|n| kept.len() as u64 >= n) {
                 break;
             }
         }
+        drop((by_pk, fetched, spent));
         let current = cluster.bucket_map();
         if current.count != map.count
             || current.mver != map.mver
@@ -1282,6 +1311,7 @@ mod tests {
                         after: None,
                         done: true,
                         bytes: 0,
+                        page: None,
                         rows: keys
                             .into_iter()
                             .map(|(key, pk)| Candidate {

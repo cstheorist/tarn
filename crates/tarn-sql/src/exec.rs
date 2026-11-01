@@ -74,18 +74,31 @@ struct Keep<'a, 'c> {
 }
 
 impl Keep<'_, '_> {
-    fn extend(&self, out: &mut Vec<Row>, rows: Vec<Row>) -> SqlResult<()> {
-        match self.filter {
-            None => out.extend(rows),
-            Some(f) => {
-                for r in rows {
-                    if !self.written.is_empty() && self.written.contains(&crate::txn::key_bytes(&self.t.pk_key(&r))) {
-                        continue;
-                    }
-                    if crate::budget::Frame::new().scope_sync(|| f.eval_bool(&r, self.cx))? {
-                        out.push(r);
-                    }
+    /// Keep the rows of one page. `owned`: the page was decoded in a frame
+    /// of its own (`budget::Frame`), dropped once its rows are kept, so each
+    /// kept row is a copy charged on its own (a shared row would keep the
+    /// whole reply alive): the statement's budget then follows the rows it
+    /// keeps rather than the pages it reads (#134).
+    fn extend(&self, out: &mut Vec<Row>, rows: Vec<Row>, owned: bool) -> SqlResult<()> {
+        if self.filter.is_none() && !owned {
+            out.extend(rows);
+            return Ok(());
+        }
+        for r in rows {
+            if let Some(f) = self.filter {
+                if !self.written.is_empty() && self.written.contains(&crate::txn::key_bytes(&self.t.pk_key(&r))) {
+                    continue;
                 }
+                if !crate::budget::Frame::new().scope_sync(|| f.eval_bool(&r, self.cx))? {
+                    continue;
+                }
+            }
+            if owned {
+                let r = crate::budget::own_row(r);
+                crate::budget::row(&r)?;
+                out.push(r);
+            } else {
+                out.push(r);
             }
         }
         Ok(())
@@ -154,7 +167,7 @@ async fn scan_pages(
                     if let Some(r) = page.last {
                         out.last = Some(r);
                     }
-                    keep.extend(&mut out.rows, page.rows)?;
+                    keep.extend(&mut out.rows, page.rows, false)?;
                     match (page.next, pages) {
                         (None, _) => return Ok(out),
                         (Some(_), Pages::One(e)) => return Err(e()),
@@ -166,7 +179,12 @@ async fn scan_pages(
                 }
             }
         }
-        let frame = top.as_ref().map(|_| crate::budget::Frame::new());
+        // Top-K, and a read that keeps only the rows that satisfy WHERE,
+        // decode each page in a frame of its own, dropped once the page's
+        // rows are kept (`Keep::extend`). An unfiltered read keeps every
+        // row, sharing its page.
+        let framed = top.is_some() || keep.filter.is_some();
+        let frame = framed.then(crate::budget::Frame::new);
         let page = async {
             reads.fetch_add(1, AtomicOrdering::Relaxed);
             let (rows, next) = select_rows(
@@ -190,39 +208,44 @@ async fn scan_pages(
             }
             out.read += rows.len();
             if let Some(r) = rows.last() {
-                if top.is_some() {
+                if framed {
                     out._last_guard = crate::budget::retain(crate::budget::row_bytes(r) * 2)?;
                 }
-                out.last = Some(if top.is_some() {
+                out.last = Some(if framed {
                     crate::budget::own_row(r.clone())
                 } else {
                     r.clone()
                 });
             }
-            if let Some(top) = &mut top {
-                for row in rows {
-                    let row_frame = crate::budget::Frame::new();
-                    row_frame.scope_sync(|| -> SqlResult<()> {
-                        if keep
-                            .filter
-                            .map(|f| f.eval_bool(&row, keep.cx))
-                            .transpose()?
-                            .unwrap_or(true)
-                        {
-                            top.push(row, keep.cx)?;
-                        }
-                        Ok(())
-                    })?;
+            let rows = match &mut top {
+                Some(top) => {
+                    for row in rows {
+                        let row_frame = crate::budget::Frame::new();
+                        row_frame.scope_sync(|| -> SqlResult<()> {
+                            if keep
+                                .filter
+                                .map(|f| f.eval_bool(&row, keep.cx))
+                                .transpose()?
+                                .unwrap_or(true)
+                            {
+                                top.push(row, keep.cx)?;
+                            }
+                            Ok(())
+                        })?;
+                    }
+                    Vec::new()
                 }
-            } else {
-                keep.extend(&mut out.rows, rows)?;
-            }
-            Ok::<_, SqlError>(next)
+                None => rows,
+            };
+            Ok::<_, SqlError>((rows, next))
         };
-        let next = match &frame {
+        let (rows, next) = match &frame {
             Some(frame) => frame.scope(page).await?,
             None => page.await?,
         };
+        // (Outside the page's frame, so that the kept rows' charges outlive
+        // it; then the frame refunds the page.)
+        keep.extend(&mut out.rows, rows, framed)?;
         drop(frame);
         match (next, pages) {
             (None, _) => break,
@@ -4715,5 +4738,70 @@ mod tests {
             Lookup::of(2, false, &exact_pk).unwrap().global,
             "ordinary global lookups remain batched"
         );
+    }
+
+    /// #134: a filtered read decodes each page in a frame of its own and
+    /// keeps the rows that satisfy WHERE as copies charged on their own, so
+    /// that dropping the frame refunds the page: the statement's budget
+    /// follows the rows it keeps, not the pages it reads.
+    #[tokio::test]
+    async fn a_filtered_page_is_refunded_once_its_kept_rows_are_copied_and_charged() {
+        let t = catalog().get("d", "o").unwrap();
+        let cx = EvalCtx {
+            params: &[],
+            db: Some("d"),
+            user: "u",
+            conn_id: 1,
+            last_insert_id: 0,
+            found_rows: 0,
+            row_count: 0,
+            now: "2026-01-02 03:04:05",
+        };
+        let filter = eq(1, 7);
+        let written = BTreeSet::new();
+        let keep = Keep {
+            topk: None,
+            filter: Some(&filter),
+            cx: &cx,
+            t: &t,
+            written: &written,
+            project: None,
+        };
+        let pool = crate::budget::Pool::new(crate::budget::Limits {
+            query_bytes: 1 << 20,
+            ..Default::default()
+        })
+        .unwrap();
+        crate::budget::scope(pool.query(), async {
+            // One page of 100 rows, whose text points into the page's reply.
+            let reply = Bytes::from(vec![b'x'; 100 * 64]);
+            let frame = crate::budget::Frame::new();
+            let rows = frame.scope_sync(|| {
+                crate::budget::decoded(reply.len(), 100, t.columns.len()).unwrap();
+                (0..100)
+                    .map(|i| {
+                        let mut r = vec![Value::Null; t.columns.len()];
+                        r[0] = Value::Int(1);
+                        r[1] = Value::Int(i as i64);
+                        r[5] = Value::Str(reply.slice(i * 64..(i + 1) * 64));
+                        r
+                    })
+                    .collect::<Vec<Row>>()
+            });
+            let page = pool.stats()[0];
+            let mut kept = Vec::new();
+            keep.extend(&mut kept, rows, true).unwrap();
+            drop(frame);
+            assert_eq!(kept.len(), 1);
+            let charged = crate::budget::row_bytes(&kept[0]) * 2;
+            assert_eq!(pool.stats()[0], charged, "the page refunded, the kept row charged");
+            assert!(charged < page);
+            let Value::Str(text) = &kept[0][5] else { panic!() };
+            assert!(
+                !reply.as_ptr_range().contains(&text.as_ptr()),
+                "a copy, not a slice of the reply"
+            );
+        })
+        .await;
     }
 }

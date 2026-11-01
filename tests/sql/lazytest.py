@@ -239,6 +239,36 @@ class T:
             q(c, "SET tarn_lazy_consistency='strong'")
             assert q(c, sql) == tuple((i,) for i in range(1, 161))
 
+    def test_many_small_rows_complete_or_fall_back(self):
+        # A lazy read of many small rows (#247). Its candidate pages and
+        # rechecks are refunded once consumed, and its limit counts kept rows
+        # as charged. So the read completes on the lazy path or falls back to
+        # the strong one; it does not exhaust the statement's memory budget,
+        # as 30,000 rows did when every page stayed charged.
+        with self.table("t_small") as c:
+            rows = [(i % 13, i, 3, i, None) for i in range(1, 30001)]
+            with c.cursor() as cur:
+                for first in range(0, len(rows), 500):
+                    for attempt in range(40):
+                        try:
+                            cur.executemany("INSERT INTO t_small VALUES (%s,%s,%s,%s,%s)", rows[first:first + 500])
+                            break
+                        except pymysql.MySQLError as e:  # vinyl admission, before any effect
+                            if e.args[0] != 1205 or "Vinyl" not in str(e.args[1]) or attempt == 39:
+                                raise
+                            time.sleep(min(0.5, 0.05 * (attempt + 1)))
+            self.caught_up(c)
+            sql = "SELECT tenant_id,id FROM t_small WHERE k=3 ORDER BY n,id"
+            q(c, "SET tarn_lazy_consistency='strong'")
+            strong = q(c, sql)
+            assert len(strong) == 30000, len(strong)
+            q(c, "SET tarn_lazy_consistency='eventual'")
+            reads, falls = stat(c, "Tarn_lazy_reads"), stat(c, "Tarn_lazy_fallbacks")
+            assert q(c, sql) == strong
+            assert stat(c, "Tarn_lazy_reads") + stat(c, "Tarn_lazy_fallbacks") == reads + falls + 1
+            # A page of them stays on the lazy path.
+            assert self.lazy(c, sql + " LIMIT 500") == strong[:500]
+
     def test_bootstrap_and_next_writes(self):
         with self.table("t_boot", lazy=False) as c:
             q(c, "INSERT INTO t_boot VALUES (1,1,7,1,'a'),(2,2,7,2,'b'),(3,3,NULL,3,'c')")
