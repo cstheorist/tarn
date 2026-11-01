@@ -65,7 +65,9 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
     name: Tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # (Passing runs take 50 to 56 minutes: the timeout is for a hung step,
+    # not for a slow runner.)
+    timeout-minutes: 80
     env:
       TARN_QUERY_PUSHDOWN: 'true'
     services:
