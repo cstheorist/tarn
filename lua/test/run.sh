@@ -47,6 +47,10 @@ if [ -z "${TEST:-}" ]; then
   TARANTOOL="$T" timeout 120 python3 "$DIR/test/clock_bootstrap.py" "$WORK/clock-bootstrap" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  echo "storage test sort_data_restart" | tee -a "$WORK/test.out"
+  TARANTOOL="$T" timeout 180 python3 "$DIR/test/sort_data_restart.py" "$WORK/sort-data-restart" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
   TARANTOOL="$T" bash "$DIR/test/clock_integration.sh" "$WORK/clock-integration" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r

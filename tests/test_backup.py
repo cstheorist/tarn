@@ -95,5 +95,30 @@ class BackupRecovery(unittest.TestCase):
         self.assertEqual(sentinel.read_text(),'keep')
         self.assertEqual(list((self.root/'target').iterdir()),[sentinel])
 
+    def add_sort_data(self, version=b'1'):
+        # memtx_use_sort_data writes one .sortdata file per checkpoint, which
+        # box.backup.start() lists with its snapshot (issue #218).
+        data = (b'SORTDATA\n' + version + b'\nVersion: 3.9.0\nInstance: ' + self.source.encode()
+                + b'\nVClock: {1: 1}\n\nEntries: 0\n\n')
+        (self.backup / 'files' / '00000000000000000001.sortdata').write_bytes(data)
+        self.manifest['files'].append(dict(path='00000000000000000001.sortdata', size=len(data),
+                                           sha256=hashlib.sha256(data).hexdigest()))
+        self.write_manifest()
+        return data
+
+    def test_sort_data_is_restored_with_its_snapshot_and_seeded(self):
+        data = self.add_sort_data()
+        self.restore()
+        self.assertEqual((self.root/'target'/'00000000000000000001.sortdata').read_bytes(), data)
+        seeded = self.root/'seeded'
+        agent.restore(argparse.Namespace(backup=str(self.backup), output=str(seeded), seed_uuid=self.seed, rate_mib=0))
+        self.assertEqual((seeded/'00000000000000000001.sortdata').read_bytes(),
+                         data.replace(self.source.encode(), self.seed.encode(), 1))
+
+    def test_sort_data_with_another_format_version_is_refused(self):
+        self.add_sort_data(version=b'0.13')
+        with self.assertRaisesRegex(ValueError, 'unrecognized checkpoint header'):
+            self.restore()
+
 
 if __name__=='__main__':unittest.main()
