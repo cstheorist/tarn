@@ -324,6 +324,8 @@ jobs:
         run: SECS=45 ci/annotate.sh growshrink tests/growshrink.sh
       - name: Election watchdog (1 shard x 3 replicas)
         run: ci/annotate.sh election tests/election.sh
+      - name: Vinyl index builds on a replicated shard (1 shard x 3 replicas)
+        run: ci/annotate.sh vinylbuild tests/vinylbuild.sh
       - name: Bind failover inputs and enable cores on this isolated runner
         id: failover-evidence
         run: |

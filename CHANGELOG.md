@@ -144,6 +144,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Unreplicated shards still build while writes go on
   ([#263](https://github.com/cstheorist/tarn/issues/263)).
 
+- ALTER TABLE no longer stops a replicated shard's replicas when it builds
+  an index on a vinyl table while the shard takes writes. A replica applies
+  the build, which ends with a vinyl dump that waits for every synchronous
+  transaction the replica holds prepared until its CONFIRM arrives. The
+  leader wrote the build's DDL row behind any write still waiting for its
+  quorum, of any table, so the replica waited for a CONFIRM queued behind
+  the row it was applying and never applied another row. With both
+  followers stopped, the leader lost its quorum and resigned, and the shard
+  could stay without a leader. While it builds a vinyl index, a replicated
+  shard's leader now lets one synchronous transaction at a time reach the
+  WAL, each once the ones before it are confirmed; writes to the shard go
+  on, slower, until the build ends. Engine changes build their shadow's
+  indexes the same way ([#254](https://github.com/cstheorist/tarn/issues/254)).
+
 - A scan whose WHERE the SQL server evaluates (one it cannot push to the
   shards) is now charged for the rows it keeps, not for every page it reads.
   Each page stayed charged until the statement ended, so a scan of 50,000
