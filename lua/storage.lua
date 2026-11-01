@@ -8,6 +8,9 @@
 --   TARN_INSTANCE_UUID optional registered UUID when starting a backup-seeded replica
 --   TARN_INSTANCE_NAME optional stable name (default: shard ID and listen address)
 --   TARN_ELECTION_MODE candidate (default with replicas), voter, or off
+--   TARN_ELECTION_WATCHDOG seconds without a leader before a candidate
+--                      stands itself (default three election timeouts; 0:
+--                      never; see lua/tarn.lua "Election watchdog")
 --   TARN_PEERS         JSON map shard_id -> [replica URIs] of every shard (for recovery)
 --   TARN_MEMORY_MB     memtx memory (default 1024)
 --   TARN_VINYL_MEMORY_MB  vinyl in-memory level of the LSM trees (default 128)
@@ -139,6 +142,11 @@ if fio.path.exists(seed_path) then
     assert(replicated and election_mode == 'voter' and seed.instance_uuid == instance_uuid,
            'backup seed requires its registered TARN_INSTANCE_UUID and TARN_ELECTION_MODE=voter')
 end
+local election_watchdog = tonumber(env('TARN_ELECTION_WATCHDOG', ''))
+if env('TARN_ELECTION_WATCHDOG', '') ~= '' and (election_watchdog == nil or election_watchdog ~= election_watchdog
+        or election_watchdog < 0 or election_watchdog > 86400) then
+    error('TARN_ELECTION_WATCHDOG must be a number of seconds from 0 (off) through 86400')
+end
 local vinyl_timeout = tonumber(env('TARN_VINYL_TIMEOUT', '.25'))
 if vinyl_timeout == nil or vinyl_timeout ~= vinyl_timeout or vinyl_timeout < 0 or vinyl_timeout > 60 then
     error('TARN_VINYL_TIMEOUT must be a finite number from 0 through 60')
@@ -261,6 +269,7 @@ require('tarn').init{
     clock_skew = skew,
     clock_max_gap = max_gap,
     clock_max_drift = max_drift,
+    election_watchdog = election_watchdog,
     -- Tests: fail a protocol step that yields inside its atomic section, and
     -- let tests hold a step at its yield points (lua/tarn.lua "Yields").
     check_yields = env('TARN_CHECK_YIELDS', '') ~= '',

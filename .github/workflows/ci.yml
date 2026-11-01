@@ -320,6 +320,8 @@ jobs:
         env:
           TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: SECS=45 ci/annotate.sh growshrink tests/growshrink.sh
+      - name: Election watchdog (1 shard x 3 replicas)
+        run: ci/annotate.sh election tests/election.sh
       - name: Bind failover inputs and enable cores on this isolated runner
         id: failover-evidence
         run: |
