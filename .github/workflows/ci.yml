@@ -171,14 +171,16 @@ jobs:
         run: |
           cargo test --release -p tarn-sql --example strong_kv
           cargo test --release -p tarn-sql --example strong_kv_bench
+      - name: Strong KV measurement summaries
+        run: python3 bench/test_strong_kv_summary.py
       - name: Native allocation instrumentation units
         run: cargo test -p tarn-storage --features alloc-metrics --lib
       - name: Lazy contract manifest links
         run: python3 tests/contracts/check.py
       - name: Bounded commit-cost observation controls
         run: python3 bench/test_commit_cost.py
-      - name: Strong KV measurement summaries
-        run: python3 bench/test_strong_kv_summary.py
+      - name: Resource scale study oracle
+        run: python3 bench/test_resource_scale.py
       - name: Storage protocol tests
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures

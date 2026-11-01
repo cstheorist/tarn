@@ -104,6 +104,25 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A scan whose WHERE the SQL server evaluates (one it cannot push to the
+  shards) is now charged for the rows it keeps, not for every page it reads.
+  Each page stayed charged until the statement ended, so a scan of 50,000
+  rows with a 180-character column that kept 5,003 of them was refused
+  (1041) under the default 64 MiB query budget. The kept rows are now
+  copied out of their page and charged on their own, and the page is
+  refunded. `bench/resource_scale.py` runs the same filtered scan,
+  high-fanout join and sort at 1× and 10× data with one and eight sessions,
+  and checks every result. Under the default budgets each one either
+  completes with the exact result or is refused with 1041: none returns a
+  clipped result ([#134](https://github.com/cstheorist/tarn/issues/134)).
+
+- A lazy read of many rows no longer exhausts the statement's memory
+  budget (1041) where the strong read succeeds. Each candidate page and
+  each recheck stayed charged until the statement ended. Now each is
+  refunded once its candidates are rechecked, and the lazy limit counts
+  kept rows at the memory they are charged, so a large result falls back
+  to the strong read ([#247](https://github.com/cstheorist/tarn/issues/247)).
+
 - A statement reading two or more shards is no longer refused by its memory
   budget (1041) just because its shards' reads overlapped. Each concurrent
   read reserves a whole reply (16 MiB) before it is sent; with a full page
