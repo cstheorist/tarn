@@ -94,6 +94,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A strong KV read (`tarn_kv_v1.get`, `get_many`) no longer describes its
+  table again before and after every key: decoding the catalog row and its
+  JSON, comparing format and key, and computing two SHA-256 digests each
+  time. A request describes the table once, reusing a description while the
+  catalog row, schema version and space are unchanged, and between points
+  rechecks the caller's READ access, the definition fence, DDL holds and
+  ownership. The reply's size is counted as slots are added instead of
+  encoding the whole reply after each one. On one RF1 node with nothing
+  else running, a 32-key `get_many` fell from about 210 to 70 µs per key,
+  and a single-key request from about 650 to 310 µs (medians of three)
+  ([#249](https://github.com/cstheorist/tarn/issues/249)).
+
 - A statement reading two or more shards is no longer refused by its memory
   budget (1041) just because its shards' reads overlapped. Each concurrent
   read reserves a whole reply (16 MiB) before it is sent; with a full page

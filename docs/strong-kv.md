@@ -90,6 +90,15 @@ and after the guarded point read. A caller-supplied epoch cannot certify an
 arbitrary key's placement. Metadata exports address components only;
 configured URI credentials and options are not returned.
 
+A request describes its table once. The description is reused, across
+requests too, while the table's confirmed catalog row, the schema version
+and the space are unchanged. After each point's read the server checks the
+caller's READ access, the definition fence and DDL holds, and the ownership
+token. A changed catalog row, schema version or space takes the full
+description, and a table that no longer matches the handle refuses the
+request. The control spaces and the space's synchronous mode are checked
+when the request begins and ends, and by each point's own barrier.
+
 An explicit definition/incarnation fence returns contract `schema_changed`
 (1412), without rows; native exceptions retain their original domain/code.
 The client discards every accumulated slot. The caller explicitly
