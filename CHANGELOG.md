@@ -94,6 +94,19 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A replicated shard no longer stays without a leader while the only
+  replicas that could win its election do not stand. This happened when a
+  leader resigned under strict fencing holding a transaction its followers
+  never received. It refused their votes, and each of their failed
+  elections restarted its election timer, so it never stood. Every
+  candidate now stands itself after `TARN_ELECTION_WATCHDOG` seconds
+  without a leader (default three election timeouts, 15 s), if it receives
+  from a quorum of its replica set. `tarn_info().stats.election_stands`
+  counts these. `lua/test/election_watchdog_test.lua` covers when a
+  replica stands. `tests/election.sh` checks on a shard of three replicas
+  that none stands while the shard has a leader, nor without its quorum
+  ([#254](https://github.com/cstheorist/tarn/issues/254)).
+
 - A lazy read of many rows no longer exhausts the statement's memory
   budget (1041) where the strong read succeeds. Each candidate page and
   each recheck stayed charged until the statement ended. Now each is
