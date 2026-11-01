@@ -225,7 +225,17 @@ local f=fiber.new(function()
         -- or the owning controller's process cleanup can end this branch.
         while control=='stall' do fiber.sleep(1) end
         s.calls=s.calls+1
-        return tarn_alter_build(name,a,1)
+        local r=tarn_alter_build(name,a,1)
+        -- Every election or box.status event invalidates the engine cut.
+        -- One on this new leader while BUILD enters its first stage is a
+        -- definite refusal (1213, "cut is rebuilding"), raised before that
+        -- stage's transaction begins. BUILD is a repeatable step: send it
+        -- again rather than wait for a copy hook it can no longer reach.
+        while control=='' and type(r)=='table' and r[1]=='error' and r[2]==1213 and s.calls<5 do
+            s.refusals=s.refusals or {};s.refusals[#s.refusals+1]=r[3]
+            fiber.sleep(.1);s.calls=s.calls+1;r=tarn_alter_build(name,a,1)
+        end
+        return r
     end)
     s.ok,s.finished=yes,fiber.clock()
     if yes then _G.engine_rf3_build=result;s.result=result
@@ -266,6 +276,9 @@ f:name('engine_rf3_build');f:set_joinable(true);_G.engine_rf3_build_fiber=f
             return
         end
         if not reached then error(err) end
+        local sent = ev(l, 'local s=_G.engine_rf3_build_state;return {calls=s.calls,refusals=s.refusals or {}}')
+        event('copy BUILD reached its hook', sent)
+        if sent.calls > 1 then print('  note ' .. engine .. ': BUILD resent after ' .. json.encode(sent.refusals)) end
         ok(call(l, 'tarn_autocommit', {{'insert', old_id, {0, 777, 1}}}, {fence = {old_id, 0}}))
         for i = 1, 3 do await('partial copy and acknowledged dirty row replicated', function()
             local s = state(i)
