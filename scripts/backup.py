@@ -20,7 +20,10 @@ import uuid
 
 CHUNK = 1024 * 1024
 FORMAT = "tarn-file-backup-v1"
-MAGIC = {".snap": b"SNAP", ".xlog": b"XLOG", ".vylog": b"VYLOG", ".run": b"RUN", ".index": b"INDEX"}
+MAGIC = {".snap": b"SNAP", ".xlog": b"XLOG", ".vylog": b"VYLOG", ".run": b"RUN", ".index": b"INDEX",
+         ".sortdata": b"SORTDATA"}
+# The second header line: the format version of each file type.
+VERSION = {".sortdata": b"1"}
 
 
 def sync_dir(path):
@@ -118,7 +121,8 @@ def copy_file(src, dst, pace, source_uuid=None, target_uuid=None, check=None):
             digest.update(block)
             if count == 0:
                 header, sep, _ = block.partition(b"\n\n")
-                if not sep or header.split(b"\n", 1)[0] != MAGIC[src.suffix] or header.splitlines()[1] != b"0.13":
+                if (not sep or header.split(b"\n", 1)[0] != MAGIC[src.suffix]
+                        or header.splitlines()[1] != VERSION.get(src.suffix, b"0.13")):
                     raise ValueError("unrecognized checkpoint header: " + str(src))
                 expected = b"Instance: " + source_uuid.encode() if source_uuid else None
                 if expected and header.splitlines().count(expected) != 1:

@@ -137,6 +137,11 @@ box.cfg{
     work_dir = workdir,
     memtx_memory = tonumber(env('TARN_MEMORY_MB', '1024')) * 1024 * 1024,
     memtx_use_mvcc_engine = true,
+    -- Build secondary keys on restart from each checkpoint's sort data. The
+    -- regular build, with MVCC on, tracks a read of every row of a memtx
+    -- space recovered before another (issue #218): a story per row, held
+    -- long after the restart. TARN_MEMTX_SORT_DATA=0 turns it off.
+    memtx_use_sort_data = env('TARN_MEMTX_SORT_DATA', '1') ~= '0',
     vinyl_memory = tonumber(env('TARN_VINYL_MEMORY_MB', '128')) * 1024 * 1024,
     vinyl_cache = tonumber(env('TARN_VINYL_CACHE_MB', '128')) * 1024 * 1024,
     vinyl_timeout = vinyl_timeout,
