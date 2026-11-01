@@ -178,7 +178,9 @@ jobs:
       - name: Bounded commit-cost observation controls
         run: python3 bench/test_commit_cost.py
       - name: Resource scale study oracle
-        run: python3 bench/test_resource_scale.py
+        run: |
+          python3 bench/test_resource_scale.py
+          python3 bench/test_resource_overhead.py
       - name: Storage protocol tests
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures

@@ -21,6 +21,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   million rows per shard with a writer
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
+- `bench/resource_overhead.py` compares one workload's goodput, tail
+  latency and memory with the SQL resource budgets in force and out of
+  reach, under identical admission. On a two-shard cluster, with every
+  result checked:
+  - p99 is the same within noise;
+  - goodput is about 2% lower with the budgets on memtx, and not
+    measurably on vinyl.
+
+  The SQL server's idle RSS, about 30 MiB, is outside the managed budget
+  ([#134](https://github.com/cstheorist/tarn/issues/134)).
+
 - The generated MySQL contracts page (`docs/mysql-contracts.md`) lists the
   lazy-index contracts with the release manifest, each with its regression
   tests, from `tests/contracts/lazy-index.json`. A new entry,
