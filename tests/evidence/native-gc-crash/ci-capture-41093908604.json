@@ -1,0 +1,40 @@
+{
+  "run": 41093908604,
+  "artifact": 12999880316,
+  "artifact_sha256": "5f9b558bbe046b096e2ba381f31b63f60efa49e800e83d267176b499dd17913e",
+  "source": "1829a54df66ec3d20467c3e94f82e9fadd9e3e9f",
+  "source_status": "?? integrity-evidence/\n",
+  "collection_complete": true,
+  "job_status": "success",
+  "binaries": {
+    "libtarn_storage.so": {
+      "bytes": 3251688,
+      "sha256": "1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae"
+    },
+    "tarantool": {
+      "bytes": 41741792,
+      "sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f"
+    },
+    "tarn-server": {
+      "bytes": 119306320,
+      "sha256": "684d4b6f1606a3933a7b4e7318ffb8c780a9b8d8ac9646b1514cc339fbff8fee"
+    }
+  },
+  "fixtures": {
+    "/tmp/tarn-failover": {
+      "present": false
+    },
+    "/tmp/tarn-failover-vinyl": {
+      "present": false
+    }
+  },
+  "cores": {
+    "archive": {
+      "bytes": 248,
+      "sha256": "3acbade5b7b9f046348b5c9832755a638fd074399664161814b3270399254f71"
+    },
+    "files": {}
+  },
+  "tracked_source_files_matched": 363,
+  "source_status_scope": "Only untracked generated integrity-evidence output; every recorded tracked source file matches the exact tested Git tree."
+}

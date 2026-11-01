@@ -1,0 +1,6 @@
+    FAILED: build witness released before its safety deadline
+    FAILED: build witness released before its safety deadline
+Traceback (most recent call last):
+  File "/tmp/index-build-negative.py", line 23, in <module>
+    assert result['qualified'],result
+AssertionError: {'source': '0d7734727f331c0a981ac83471054cecea131e2f', 'control': 'Actual PREPARE before BUILD; must reject held/unfenced witness', 'qualified': False, 'rejected': True, 'failure': 'AssertionError([])', 'replicas': [{'prepared': True, 'reply': ['ok']}, {'prepared': True, 'reply': ['ok']}]}
