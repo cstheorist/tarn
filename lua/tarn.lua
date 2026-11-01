@@ -586,6 +586,14 @@ end
 
 local STALE_DEF_MSG = 'Table definition has changed, please retry transaction'
 
+-- A read naming an index its table does not have: refused with 1412 like a
+-- write the fence refuses. Both are logged with what they found, so that one
+-- no schema change explains can be traced (issue #215).
+local function no_such_index(sid, iid)
+    log.info('a read of space %s refused (1412): it has no index %s', tostring(sid), tostring(iid))
+    return {'error', 1412, STALE_DEF_MSG}
+end
+
 local function ddl_hold(sid, label)
     DDL_GEN = {}
     if DDL_HELD[sid] == nil then DDL_N = DDL_N + 1 end
@@ -647,6 +655,8 @@ local function stale_definition(fence)
         local cur = FENCE[fence[i]]
         if cur ~= nil and cur > fence[i + 1] then
             M.stats.stale_defs = M.stats.stale_defs + 1
+            log.info('a write to space %s refused (1412): its fence is version %s, the write was made with %s',
+                     tostring(fence[i]), tostring(cur), tostring(fence[i + 1]))
             return {'error', 1412, STALE_DEF_MSG}
         end
     end
@@ -3384,7 +3394,7 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
     M.fresh.space(space)
     local idx = space.index[index_id]
-    if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
+    if idx == nil then return no_such_index(space_id, index_id) end   -- dropped by ALTER TABLE
     local it = type(iterator) == 'number' and ITER[iterator] or string.upper(tostring(iterator or 'EQ'))
     key = key or {}
     local kd = index_key_def(space_id, index_id)
@@ -3475,7 +3485,7 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin, af
     if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
     M.fresh.space(space)
     local idx = space.index[index_id]
-    if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
+    if idx == nil then return no_such_index(space_id, index_id) end   -- dropped by ALTER TABLE
     if lock_check ~= true then return {OK, keys_scan(idx, keys, limit, after)} end
     -- (The lock check covers every key, also those of other pages.)
     if space.engine == 'vinyl' and not box.is_in_txn() then
@@ -3521,7 +3531,7 @@ function PG.join_plan(reads)
         if sp == nil then return nil, (M.engine.missing_space(r[1]) or {'error', 1146, 'no such space ' .. tostring(r[1])}) end
         M.fresh.space(sp)
         local idx = sp.index[0]
-        if idx == nil then return nil, {'error', 1412, STALE_DEF_MSG} end
+        if idx == nil then return nil, no_such_index(r[1], 0) end
         if #r[3] > #idx.parts then return nil, bad end
         for _, b in ipairs(r[3]) do
             if type(b) ~= 'table' or #b ~= 2 then return nil, bad end
@@ -3808,7 +3818,7 @@ function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds,
     if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
     M.fresh.space(space)
     local idx = space.index[index_id]
-    if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
+    if idx == nil then return no_such_index(space_id, index_id) end   -- dropped by ALTER TABLE
     local it = type(iterator) == 'number' and ITER[iterator] or string.upper(tostring(iterator or 'EQ'))
     key = key or {}
     if end_key == box.NULL then end_key = nil end
@@ -3903,7 +3913,7 @@ function tarn_estimate(space_id, a_index, a_key, b_index, b_key, budget, b_iter)
     local space = box.space[space_id]
     if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
     local a, b = space.index[a_index], space.index[b_index]
-    if a == nil or b == nil then return {'error', 1412, STALE_DEF_MSG} end
+    if a == nil or b == nil then return no_such_index(space_id, a == nil and a_index or b_index) end
     if space.engine ~= 'vinyl' then
         return {OK, a:count(a_key, {iterator = 'EQ'}), b:count(b_key, {iterator = 'EQ'}), box.NULL}
     end

@@ -269,6 +269,13 @@ impl StaleRetry {
                 Ok(if autocommit && self.attempt <= 3 {
                     Stale::Retry
                 } else {
+                    tracing::info!(
+                        code = e.code,
+                        message = %e.message,
+                        planned_with = self.seen,
+                        catalog = cluster.catalog().version,
+                        "a statement failed while the catalog changed: reported as such (1412)"
+                    );
                     Stale::Changed
                 })
             }
@@ -2421,6 +2428,8 @@ impl Session {
         // A key dropped meanwhile (its space gone): the catalog changed.
         self.global_holder_once(txn, t, g, key).await.map_err(|e| {
             if e.code == 1146 {
+                tracing::info!(table = %t.name, entries = %g.table.name, message = %e.message,
+                    "a global index's entries are gone (1412)");
                 crate::txn::definition_changed()
             } else {
                 e

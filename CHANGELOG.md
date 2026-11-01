@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Every 1412 ("Table definition has changed") that does not come from a
+  schema change's own steps is logged at info level with its origin: a
+  storage node's fence (the table, its fence and the write's version), a
+  read naming a missing index, a transaction's buffered writes meeting a
+  newer definition, or a statement failing while the catalog changed. The
+  failover test reports these lines, and the banks' unexpected errors in
+  full, when it fails
+  ([#215](https://github.com/cstheorist/tarn/issues/215)).
+
 - `SET SESSION tarn_lazy_consistency='strong'` selects ordinary SQL reads
   on lazy-index tables without rebuilding indexes (#182). The default
   `eventual` policy retains explicit schema opt-in; prepared statements

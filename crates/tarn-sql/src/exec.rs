@@ -760,6 +760,8 @@ async fn global_lookup(
     // A key dropped meanwhile (its space gone): the catalog changed (1412).
     let gone = |e: SqlError| {
         if e.code == 1146 {
+            tracing::info!(table = %t.name, entries = %g.table.name, message = %e.message,
+                "a global index's entries are gone (1412)");
             crate::txn::definition_changed()
         } else {
             e
