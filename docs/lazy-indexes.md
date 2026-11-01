@@ -48,9 +48,10 @@ fanout, merge order and separate base-row rechecks.
 Routing metadata is immutable within an incarnation. To migrate, add a new
 index with the desired annotation, wait for ALTER to return successfully,
 then drop the old index. Bootstrap captures the current committed rows and
-publishes only after delivery completes. This uses the existing bounded,
-write-fenced bootstrap (including its row/time limits); it is not an
-unbounded online build. Comment edits do not change existing routing.
+publishes only after delivery completes. An ALTER TABLE that changes no
+column the new index reads builds it while writes go on; other changes
+build it behind the ALTER's fence, within its row and time limits (see
+"Bootstrap"). Comment edits do not change existing routing.
 Upgrade every gateway and replica before creating composite metadata.
 DDL checks every configured replica's routing capability; movement checks
 the destination. Schema exports with active **or retired** composite
@@ -244,16 +245,52 @@ backpressure; they must not be acknowledged as successful delivery.
 
 ## Bootstrap, DDL and native writes
 
-The initial bootstrap uses a bounded write-fenced ALTER operation. It can
-pause writes while it scans existing rows and waits for their baseline
-assignments to be durably acknowledged. The existing per-shard ALTER scan
-limit applies; this is not an unbounded online backfill. An instant-added
-column is first materialized using its committed fill/layout rules.
+An ALTER TABLE builds a new lazy index while writes go on when every field
+the index reads (its key, the primary key and the bucket) holds the same
+column, of the same type and collation, before and after the change
+(issue #184). The build runs before PREPARE, in three steps on each shard:
 
-Every baseline row and its bucket's counter come from one consistent view,
-and the baseline assignment takes that counter as its sequence. Any value
-up to the counter would do: every later change of the row takes a greater
-sequence and supersedes the baseline at the target, and the new
+1. **Start** (`tarn_lazy_start`). A short fence drains the table's commits
+   in flight and its prepared transactions. From then on, every write of
+   the table also captures the new incarnation, at the old definition
+   version. So does the APPLY of every transaction prepared afterwards.
+   While a descriptor is pending, the table's writes already go through
+   the Lua procedures, not the native ones.
+2. **Scan** (`tarn_lazy_bootstrap`). The baseline scan reads the shard's
+   buckets in bounded batches while writes go on. In each bucket it reads
+   the counter first, then the rows. A batch writes its assignments and
+   its durable cursor in one transaction that rechecks the owner and the
+   cursor. A batch is refused if the owner or the cursor changed in the
+   meantime (a takeover, a retirement, a concurrent repeat). The table's
+   writes cannot abort a batch.
+   - While the incarnation's own pending assignments fill sixteen batches,
+     a batch waits for delivery, which leaves the outbox to captured writes.
+   - The scan does not count against `tarn.cfg.alter_check_rows` and has
+     no time limit.
+   - A server that takes the job over continues from the cursor.
+3. **Publish.** PREPARE fences the table as for any ALTER and finds the
+   scan done. The remaining deliveries must arrive within the bootstrap
+   timeout (at most 60 s). READY and APPLY then publish the index.
+
+Bucket moves on the source or destination shard wait (1205) while an
+online build runs there: a bucket that moved before the scan reached its
+rows would leave them out. A move already in progress delays the start.
+Backups also wait for a build to finish.
+
+Other changes build the index behind PREPARE's fence: an index on a column
+the ALTER adds or retypes, a backfill, an engine change, and any change on
+storage nodes from before #184. That build can pause writes while it scans
+existing rows and waits for their baseline assignments to be durably
+acknowledged. The per-shard ALTER scan limit applies (1846). An
+instant-added column is first materialized using its committed fill and
+layout rules. A lazy index also has a local index on each shard, which
+serves strong reads. Vinyl builds that index in BUILD while writes go on;
+memtx builds it in PREPARE, behind the fence, as for any index.
+
+A baseline assignment takes the counter of its row's bucket, read before
+the row, as its sequence. Any value up to the counter would do: every
+later change of the row takes a greater sequence and supersedes the
+baseline at the target, and the new
 incarnation's floors begin only after READY, once every baseline
 assignment is acknowledged (`tla/LazyBaseline.tla`; a baseline above the
 counter fails it). The counter holds the bucket's completed prefix back the
@@ -306,6 +343,8 @@ deliveries up to the move timeout (`move_timeout`, 10 s by default), and if
 they have not drained by then, `TARN MOVE BUCKET` fails with 1205 and the
 bucket stays with its owner. Shard removal must also wait for pending,
 reserved and in-flight lazy obligations before decommissioning a source.
+While an online build runs on either shard, a move waits for it (see
+"Bootstrap").
 
 Deploy lazy-aware gateways and storage modules on every replica before
 creating a lazy index. Schema export carries a versioned lazy envelope,

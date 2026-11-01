@@ -11,6 +11,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import threading
 import time
 
 import pymysql
@@ -249,6 +250,74 @@ class T:
             q(c, "INSERT INTO t_boot VALUES (4,4,7,4,'d')")
             self.caught_up(c)
             assert self.lazy(c, "SELECT id FROM t_boot WHERE k=7 ORDER BY n,id") == ((1,), (2,), (4,))
+
+    def test_online_build_while_writes_go_on(self):
+        # ADD INDEX ... COMMENT 'tarn:lazy' on a populated table (#184): the
+        # build's baseline scan runs while another session writes, outside
+        # the ALTER's fence, and does not count against alter_check_rows,
+        # here lowered below the rows each shard holds. Once the ALTER
+        # returns, the lazy index answers as the strong path does.
+        c = self.c()
+        q(c, "DROP TABLE IF EXISTS t_online")
+        q(c, "CREATE TABLE t_online (tenant_id INT NOT NULL,id INT NOT NULL,k INT,n INT,v VARCHAR(32),"
+             f"PRIMARY KEY(tenant_id,id)) PARTITION BY KEY(tenant_id) ENGINE={self.args.engine}")
+        rows = [(i % 13, i, i % 7, i, f"v{i}") for i in range(1, 3001)]
+        with c.cursor() as cur:
+            for first in range(0, len(rows), 250):
+                cur.executemany("INSERT INTO t_online VALUES (%s,%s,%s,%s,%s)", rows[first:first + 250])
+        limits = [ev(n, "local old = tarn.cfg.alter_check_rows; tarn.cfg.alter_check_rows = 500; return old")
+                  for n in self.nodes]
+        stop, done, errors = threading.Event(), [], []
+
+        def writer():
+            with self.c() as w:
+                i = 0
+                while not stop.is_set():
+                    i += 1
+                    rid = i * 37 % 3000 + 1
+                    try:
+                        if i % 3 == 0:
+                            q(w, "UPDATE t_online SET k=%s,n=n+1 WHERE tenant_id=%s AND id=%s", (i % 9, rid % 13, rid))
+                        elif i % 3 == 1:
+                            q(w, "INSERT INTO t_online VALUES (%s,%s,%s,%s,%s)", (i % 13, 100000 + i, i % 7, i, "w"))
+                        else:
+                            q(w, "DELETE FROM t_online WHERE tenant_id=%s AND id=%s", (rid % 13, rid))
+                        done.append(time.monotonic())
+                    except pymysql.MySQLError as e:
+                        errors.append(e.args)
+
+        thread = threading.Thread(target=writer)
+        try:
+            # A change that indexes a column it adds still builds behind the
+            # fence, within the limit.
+            try:
+                q(c, "ALTER TABLE t_online ADD COLUMN w INT, ADD INDEX lw(w) COMMENT 'tarn:lazy'")
+                raise AssertionError("a fenced lazy build above alter_check_rows was not refused")
+            except pymysql.MySQLError as e:
+                assert e.args[0] == 1846, e.args
+            thread.start()
+            time.sleep(0.3)
+            begun = time.monotonic()
+            q(c, "ALTER TABLE t_online ADD INDEX lk(k,n,id) COMMENT 'tarn:lazy'")
+            ended = time.monotonic()
+            time.sleep(0.2)
+        finally:
+            stop.set()
+            if thread.is_alive():
+                thread.join()
+            for n, old in zip(self.nodes, limits):
+                ev(n, "tarn.cfg.alter_check_rows = ...", [old])
+        assert not errors, errors[:5]
+        during = sum(1 for t in done if begun <= t <= ended)
+        assert during > 0, f"no write completed during the {ended - begun:.2f}s ALTER"
+        self.caught_up(c)
+        for k in range(9):
+            sql = f"SELECT tenant_id,id,n FROM t_online WHERE k={k} ORDER BY n,id"
+            q(c, "SET tarn_lazy_consistency='strong'")
+            strong = q(c, sql)
+            q(c, "SET tarn_lazy_consistency='eventual'")
+            assert self.lazy(c, sql) == strong, k
+        c.close()
 
     def test_composite_routing_merge_rechecks_and_migration(self):
         with self.table("t_composite", route_parts=2) as c:

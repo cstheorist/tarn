@@ -21,8 +21,8 @@ tests/ddlfaults.sh                         # CREATE / DROP / TRUNCATE when a sha
 tla/check.sh                               # needs tla/tla2tools.jar
 ```
 
-The formal registry has 323 default configurations, including 243 expected
-broken/tradeoff outcomes, and 336 total configurations (326 generated and
+The formal registry has 326 default configurations, including 246 expected
+broken/tradeoff outcomes, and 339 total configurations (329 generated and
 ten maintained directly). Explicit check arguments override the default.
 
 ## Rules of the road
