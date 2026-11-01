@@ -1399,8 +1399,11 @@ def main():
     p.add_argument("--work", type=Path, required=True)
     p.add_argument("--bin", type=Path, default=ROOT / "target/release")
     p.add_argument("--native", type=Path)
-    p.add_argument("--port", type=int, default=43439)
-    p.add_argument("--storage-port", type=int, default=43391)
+    # Below Linux's ephemeral range (32768-60999 by default): a listener
+    # started late in the run, such as the cost study's gateway on port + 1,
+    # must not collide with a local port an outgoing connection was given.
+    p.add_argument("--port", type=int, default=23439)
+    p.add_argument("--storage-port", type=int, default=23391)
     p.add_argument("--skip-cost", action="store_true")
     p.add_argument("--operations", type=int, default=100)
     p.add_argument("--require-drivers", action="store_true")
