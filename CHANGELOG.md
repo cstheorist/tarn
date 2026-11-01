@@ -27,8 +27,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and bounded independent-point batches, with dedicated-reader grants,
   ownership/schema handles and a generic Rust client. Complete responses
   preserve input positions, duplicates and misses; unsupported snapshot,
-  transaction and mutation requests fail explicitly. See the
-  [contract and raw-native visibility boundaries](docs/strong-kv.md).
+  transaction and mutation requests fail explicitly. The client reads
+  routes through the states of bounded moves, and refuses an advertised
+  response frame above 1 MiB plus 4 KiB before reading its body. RF3 fault
+  and clock-fault histories run in CI; matched SQL, strong KV and raw
+  native read measurements run from a manual CI input. See the
+  [contract and raw-native visibility boundaries](docs/strong-kv.md)
+  ([#181](https://github.com/cstheorist/tarn/issues/181)).
 
 - Reject new unsupported FOREIGN KEY, CHECK and ENUM/SET declarations before
   schema effects. Expose legacy integrity history with SHOW TARN INTEGRITY
