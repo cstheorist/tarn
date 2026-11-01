@@ -657,7 +657,7 @@ function M.sampler(c)
                                 local conn = conns[uri]
                                 if conn == nil or not conn:is_connected() then
                                     if conn then pcall(conn.close, conn) end
-                                    conn = net.connect(uri, {user = c.cfg.user, password = c.cfg.password,
+                                    conn = net.connect(c.cfg.resolve_uri and c.cfg.resolve_uri(uri) or uri, {fetch_schema = false, user = c.cfg.user, password = c.cfg.password,
                                         connect_timeout = math.min(.05, left), wait_connected = math.min(.05, left)})
                                     conns[uri] = conn
                                 end

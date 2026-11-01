@@ -126,8 +126,9 @@ function M.new(c)
             bad(1412, 'Bounded movement requires a complete supported replica inventory')
         end
         for _, uri in ipairs(uris) do
-            local conn = require('net.box').connect(uri, {user = cfg.user, password = cfg.password,
-                                                        wait_connected = 2, reconnect_after = 0})
+            local endpoint = cfg.resolve_uri and cfg.resolve_uri(uri) or uri
+            local conn = require('net.box').connect(endpoint, {user = cfg.user, password = cfg.password,
+                                                        fetch_schema = false, wait_connected = 2, reconnect_after = 0})
             local ok, r = pcall(conn.call, conn, 'tarn_move_capabilities', {}, {timeout = 2})
             conn:close()
             if not ok or type(r) ~= 'table' or r[1] ~= 'ok' or r[2] ~= 2 then

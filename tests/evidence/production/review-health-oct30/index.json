@@ -1,0 +1,22 @@
+{
+  "source": "309de98df9b9e5107fc1fa512424b615b9922478",
+  "before": "Paired actual startup refused mismatched max_txn_age; old check-deployment incorrectly succeeded. Both original result and output retained.",
+  "intermediate": "First correction used strict connection admission and rejected legitimate pending native followers; retained as failed attempt.",
+  "after": {
+    "native": 30,
+    "lua": 30
+  },
+  "boundary": "Linux ARM64 dev opt0 debug0, local PyMySQL driver; Connector absent locally. Full hosted release and integrated format-2 checks remain required. Normal routed admission still refuses pending native state; only deployment checks on validated read-only replicas allow it.",
+  "files": {
+    "after-native.out": "cecd0651e965a58c0cd40aa25626b025b1b42a5eac2c984888e20bf29f01fde2",
+    "pending-before.out": "838fefc0a10aa9b306f14a54d69dd0c140f4ed4a4a27855a10e09a395a4f8d43",
+    "paired-before.out": "fa6fce00d318e66dc4d0790b2cd40f41d41eed443029c3dd12482223edb5a075",
+    "compat-tests.out": "e3915d739d266518e55f7e1ff89f7f8773f4b41cbd05f7b992470afcd1e87ab4",
+    "after-lua.out": "cecd0651e965a58c0cd40aa25626b025b1b42a5eac2c984888e20bf29f01fde2",
+    "build.out": "838d45c60c3f865ae1b552f48a09a141bfc2a8eb0b1b75490506368188ad4eca",
+    "paired-before.json": "64b3f0c4b7952d039d4f638054ccc4a27ae67665490cdec3321d03bbfb71a8cc",
+    "pending-before.json": "e6519c41ddedc64f4d276ad0ce6e07ac635eba62a4edd241d1ca509083593fb1",
+    "after-lua.json": "6806b72c90a2aa1811bca0ffbb4dd551a1c4fed6515ce40f840579390fabe85c",
+    "after-native.json": "17c7da9e93556a14c535d592046d43934d03d85f24e0db1156a9af0544a534a7"
+  }
+}

@@ -1,0 +1,23 @@
+PASS RF3 fsync identity, majority quorum, strict fencing, clock readiness and resource preflight
+PASS raw plaintext MySQL handshake refused before password validation
+PASS SSLRequest and ClientHello coalesced in one TCP write preserve TLS bytes and authenticate
+PASS plaintext SQL refused
+PASS wrong SQL password refused over TLS
+PASS untrusted SQL CA refused
+PASS PyMySQL verified TLS query and native-password authentication
+PASS authenticated TLS DDL, native data reads and transactions on memtx and vinyl
+PASS typed reductions execute through the service ACL on memtx and vinyl
+PASS composite lazy DDL, fully bound and ordered prefix reads over TLS on both engines
+Traceback (most recent call last):
+  File "/tmp/production-format2-canonical/tests/production.py", line 1420, in <module>
+    main()
+  File "/tmp/production-format2-canonical/tests/production.py", line 1403, in main
+    f.security()
+  File "/tmp/production-format2-canonical/tests/production.py", line 580, in security
+    r = run(
+        ^^^^
+  File "/tmp/production-format2-canonical/tests/production.py", line 36, in run
+    raise RuntimeError(
+RuntimeError: subprocess failed: tarantool: /tmp/tarn-production-format2-native-diagnostic/acl.lua:7: ["error",0,"/tmp/production-format2-canonical/lua/tarn_move.lua:111: bad argument #2 to 'statvfs' (cannot convert 'struct tarn_move_vfs_linux [1]' to 'struct tarn_statvfs *')"] {"type":"LuajitError","trace":[{"file":"./src/lua/utils.c","line":747}]}
+fatal error, exiting the event loop
+

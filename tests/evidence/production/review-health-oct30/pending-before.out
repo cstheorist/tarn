@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/tmp/production-health-canonical/tests/production.py", line 1398, in <module>
+    main()
+  File "/tmp/production-health-canonical/tests/production.py", line 1380, in main
+    f.start()
+  File "/tmp/production-health-canonical/tests/production.py", line 374, in start
+    self.wait("all fsync replicas ready", self.health)
+  File "/tmp/production-health-canonical/tests/production.py", line 347, in wait
+    raise AssertionError(name + ": " + str(last))
+AssertionError: all fsync replicas ready: subprocess failed: /tmp/tarn-oct30-debug-control/debug/tarn-server: [2m2026-10-30T19:51:09.724276Z[0m [32m INFO[0m [2mtarn_server::production[0m[2m:[0m production host preflight: {"cpus":2,"memory_bytes":1610612736,"free_disk_bytes":882170101760}
+production health: 1235 (42000): This version of Tarn doesn't yet support 'incompatible Tarn storage: 1235 (42000): This version of Tarn doesn't yet support 'incompatible Tarn storage: protocol=1, format=1, shard=1, runtime=3.9.0-0-g8b9a0f59a9, native=pending/14, max_txn_age=120; see docs/upgrades.md'; see docs/upgrades.md'
+

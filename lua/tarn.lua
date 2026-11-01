@@ -4838,10 +4838,15 @@ local function shard_conn(shard, recovery)
         -- (recovery: another fiber failed to connect meanwhile)
         if recovery and RV.in_backoff(shard) then error(RV.BACKOFF) end
         for _, uri in ipairs(shard_uris(shard)) do
-            local ok1, cand = pcall(net_box.connect, uri, {user = M.cfg.user, password = M.cfg.password,
+            local ok1, cand = pcall(net_box.connect, M.cfg.resolve_uri and M.cfg.resolve_uri(uri) or uri, {fetch_schema = false, user = M.cfg.user, password = M.cfg.password,
                                                            wait_connected = 1, connect_timeout = 1})
             if ok1 and cand:is_connected() then
-                local ok2, ro = pcall(cand.eval, cand, 'return box.info.ro', {}, {timeout = 1})
+                local ok2, ro = pcall(cand.call, cand, 'tarn_role', {}, {timeout = 1})
+                -- A development rolling upgrade may still recover through a
+                -- legacy peer. Production never acquires EVAL privileges.
+                if not ok2 and not M.cfg.production and type(ro) == 'cdata' and ro.code == box.error.NO_SUCH_PROC then
+                    ok2, ro = pcall(cand.eval, cand, 'return box.info.ro', {}, {timeout = 1})
+                end
                 if ok2 and ro == false then
                     conns[shard] = cand
                     return cand
@@ -5284,6 +5289,7 @@ local function create_space(def)
     local s = box.schema.space.create(def.name, {
         id = def.id, engine = def.engine or 'memtx', format = def.format,
         is_sync = M.cfg.sync, if_not_exists = true})
+    require('tarn_production').readable(s)
     for i, idx in ipairs(def.indexes) do
         s:create_index(idx.name, {type = 'tree', unique = idx.unique, parts = idx.parts,
                                   id = i - 1, if_not_exists = true})
@@ -7563,6 +7569,7 @@ function tarn_schema_import(export, token)
         if box.space[d.name] == nil then n = n + 1 end
         local sp = box.schema.space.create(d.name, {id = d.id, engine = d.engine, format = d.format,
                                                     is_sync = M.cfg.sync, if_not_exists = true})
+        require('tarn_production').readable(sp)
         for _, x in ipairs(d.indexes) do
             sp:create_index(x.name, {id = x.id, type = 'tree', unique = x.unique, parts = x.parts,
                                      if_not_exists = true})
@@ -7613,16 +7620,19 @@ end
 -- exists.
 local function setup_schema()
     M.compatibility.check()
-    box.schema.user.create(M.cfg.user, {password = M.cfg.password, if_not_exists = true})
-    box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
+    if not M.cfg.production then
+        box.schema.user.create(M.cfg.user, {password = M.cfg.password, if_not_exists = true})
+        box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
+    end
     ensure_schema()
     M.kv.register()
     if M.cfg.native then
         for _, f in ipairs({'tarn_storage.ts_state', 'tarn_storage.ts_select', 'tarn_storage.ts_autocommit',
                             'tarn_storage.ts_commit_local', 'tarn_storage.ts_validate'}) do
-            box.schema.func.create(f, {language = 'C', if_not_exists = true})
+            box.schema.func.create(f, {language = 'C', setuid = M.cfg.production ~= nil, if_not_exists = true})
         end
     end
+    if M.cfg.production then require('tarn_production').install(M.cfg.production, BK.production_functions, M.cfg.native) end
     if box.space._tarn_meta:get{'shard_id'} == nil then
         box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
     end
@@ -7739,10 +7749,10 @@ function BK.clock_peers()
     for _, member in ipairs(BK.members.shards or {}) do
         if member.state ~= 'removed' then for _, uri in ipairs(member.replicas or {}) do add(member.id, uri) end end
     end
-    local replicas = box.cfg.replication
+    local replicas = M.cfg.production and M.cfg.production.replicas or box.cfg.replication
     if type(replicas) == 'table' then for _, uri in ipairs(replicas) do add(M.cfg.shard_id, uri) end
     elseif type(replicas) == 'string' then add(M.cfg.shard_id, replicas) end
-    local listen = box.cfg.listen
+    local listen = M.cfg.production and M.cfg.production.public_uri or box.cfg.listen
     if type(listen) == 'table' then for _, uri in ipairs(listen) do add(M.cfg.shard_id, uri) end
     elseif type(listen) == 'string' then add(M.cfg.shard_id, listen) end
     table.sort(groups, function(x, y) return x.shard < y.shard end)
@@ -7774,6 +7784,124 @@ end
 function tarn_clock_status() return M.clock.status() end
 function tarn_clock_test_time(wall, mono) return M.clock.test_time(wall, mono) end
 -- Code capability only: never a leader/clock/data freshness certificate.
+BK.production_functions = {
+        'tarn_analyze',
+        'tarn_compatibility',
+        'tarn_abort',
+        'tarn_alter_abort',
+        'tarn_alter_apply',
+        'tarn_alter_build',
+        'tarn_alter_prepare',
+        'tarn_apply',
+        'tarn_autocommit',
+        'tarn_bucket_delta',
+        'tarn_bucket_fence',
+        'tarn_bucket_hold',
+        'tarn_bucket_init',
+        'tarn_move_capabilities',
+        'tarn_bucket_progress',
+        'tarn_bucket_recv',
+        'tarn_bucket_recv_abort',
+        'tarn_bucket_recv_begin',
+        'tarn_bucket_recv_clear',
+        'tarn_bucket_recv_rows',
+        'tarn_bucket_rows',
+        'tarn_bucket_send',
+        'tarn_bucket_send_abort',
+        'tarn_bucket_send_begin',
+        'tarn_bucket_sizes',
+        'tarn_bucket_stats',
+        'tarn_buckets',
+        'tarn_catalog',
+        'tarn_catalog_version',
+        'tarn_clock_certify',
+        'tarn_clock_probe',
+        'tarn_clock_status',
+        'tarn_commit_local',
+        'tarn_commit_rc',
+        'tarn_count',
+        'tarn_counter_alloc',
+        'tarn_counter_bump',
+        'tarn_create_abort',
+        'tarn_create_apply',
+        'tarn_create_prepare',
+        'tarn_create_table',
+        'tarn_db_create',
+        'tarn_db_drop',
+        'tarn_db_list',
+        'tarn_ddl_begin',
+        'tarn_ddl_end',
+        'tarn_ddl_job',
+        'tarn_ddl_touch',
+        'tarn_drop_abort',
+        'tarn_drop_apply',
+        'tarn_drop_prepare',
+        'tarn_drop_table',
+        'tarn_engine_capabilities',
+        'tarn_engine_counter_alias',
+        'tarn_engine_decision',
+        'tarn_estimate',
+        'tarn_fence',
+        'tarn_info',
+        'tarn_job_args',
+        'tarn_job_begin',
+        'tarn_job_end',
+        'tarn_job_phase',
+        'tarn_job_touch',
+        'tarn_jobs',
+        'tarn_lazy_apply',
+        'tarn_lazy_bootstrap',
+        'tarn_lazy_bootstrap_status',
+        'tarn_lazy_capabilities',
+        'tarn_lazy_control',
+        'tarn_lazy_frontiers',
+        'tarn_lazy_gc',
+        'tarn_lazy_ready',
+        'tarn_lazy_select',
+        'tarn_lazy_stats',
+        'tarn_lock',
+        'tarn_lock_range',
+        'tarn_lock_victim',
+        'tarn_lock_waits',
+        'tarn_members',
+        'tarn_members_set',
+        'tarn_part_status',
+        'tarn_part_statuses',
+        'tarn_prepare',
+        'tarn_read_contract',
+        'tarn_rebalance_get',
+        'tarn_rebalance_put',
+        'tarn_reduce',
+        'tarn_schema_export',
+        'tarn_schema_import',
+        'tarn_select',
+        'tarn_select_join',
+        'tarn_select_keys',
+        'tarn_shard_records',
+        'tarn_truncate',
+        'tarn_truncate_abort',
+        'tarn_truncate_apply',
+        'tarn_truncate_prepare',
+        'tarn_txn_cas',
+        'tarn_txn_status',
+        'tarn_txn_statuses',
+        'tarn_uix_fill',
+        'tarn_unlock',
+        'tarn_validate',
+        'tarn_vinyl_stats',
+        'tarn_role',
+        'tarn_deployment_status',
+}
+function tarn_role() return box.info.ro end
+function tarn_deployment_status()
+    local p = M.cfg.production
+    local rf = p and #p.replicas or (type(box.cfg.replication) == 'table' and #box.cfg.replication or 1)
+    local st = M.clock.status()
+    local ready = st.read_ready == true and st.state == 'healthy' and st.certified_until ~= nil and clock.monotonic() <= st.certified_until
+    return {p ~= nil and require('tarn_production').valid(BK.production_functions, M.cfg.native), box.cfg.wal_mode, rf, box.info.synchro.quorum,
+        p and p.failure_domain or 'development', tostring(box.info.uuid), M.cfg.shard_id,
+        ready, box.cfg.election_fencing_mode == 'strict', box.info.ro, tostring(box.info.replicaset.uuid)}
+end
 function tarn_read_contract() return {'strong_reads', 1} end
 
 M.clock_sampler, M.clock_sampler_close = require('tarn_clock').sampler{

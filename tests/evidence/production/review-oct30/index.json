@@ -1,0 +1,20 @@
+{
+  "base_revision": "305399f",
+  "compiled_rust_revision": "305399f",
+  "profile": "Rust dev opt0/debug0/jobs1; same-host Linux ARM RF3/fsync; functional security/correctness, no cost measurement",
+  "fix": "Register only tarn_reduce in the production SQL procedure allowlist; keep test hooks/EVAL/raw writes denied. TLS fixture enables existing opt-in query_pushdown and requires exact aggregates plus real storage-reduction counters on both engines.",
+  "checks": {
+    "before": "storage42/SQL1105 service execute denial",
+    "after_native_enabled": 28,
+    "after_lua": 28
+  },
+  "files": {
+    "after-lua.json": "f0740394bec1f010c35382476e8a3d52aff9fc0dcc389f50880a607bd3d88ffa",
+    "after-lua.out": "fc9061ab641d8359c85618768eeb79bd64eb799015972ade04a18122769ed069",
+    "after-native.json": "510cc61ac8756425240244f298de7d8e3fc2bf81cc63fa7441b12307d8ea4b5d",
+    "after-native.out": "fc9061ab641d8359c85618768eeb79bd64eb799015972ade04a18122769ed069",
+    "before.json": "46c89aa79a5482eaa0f9cb2678c0ff5e0eba7bb090c236effe1912a3bc684c24",
+    "before.out": "d987bc1bd5f7cb2ce844f36d997a1b5dafe5daaa17c8d5f95139cdcd4484cc5b"
+  },
+  "driver_boundary": "Local PyMySQL security checks only; Connector/Python was not installed and the local receipt records that. The complete pinned driver matrix remains required in current-source release CI."
+}

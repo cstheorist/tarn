@@ -50,8 +50,12 @@ READ grants also allow raw native reads with the weaker contract above;
 raw writes require separate privileges and remain outside this API.
 Credentials are supplied explicitly, using a protected file or environment
 variables in the example. Authentication and schema fingerprints do not
-provide transport encryption; production transport/deployment work is
-tracked in [#139](https://github.com/cstheorist/tarn/issues/139).
+provide transport encryption. The production SQL/storage profile in
+[production deployment](production.md) does not enable the KV v1 client
+transport or grant its procedures to the SQL service account. KV v1 currently
+uses explicit TCP/Unix endpoints; verified TLS integration and a dedicated
+production reader policy remain follow-up work in
+[#181](https://github.com/cstheorist/tarn/issues/181).
 
 ## Table and ownership handles
 

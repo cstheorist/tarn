@@ -42,7 +42,8 @@ impl Default for TopologyConfig {
 }
 
 impl TopologyConfig {
-    pub(crate) fn validate(&self) -> SqlResult<()> {
+    /// Check physical socket, response and fanout limits before deployment.
+    pub fn validate(&self) -> SqlResult<()> {
         if !(2..=65536).contains(&self.max_connections)
             || self.completion_connections == 0
             || self.completion_connections >= self.max_connections

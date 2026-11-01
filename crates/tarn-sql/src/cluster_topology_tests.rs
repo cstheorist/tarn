@@ -77,9 +77,6 @@ async fn simulated_1024_group_refresh_coalesces_two_gateways_under_physical_caps
                                 7 => {
                                     body.map(0);
                                 } // AUTH (test-only peer)
-                                8 => {
-                                    body.map(1).uint(0x30).arr(1).uint(0);
-                                } // writable probe
                                 10 => {
                                     let mut proc = String::new();
                                     for _ in 0..rd.map().unwrap() {
@@ -90,6 +87,9 @@ async fn simulated_1024_group_refresh_coalesces_two_gateways_under_physical_caps
                                         }
                                     }
                                     match proc.as_str() {
+                                        "tarn_role" => {
+                                            body.map(1).uint(0x30).arr(1).bool(false);
+                                        }
                                         "tarn_compatibility" => {
                                             body.map(1)
                                                 .uint(0x30)
