@@ -7948,7 +7948,7 @@ M.fresh.set_clock(M.clock)
 
 M.vinyl = require('tarn_vinyl').new{cfg = M.cfg, key_def = index_key_def}
 M.lazy = require('tarn_lazy').new{
-    cfg = M.cfg, bk = BK, rw = RW, failure = failure, writable = writable,
+    cfg = M.cfg, bk = BK, rw = RW, failure = failure, commit_failure = commit_failure, writable = writable,
     plain_stream = function()
         local id = ffi.C.box_txn_id()
         if M.fresh.ok(id) == 1 then return tostring(ffi.cast('uint64_t', id)) end
@@ -8044,7 +8044,9 @@ function UIX.lazy_start(name, a, gen)
         if box.is_in_txn() then box.rollback() end
         -- A registry rebuilt while the commit was in flight did not see it.
         M.lazy.invalidate()
-        if not ok then return lower(failure(err)) end
+        -- A leader change that rolled the marker back: the coordinator
+        -- starts again (1213), as for a local commit.
+        if not ok then return lower(commit_failure(err)) end
         yield_point('lazy_capture_start')
     end
     -- Also when a start that turned capture on did not return: a write
