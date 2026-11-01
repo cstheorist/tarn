@@ -51,7 +51,7 @@ jobs:
           mkdir -p /tmp/topology-evidence
           git rev-parse HEAD > /tmp/topology-evidence/source.txt
           sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/topology-evidence/binaries.txt
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: topology-release-${{ matrix.groups }}-${{ matrix.replicas }}-${{ matrix.pool }}-${{ matrix.gateways }}
           path: |
@@ -76,7 +76,7 @@ jobs:
           TOPOLOGY_WORK: /tmp/topology-work
           TOPOLOGY_OUT: /tmp/topology-evidence
         run: bash tests/topology.sh
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: topology-results-${{ matrix.groups }}-${{ matrix.replicas }}-${{ matrix.pool }}-${{ matrix.gateways }}

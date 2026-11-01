@@ -34,7 +34,7 @@ jobs:
       - run: python3 scripts/check_contracts.py --check && python3 scripts/check_outcomes.py
       - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: ~/.local/tarantool
           key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
@@ -59,7 +59,7 @@ jobs:
           done
       - name: Retain every history and storage log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: outcomes-${{ matrix.engine }}-native-${{ matrix.native }}-${{ github.run_id }}
           path: /tmp/tarn-outcomes-release
