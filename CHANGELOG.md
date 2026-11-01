@@ -21,6 +21,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   million rows per shard with a writer
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
+- `bench/resource_overhead.py` compares one workload's goodput, tail
+  latency and memory with the SQL resource budgets in force and out of
+  reach, under identical admission. On a two-shard cluster, with every
+  result checked:
+  - p99 is the same within noise;
+  - goodput is about 2% lower with the budgets on memtx, and not
+    measurably on vinyl.
+
+  The SQL server's idle RSS, about 30 MiB, is outside the managed budget
+  ([#134](https://github.com/cstheorist/tarn/issues/134)).
+
 - The generated MySQL contracts page (`docs/mysql-contracts.md`) lists the
   lazy-index contracts with the release manifest, each with its regression
   tests, from `tests/contracts/lazy-index.json`. A new entry,
@@ -29,6 +40,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the bucket stays, and a session's read-your-writes catch-up follows
   the bucket once it has moved
   ([#182](https://github.com/cstheorist/tarn/issues/182)).
+
+- `bench/strong_kv_summary.py` summarizes a matched SQL / strong KV / raw
+  native read study: per batch/clients cell and path, key throughput,
+  operation p99, requests and bytes to storage, client protocol bytes and CPU
+  per key, and strong KV against SQL paired by trial. The SQL phase now reads
+  its gateway's storage counters, so SQL's requests to storage are counted
+  like the KV clients' own. `docs/strong-kv.md` publishes the measured tables
+  for memtx and vinyl, and the qualification's new `measurements` scope runs
+  just the two measurement cohorts
+  ([#181](https://github.com/cstheorist/tarn/issues/181)).
 
 - Every 1412 ("Table definition has changed") that does not come from a
   schema change's own steps is logged at info level with its origin: a
@@ -114,6 +135,19 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and checks every result. Under the default budgets each one either
   completes with the exact result or is refused with 1041: none returns a
   clipped result ([#134](https://github.com/cstheorist/tarn/issues/134)).
+
+- A replicated shard no longer stays without a leader while the only
+  replicas that could win its election do not stand. This happened when a
+  leader resigned under strict fencing holding a transaction its followers
+  never received. It refused their votes, and each of their failed
+  elections restarted its election timer, so it never stood. Every
+  candidate now stands itself after `TARN_ELECTION_WATCHDOG` seconds
+  without a leader (default three election timeouts, 15 s), if it receives
+  from a quorum of its replica set. `tarn_info().stats.election_stands`
+  counts these. `lua/test/election_watchdog_test.lua` covers when a
+  replica stands. `tests/election.sh` checks on a shard of three replicas
+  that none stands while the shard has a leader, nor without its quorum
+  ([#254](https://github.com/cstheorist/tarn/issues/254)).
 
 - A lazy read of many rows no longer exhausts the statement's memory
   budget (1041) where the strong read succeeds. Each candidate page and

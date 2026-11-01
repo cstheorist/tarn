@@ -1,0 +1,159 @@
+{
+ "date": "2026-11-01T15:21:18+00:00",
+ "engine": "vinyl",
+ "rows": 100000,
+ "sessions": 8,
+ "seconds": 20,
+ "mix": {
+  "point": 0.5,
+  "range_100": 0.2,
+  "index_prefix_count": 0.1,
+  "update": 0.2
+ },
+ "configs": {
+  "budgets": "defaults (docs/resources.md)",
+  "unbounded": {
+   "query_bytes": 1099511627776,
+   "transaction_bytes": 1099511627776,
+   "server_bytes": 2199023255552,
+   "query_work": 1152921504606846976,
+   "server_work": 2305843009213693952
+  }
+ },
+ "host": {
+  "platform": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+  "cpus": 2
+ },
+ "source": {
+  "revision": "6c7ff70f9a2d8d4c27ffb0b7a1b61d4c36953ac5",
+  "modified": false
+ },
+ "gateway": {
+  "name": "tarn-server",
+  "sha256": "5cbd6a345816f0f238c097e2f3095538febc8b27e6e2aa2a548d831eb258b79d"
+ },
+ "runs": [
+  {
+   "config": "budgets",
+   "sessions": 8,
+   "seconds": 20,
+   "operations": 21680,
+   "goodput_per_second": 1083.0,
+   "p50_ms": 5.727,
+   "p99_ms": 27.448,
+   "max_ms": 57.428,
+   "errors": [],
+   "error_count": 0,
+   "gateway_idle_rss_bytes": 31576064,
+   "gateway_peak_rss_bytes": 54157312,
+   "peak_admitted_bytes": 254567016,
+   "peak_work": 865750,
+   "refusals": 0,
+   "pair": 1
+  },
+  {
+   "config": "unbounded",
+   "sessions": 8,
+   "seconds": 20,
+   "operations": 22783,
+   "goodput_per_second": 1138.5,
+   "p50_ms": 5.435,
+   "p99_ms": 25.555,
+   "max_ms": 57.425,
+   "errors": [],
+   "error_count": 0,
+   "gateway_idle_rss_bytes": 29024256,
+   "gateway_peak_rss_bytes": 49664000,
+   "peak_admitted_bytes": 254569624,
+   "peak_work": 687313,
+   "refusals": 0,
+   "pair": 1
+  },
+  {
+   "config": "unbounded",
+   "sessions": 8,
+   "seconds": 20,
+   "operations": 23129,
+   "goodput_per_second": 1155.5,
+   "p50_ms": 5.321,
+   "p99_ms": 26.405,
+   "max_ms": 82.073,
+   "errors": [],
+   "error_count": 0,
+   "gateway_idle_rss_bytes": 34062336,
+   "gateway_peak_rss_bytes": 49053696,
+   "peak_admitted_bytes": 237910406,
+   "peak_work": 910442,
+   "refusals": 0,
+   "pair": 2
+  },
+  {
+   "config": "budgets",
+   "sessions": 8,
+   "seconds": 20,
+   "operations": 23391,
+   "goodput_per_second": 1168.6,
+   "p50_ms": 5.191,
+   "p99_ms": 25.993,
+   "max_ms": 62.437,
+   "errors": [],
+   "error_count": 0,
+   "gateway_idle_rss_bytes": 29839360,
+   "gateway_peak_rss_bytes": 53448704,
+   "peak_admitted_bytes": 237780184,
+   "peak_work": 696279,
+   "refusals": 0,
+   "pair": 2
+  },
+  {
+   "config": "budgets",
+   "sessions": 8,
+   "seconds": 20,
+   "operations": 24222,
+   "goodput_per_second": 1210.5,
+   "p50_ms": 5.021,
+   "p99_ms": 25.485,
+   "max_ms": 63.446,
+   "errors": [],
+   "error_count": 0,
+   "gateway_idle_rss_bytes": 29630464,
+   "gateway_peak_rss_bytes": 48156672,
+   "peak_admitted_bytes": 237878888,
+   "peak_work": 801064,
+   "refusals": 0,
+   "pair": 3
+  },
+  {
+   "config": "unbounded",
+   "sessions": 8,
+   "seconds": 20,
+   "operations": 25068,
+   "goodput_per_second": 1252.5,
+   "p50_ms": 4.869,
+   "p99_ms": 24.883,
+   "max_ms": 74.341,
+   "errors": [],
+   "error_count": 0,
+   "gateway_idle_rss_bytes": 31985664,
+   "gateway_peak_rss_bytes": 52613120,
+   "peak_admitted_bytes": 237843602,
+   "peak_work": 780542,
+   "refusals": 0,
+   "pair": 3
+  }
+ ],
+ "summary": {
+  "budgets": {
+   "goodput_median": 1168.6,
+   "p99_ms_median": 25.993,
+   "peak_rss_bytes_max": 54157312,
+   "peak_admitted_bytes_max": 254567016
+  },
+  "unbounded": {
+   "goodput_median": 1155.5,
+   "p99_ms_median": 25.555,
+   "peak_rss_bytes_max": 52613120,
+   "peak_admitted_bytes_max": 254569624
+  }
+ }
+}

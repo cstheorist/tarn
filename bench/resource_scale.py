@@ -172,7 +172,7 @@ class Gateway:
         deadline = time.monotonic() + 30
         while True:
             try:
-                connect(self.tarn).close()
+                connect(self.tarn, db=None).close()
                 return
             except pymysql.MySQLError:
                 if time.monotonic() >= deadline:
@@ -185,7 +185,7 @@ class Gateway:
         return {k: int(fields[k].split()[0]) * 1024 for k in ("VmHWM", "VmRSS")}
 
     def counters(self):
-        with connect(self.tarn) as c:
+        with connect(self.tarn, db=None) as c:
             return {k: int(v) for k, v in q(c, "SHOW GLOBAL STATUS LIKE 'Tarn_resource%'")}
 
     def executable(self):

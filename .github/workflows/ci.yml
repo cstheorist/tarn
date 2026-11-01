@@ -13,7 +13,7 @@ on:
       strong_kv_scope:
         description: Qualification cohorts to run
         type: choice
-        options: [all, histories]
+        options: [all, histories, measurements]
         default: all
       file_backup_scale:
         description: Include the file-backup scale study
@@ -171,6 +171,8 @@ jobs:
         run: |
           cargo test --release -p tarn-sql --example strong_kv
           cargo test --release -p tarn-sql --example strong_kv_bench
+      - name: Strong KV measurement summaries
+        run: python3 bench/test_strong_kv_summary.py
       - name: Native allocation instrumentation units
         run: cargo test -p tarn-storage --features alloc-metrics --lib
       - name: Lazy contract manifest links
@@ -178,7 +180,9 @@ jobs:
       - name: Bounded commit-cost observation controls
         run: python3 bench/test_commit_cost.py
       - name: Resource scale study oracle
-        run: python3 bench/test_resource_scale.py
+        run: |
+          python3 bench/test_resource_scale.py
+          python3 bench/test_resource_overhead.py
       - name: Storage protocol tests
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
@@ -318,6 +322,8 @@ jobs:
         env:
           TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: SECS=45 ci/annotate.sh growshrink tests/growshrink.sh
+      - name: Election watchdog (1 shard x 3 replicas)
+        run: ci/annotate.sh election tests/election.sh
       - name: Bind failover inputs and enable cores on this isolated runner
         id: failover-evidence
         run: |
@@ -583,7 +589,7 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        cohort: ${{ fromJSON(inputs.strong_kv_scope == 'histories' && '["native-history","lua-history"]' || '["native-history","lua-history","native-clock","lua-clock","memtx","vinyl"]') }}
+        cohort: ${{ fromJSON(inputs.strong_kv_scope == 'histories' && '["native-history","lua-history"]' || inputs.strong_kv_scope == 'measurements' && '["memtx","vinyl"]' || '["native-history","lua-history","native-clock","lua-clock","memtx","vinyl"]') }}
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
@@ -635,6 +641,17 @@ jobs:
             *) exit 2 ;;
           esac
           ci/annotate.sh "strong-kv-$KV_COHORT" tests/kv.sh
+      # The tables go to the job summary; one notice per batch/clients cell
+      # carries that cell's summary JSON for readers of the annotations API.
+      - name: Summarize the measurements
+        if: matrix.cohort == 'memtx' || matrix.cohort == 'vinyl'
+        env:
+          KV_COHORT: ${{ matrix.cohort }}
+        run: |
+          set -- /tmp/tarn-kv181-*/study/results/study.json
+          [ "$#" -eq 1 ] && [ -f "$1" ]
+          python3 bench/strong_kv_summary.py "$1" --json "${1%/results/study.json}/summary.json" \
+            --markdown "$GITHUB_STEP_SUMMARY" --notice "strong-kv $KV_COHORT"
       - name: Retain histories, measurements, failures and source identities
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
