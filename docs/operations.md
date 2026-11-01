@@ -123,6 +123,20 @@ leader for ... standing (election watchdog)") and counted in
 `tarn_info().stats.election_stands`. With the watchdog off, end the state by
 calling `box.ctl.promote()` on the replica with the newest vclock.
 
+A replica can also stop applying its leader's rows for good while it
+applies a vinyl index build (issue #254). Tarantool's vinyl build ends with
+a dump that waits for every synchronous transaction the replica has
+prepared, and the replica holds one prepared until the CONFIRM after it in
+the leader's WAL. A build whose DDL row comes ahead of that CONFIRM waits
+for a row queued behind it. The replica's vclock stops and its applier
+fiber waits in `vy_scheduler_dump` (`fiber.info()`); once every follower
+has stopped, the leader loses its quorum and resigns. Tarn's ALTER TABLE
+and engine changes avoid this: while a replicated shard builds a vinyl
+index, its leader lets one synchronous transaction at a time reach the WAL
+(`replication_synchro_queue_max_size` = 1), so writes to the shard slow
+down for the length of the build. Don't call `create_index` on a populated
+vinyl space of a replicated shard by hand while the shard takes writes.
+
 Start every replica of a new shard before sending it traffic. Tarantool 3.9
 stops a joining replica ("can't initialize storage: timed out") when its
 first checkpoint waits longer than `replication_synchro_timeout` for the

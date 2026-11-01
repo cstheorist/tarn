@@ -247,9 +247,10 @@ function M.new(c)
     end
     local function refresh() E.invalidate(false); c.refresh(); E.fresh() end
     local function replace_record(r) box.space._tarn_meta:replace{key(r.old_id), r} end
+    -- (c.create_index: a vinyl build on a replicated shard needs care, issue #254.)
     local function schema_index(sp, ix)
         if sp.index[ix.id] == nil then
-            sp:create_index(ix.name, {id = ix.id, type = ix.type, unique = ix.unique, parts = ix.parts})
+            c.create_index(sp, ix.name, {id = ix.id, type = ix.type, unique = ix.unique, parts = ix.parts})
         end
     end
     local function new_shadow(r)

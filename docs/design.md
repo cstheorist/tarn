@@ -1539,11 +1539,31 @@ changed. Outside schema changes these lines should not appear.
 **Protocol.** One SQL server drives a change to version V through four
 idempotent steps per shard (lua/tarn.lua "Schema changes"):
 
-1. On a vinyl table, BUILD builds the new indexes under temporary names
-   while writes go on: vinyl keeps an index current while it builds it, so
-   no write waits for the build, however long it takes. A memtx table
-   builds in PREPARE instead: with memtx MVCC, any write committed while an
-   index build yields aborts the build.
+1. On a vinyl table of an unreplicated shard, BUILD builds the new indexes
+   under temporary names while writes go on: vinyl keeps an index current
+   while it builds it, so no write waits for the build, however long it
+   takes. A memtx table builds in PREPARE instead: with memtx MVCC, any
+   write committed while an index build yields aborts the build. A
+   replicated shard's vinyl table builds in PREPARE too (issue #263).
+   Tarantool's vinyl build waits for the transactions already in the WAL,
+   not for their quorum. A synchronous write that changed a row before the
+   build began, and still waits for its quorum, is neither in the build's
+   read view nor caught by its trigger, so the new index never gets the
+   row's new key. A replica applying the build's DDL can miss, the same
+   way, a write ahead of the DDL that still waits for its quorum. Behind
+   PREPARE's fence the table's commits have drained, and writes wait for
+   the build.
+   A replica's vinyl build also ends with a dump that waits for every
+   synchronous transaction the replica has prepared, of any table, and the
+   replica holds one prepared until the CONFIRM that follows it in the WAL.
+   A DDL row written ahead of such a CONFIRM stops the replica's applier for
+   good: it waits for a row queued behind the one it applies (issue #254).
+   So while a replicated shard builds a vinyl index, its leader submits one
+   synchronous transaction at a time (`replication_synchro_queue_max_size`
+   = 1). Each, the DDL included, reaches the WAL only once the ones before
+   it are confirmed. Writes to the shard's other tables go on, one in
+   flight at a time, until the build ends. Engine changes build their
+   shadow's indexes the same way.
    An index on an instant-added column with a non-NULL fill is deferred to
    PREPARE instead: its stored field (or collation weight field) must be
    physically present in every existing tuple. Otherwise the native index
@@ -2232,6 +2252,7 @@ throughput measurements:
 | `tests/movefaults.sh` | the SQL server driving a move killed while it copies, while its fence drains, after its flip before the send, and after the send before the receive, after its flip with the move given up on the sending shard, and while it copies with the receiving shard then refusing every step (test hooks hold the steps; the server is started again after each); another server finishes the job (`ddl_job_stale` = 2 s) | 49/49: resumed and finished in the first two cases, finished in the third and fourth, given up in the last two, each within 3 s; rows checked through SQL and on the shards |
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload, READ COMMITTED transfers and `movetest.py` (buckets moving through the leader changes): leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
 | `tests/election.sh` | one shard of 3 replicas with an election watchdog period of 1 s: a leader for 4 s, then both followers stopped and resumed | no replica stands while there is a leader; the leader resigns without its quorum and does not stand without it; a leader again within 10 s of the followers' return |
+| `tests/vinylbuild.sh` | one shard of 3 replicas with fsync: ALTER TABLE adds three indexes to a vinyl table of 20,000 rows while 16 writers insert into another vinyl table | every replica applies the builds and the rows after them within 15 s; writes go on during the builds and after them; each index holds every row on every replica |
 | `tests/bucketcount.sh` | the number of buckets a SQL server gives the map it makes: the configured `bucket_count`; 3,000 on shards that have tables but no map (a cluster made before bucket moves, simulated by removing the map and restarting the nodes); 30,000 on a new cluster; each time the shards' ranges and, with rows, their bucket ids, reads by key and writes | 20/20 |
 | `tests/ddlfaults.sh` | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with shard 2 down, and with shard 2 killed while a test hook holds its APPLY; the abandoned jobs are finished by the SQL server (`ddl_job_stale` = 2 s) | 6/6: rolled back with the shard down (the table on no shard, or unchanged), rolled forward when killed while applying; checked on each shard directly |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection; on a memtx table through the native procedure and through `tarn_autocommit`, and on a vinyl table | the client gets 1180 (outcome unknown), the row is incremented exactly once |

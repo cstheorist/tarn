@@ -5445,18 +5445,23 @@ end
 -- version (`ver`): writes carry the version of the definition they were
 -- encoded with (FENCE above), and an ALTER TABLE to version V runs on every
 -- shard in three steps, driven by one SQL server:
---   BUILD    on a vinyl table, build the new indexes under temporary names
---            while writes go on (vinyl keeps an index current while it
---            builds it): no write waits for it, however large the table. A
---            memtx table builds in PREPARE: with memtx MVCC, a write
---            committed while an index build yields aborts the build, and
---            memtx builds at memory speed anyway;
+--   BUILD    on a vinyl table of an unreplicated shard, build the new
+--            indexes under temporary names while writes go on (vinyl keeps
+--            an index current while it builds it): no write waits for it,
+--            however large the table. A memtx table builds in PREPARE: with
+--            memtx MVCC, a write committed while an index build yields
+--            aborts the build, and memtx builds at memory speed anyway. So
+--            does a replicated shard's vinyl table: a write still waiting
+--            for its quorum when the build begins would be missed
+--            (tarn_alter_build);
 --   PREPARE  raise the fence to V (writes made with an older definition are
 --            refused from now on), wait for the local commits already past
 --            the check and for the prepared cross-shard transactions holding
 --            locks on the table, check the existing rows against the new
 --            column types (refused above alter_check_rows rows: writes wait
---            for the scan), and build what BUILD has not;
+--            for the scan), and build what BUILD has not (on a replicated
+--            shard, a vinyl build lets one synchronous transaction at a time
+--            reach the WAL: build_native_index);
 --   APPLY    once every shard has prepared: drop the replaced indexes,
 --            change the format, rename indexes and the table, and store the
 --            new definition (version V, so the fence survives restarts).
@@ -5588,13 +5593,49 @@ local function run_checks(sp, checks, before_materialize)
     return nil
 end
 
+-- A native index build on a populated space of a replicated shard
+-- (issue #254). A replica applies a vinyl build in its applier, and the
+-- build ends with a dump that waits for every in-memory tree a prepared
+-- transaction pinned (Tarantool's vinyl_space_build_index). A synchronous
+-- transaction stays prepared on the replica until the CONFIRM that follows
+-- it in the leader's WAL. When the build's DDL row comes between the two,
+-- the applier waits for a CONFIRM queued behind the row it applies, and the
+-- replica never applies another row. The leader writes such a DDL row behind
+-- any synchronous write still waiting for its quorum, whatever its table.
+-- So while it builds a vinyl index, the leader submits one synchronous
+-- transaction at a time (replication_synchro_queue_max_size = 1): each, the
+-- DDL included, reaches the WAL only once the ones before it are confirmed.
+-- Writes go on meanwhile, one in flight at a time. Builds may overlap: the
+-- last one to finish restores the limit.
+local SERIAL_SYNC = {depth = 0}
+local function build_native_index(sp, name, opts)
+    if sp.engine ~= 'vinyl' or not (M.cfg.sync or sp.is_sync) then return sp:create_index(name, opts) end
+    if SERIAL_SYNC.depth == 0 then
+        SERIAL_SYNC.saved = box.cfg.replication_synchro_queue_max_size
+        box.cfg{replication_synchro_queue_max_size = 1}
+    end
+    SERIAL_SYNC.depth = SERIAL_SYNC.depth + 1
+    local ok, res = pcall(sp.create_index, sp, name, opts)
+    SERIAL_SYNC.depth = SERIAL_SYNC.depth - 1
+    if SERIAL_SYNC.depth == 0 then
+        box.cfg{replication_synchro_queue_max_size = SERIAL_SYNC.saved}
+        -- Raising the limit wakes none of the transactions it parked;
+        -- changing a synchro parameter does (txn_limbo_on_parameters_change).
+        local timeout = box.cfg.replication_synchro_timeout
+        box.cfg{replication_synchro_timeout = timeout + 0.001}
+        box.cfg{replication_synchro_timeout = timeout}
+    end
+    if not ok then error(res, 0) end
+    return res
+end
+
 -- New indexes {id, name, unique, parts}, built under temporary names; a
 -- unique one fails on duplicates (1062). May take long and yields.
 local function build_indexes(sp, builds)
     for _, b in ipairs(builds or {}) do
         PENDING_NAME[sp.id .. '/' .. b[1]] = b[2]
         if sp.index[b[1]] == nil then
-            local ok, err = pcall(sp.create_index, sp, tmp_index_name(b[1]),
+            local ok, err = pcall(build_native_index, sp, tmp_index_name(b[1]),
                 {id = b[1], type = 'tree', unique = b[3], parts = b[4]})
             if not ok then
                 if type(err) == 'cdata' and err.code == box.error.TUPLE_FOUND then
@@ -5815,6 +5856,15 @@ function tarn_alter_build(name, a)
     local sp = alter_space(name, a)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     if catalog_ver(sp.name) >= a.ver or sp.engine ~= 'vinyl' then return {OK} end
+    -- On a replicated shard, vinyl's build while writes go on can miss a row
+    -- (issue #263). Tarantool's vinyl_space_build_index waits for the
+    -- transactions already in the WAL, not for their quorum: a write that
+    -- changed a row before the build began and still waits for its quorum is
+    -- neither in the build's read view nor caught by its trigger. A replica
+    -- applying the build's DDL can miss, the same way, a write ahead of the
+    -- DDL that still waits for its quorum. PREPARE builds behind the fence
+    -- instead, once the table's commits have drained.
+    if M.cfg.sync or sp.is_sync then return {OK} end
     -- An instant-ADD field may be missing in old tuples. Check it only after
     -- PREPARE fences and drains old-layout writes, then build behind that fence.
     if a.checks ~= nil and a.checks ~= box.NULL then
@@ -8072,7 +8122,8 @@ M.move = require('tarn_move').new{cfg = M.cfg, bk = BK, shard_uris = shard_uris}
 M.engine = require('tarn_engine').new{
     cfg = M.cfg, bk = BK, writable = writable, failure = failure, atomic = atomic,
     key_def = index_key_def, serial = UIX.serial_sid, drain = drain, wait_commits = wait_commits,
-    lazy = M.lazy, create_space = create_space, call = on_shard, hook = yield_point,
+    lazy = M.lazy, create_space = create_space, create_index = build_native_index,
+    call = on_shard, hook = yield_point,
     doom = doom_readers, exclude = BK.ns_engine, invalidate_defs = invalidate_key_defs,
     refresh = function() M.stale_fences(); fence_fresh() end,
     mark = function() return {lua = INFLIGHT_SEQ, native = BK.ns ~= nil and BK.ns.commit_seq or nil} end,
