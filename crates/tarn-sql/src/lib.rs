@@ -18,9 +18,11 @@ pub mod members;
 #[rustfmt::skip]
 mod collation_data;
 pub mod complex;
+mod decimal;
 pub mod exec;
 pub mod expr;
 mod integrity;
+mod key_contract;
 pub mod kv;
 pub mod lazy;
 pub mod lint;
