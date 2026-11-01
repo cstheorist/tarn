@@ -165,7 +165,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ownership. The reply's size is counted as slots are added instead of
   encoding the whole reply after each one. On one RF1 node with nothing
   else running, a 32-key `get_many` fell from about 210 to 70 µs per key,
-  and a single-key request from about 650 to 310 µs (medians of three)
+  and a single-key request from about 650 to 310 µs (medians of three). In
+  CI's matched study (RF3, 16 clients, batches of 32), strong KV now reads
+  18,300 keys/s on memtx and 9,020 on vinyl, 1.9 and 2.0 times SQL's rate,
+  where it read 3,910 and 3,980 before (`docs/strong-kv.md`)
   ([#249](https://github.com/cstheorist/tarn/issues/249)).
 
 - A statement reading two or more shards is no longer refused by its memory
