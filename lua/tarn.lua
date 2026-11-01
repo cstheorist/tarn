@@ -8217,9 +8217,12 @@ M.kv = require('tarn_kv').new{
     point = function(sid, key, bucket)
         return tarn_select(sid, 0, key, 'EQ', 1, nil, nil, true, nil, false, nil, bucket)
     end,
-    guard = function(sid, ver)
+    -- between: a check between two points of one request, which leaves
+    -- the control spaces to the checks when the request begins and ends.
+    guard = function(sid, ver, between)
         writable()
-        M.fresh.clock_check(); M.fresh.controls()
+        M.fresh.clock_check()
+        if not between then M.fresh.controls() end
         if LK_STALE or FENCE_STALE or BK.stale then
             error(box.error.new{code = box.error.TRANSACTION_CONFLICT,
                                 reason = 'Strong KV metadata became stale during the read'})

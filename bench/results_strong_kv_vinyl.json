@@ -11,9 +11,9 @@
       "minimum": 347.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 103.0,
-      "median": 98.6,
-      "minimum": 97.8
+      "maximum": 133.0,
+      "median": 127.0,
+      "minimum": 126.0
      },
      "client_requests_per_key": {
       "maximum": 1.0,
@@ -21,35 +21,35 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 180.0,
-      "median": 179.0,
-      "minimum": 177.0
+      "maximum": 216.0,
+      "median": 214.0,
+      "minimum": 213.0
      },
      "keys_per_second": {
-      "maximum": 2070.0,
-      "median": 2060.0,
-      "minimum": 2020.0
+      "maximum": 1730.0,
+      "median": 1730.0,
+      "minimum": 1700.0
      },
      "label": "SQL",
      "mode": "sql",
      "p50_ms": {
-      "maximum": 0.466,
-      "median": 0.465,
-      "minimum": 0.462
+      "maximum": 0.557,
+      "median": 0.555,
+      "minimum": 0.554
      },
      "p99_ms": {
-      "maximum": 0.755,
-      "median": 0.745,
-      "minimum": 0.737
+      "maximum": 0.859,
+      "median": 0.842,
+      "minimum": 0.825
      },
      "server_cpu_us_per_key": {
-      "maximum": 546.0,
-      "median": 544.0,
-      "minimum": 538.0
+      "maximum": 718.0,
+      "median": 714.0,
+      "minimum": 707.0
      },
      "storage_bytes_per_key": {
       "maximum": 168.0,
-      "median": 168.0,
+      "median": 167.0,
       "minimum": 166.0
      },
      "storage_requests_per_key": {
@@ -66,9 +66,9 @@
       "minimum": 760.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 46.7,
-      "median": 45.7,
-      "minimum": 44.1
+      "maximum": 54.3,
+      "median": 53.9,
+      "minimum": 51.1
      },
      "client_requests_per_key": {
       "maximum": 1.0,
@@ -76,29 +76,29 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 677.0,
-      "median": 667.0,
-      "minimum": 659.0
+      "maximum": 505.0,
+      "median": 497.0,
+      "minimum": 491.0
      },
      "keys_per_second": {
-      "maximum": 1090.0,
-      "median": 1070.0,
-      "minimum": 1070.0
+      "maximum": 1290.0,
+      "median": 1260.0,
+      "minimum": 1220.0
      },
      "label": "strong KV",
      "mode": "strong",
      "p50_ms": {
-      "maximum": 0.826,
-      "median": 0.818,
-      "minimum": 0.813
+      "maximum": 0.737,
+      "median": 0.733,
+      "minimum": 0.726
      },
      "p99_ms": {
-      "maximum": 2.37,
-      "median": 2.29,
-      "minimum": 2.27
+      "maximum": 1.57,
+      "median": 1.51,
+      "minimum": 1.49
      },
      "server_cpu_us_per_key": {
-      "maximum": 1190.0,
+      "maximum": 1210.0,
       "median": 1180.0,
       "minimum": 1170.0
      },
@@ -116,14 +116,14 @@
     },
     {
      "client_bytes_per_key": {
-      "maximum": 145.0,
-      "median": 145.0,
-      "minimum": 145.0
+      "maximum": 144.0,
+      "median": 144.0,
+      "minimum": 144.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 16.4,
-      "median": 16.1,
-      "minimum": 15.9
+      "maximum": 27.7,
+      "median": 27.4,
+      "minimum": 26.8
      },
      "client_requests_per_key": {
       "maximum": 1.0,
@@ -131,36 +131,36 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 13.7,
-      "median": 13.5,
-      "minimum": 13.1
+      "maximum": 19.9,
+      "median": 19.1,
+      "minimum": 18.7
      },
      "keys_per_second": {
-      "maximum": 16500.0,
-      "median": 16400.0,
-      "minimum": 16300.0
+      "maximum": 12600.0,
+      "median": 12500.0,
+      "minimum": 12300.0
      },
      "label": "raw native",
      "mode": "raw",
      "p50_ms": {
-      "maximum": 0.0579,
-      "median": 0.0577,
-      "minimum": 0.0572
+      "maximum": 0.0754,
+      "median": 0.075,
+      "minimum": 0.0744
      },
      "p99_ms": {
-      "maximum": 0.0908,
-      "median": 0.0904,
-      "minimum": 0.0889
+      "maximum": 0.164,
+      "median": 0.122,
+      "minimum": 0.121
      },
      "server_cpu_us_per_key": {
-      "maximum": 38.2,
-      "median": 37.9,
-      "minimum": 37.7
+      "maximum": 59.5,
+      "median": 58.3,
+      "minimum": 58.1
      },
      "storage_bytes_per_key": {
-      "maximum": 145.0,
-      "median": 145.0,
-      "minimum": 145.0
+      "maximum": 144.0,
+      "median": 144.0,
+      "minimum": 144.0
      },
      "storage_requests_per_key": {
       "maximum": 1.0,
@@ -172,24 +172,24 @@
    ],
    "strong_over_sql": {
     "hot_tx_cpu_us_per_key": {
-     "maximum": 3.77,
-     "median": 3.74,
-     "minimum": 3.67
+     "maximum": 2.36,
+     "median": 2.32,
+     "minimum": 2.3
     },
     "keys_per_second": {
-     "maximum": 0.538,
-     "median": 0.52,
-     "minimum": 0.517
+     "maximum": 0.746,
+     "median": 0.731,
+     "minimum": 0.702
     },
     "p99_ms": {
-     "maximum": 3.14,
-     "median": 3.1,
-     "minimum": 3.03
+     "maximum": 1.83,
+     "median": 1.8,
+     "minimum": 1.77
     },
     "server_cpu_us_per_key": {
-     "maximum": 2.19,
-     "median": 2.18,
-     "minimum": 2.15
+     "maximum": 1.68,
+     "median": 1.66,
+     "minimum": 1.65
     }
    },
    "workers": 1
@@ -205,9 +205,9 @@
       "minimum": 347.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 168.0,
-      "median": 167.0,
-      "minimum": 167.0
+      "maximum": 243.0,
+      "median": 242.0,
+      "minimum": 242.0
      },
      "client_requests_per_key": {
       "maximum": 1.0,
@@ -215,31 +215,31 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 127.0,
-      "median": 126.0,
-      "minimum": 125.0
+      "maximum": 168.0,
+      "median": 166.0,
+      "minimum": 165.0
      },
      "keys_per_second": {
-      "maximum": 6310.0,
-      "median": 6260.0,
-      "minimum": 6210.0
+      "maximum": 4530.0,
+      "median": 4500.0,
+      "minimum": 4460.0
      },
      "label": "SQL",
      "mode": "sql",
      "p50_ms": {
-      "maximum": 2.22,
-      "median": 2.21,
-      "minimum": 2.19
+      "maximum": 3.15,
+      "median": 3.12,
+      "minimum": 3.1
      },
      "p99_ms": {
-      "maximum": 6.9,
-      "median": 6.83,
-      "minimum": 6.72
+      "maximum": 9.56,
+      "median": 9.37,
+      "minimum": 9.31
      },
      "server_cpu_us_per_key": {
-      "maximum": 340.0,
-      "median": 337.0,
-      "minimum": 335.0
+      "maximum": 487.0,
+      "median": 483.0,
+      "minimum": 481.0
      },
      "storage_bytes_per_key": {
       "maximum": 168.0,
@@ -260,8 +260,8 @@
       "minimum": 760.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 25.8,
-      "median": 25.1,
+      "maximum": 25.1,
+      "median": 24.4,
       "minimum": 23.8
      },
      "client_requests_per_key": {
@@ -270,31 +270,31 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 467.0,
-      "median": 447.0,
-      "minimum": 429.0
+      "maximum": 266.0,
+      "median": 257.0,
+      "minimum": 256.0
      },
      "keys_per_second": {
-      "maximum": 2250.0,
-      "median": 2160.0,
-      "minimum": 2070.0
+      "maximum": 3640.0,
+      "median": 3620.0,
+      "minimum": 3510.0
      },
      "label": "strong KV",
      "mode": "strong",
      "p50_ms": {
-      "maximum": 6.18,
-      "median": 5.99,
-      "minimum": 5.86
+      "maximum": 3.76,
+      "median": 3.7,
+      "minimum": 3.68
      },
      "p99_ms": {
-      "maximum": 21.7,
-      "median": 20.1,
-      "minimum": 18.7
+      "maximum": 14.0,
+      "median": 13.0,
+      "minimum": 12.7
      },
      "server_cpu_us_per_key": {
-      "maximum": 541.0,
-      "median": 519.0,
-      "minimum": 498.0
+      "maximum": 352.0,
+      "median": 343.0,
+      "minimum": 336.0
      },
      "storage_bytes_per_key": {
       "maximum": 760.0,
@@ -315,9 +315,9 @@
       "minimum": 146.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 6.92,
-      "median": 6.88,
-      "minimum": 6.82
+      "maximum": 9.51,
+      "median": 9.41,
+      "minimum": 9.29
      },
      "client_requests_per_key": {
       "maximum": 1.0,
@@ -325,31 +325,31 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 3.52,
-      "median": 3.51,
-      "minimum": 3.41
+      "maximum": 4.84,
+      "median": 4.76,
+      "minimum": 4.65
      },
      "keys_per_second": {
-      "maximum": 130000.0,
-      "median": 128000.0,
-      "minimum": 126000.0
+      "maximum": 98800.0,
+      "median": 97500.0,
+      "minimum": 96700.0
      },
      "label": "raw native",
      "mode": "raw",
      "p50_ms": {
-      "maximum": 0.129,
-      "median": 0.127,
-      "minimum": 0.125
+      "maximum": 0.164,
+      "median": 0.163,
+      "minimum": 0.161
      },
      "p99_ms": {
-      "maximum": 0.183,
-      "median": 0.179,
-      "minimum": 0.174
+      "maximum": 0.249,
+      "median": 0.246,
+      "minimum": 0.24
      },
      "server_cpu_us_per_key": {
-      "maximum": 7.16,
-      "median": 7.09,
-      "minimum": 6.95
+      "maximum": 10.5,
+      "median": 10.4,
+      "minimum": 10.2
      },
      "storage_bytes_per_key": {
       "maximum": 146.0,
@@ -366,24 +366,24 @@
    ],
    "strong_over_sql": {
     "hot_tx_cpu_us_per_key": {
-     "maximum": 3.7,
-     "median": 3.54,
-     "minimum": 3.45
+     "maximum": 1.58,
+     "median": 1.55,
+     "minimum": 1.54
     },
     "keys_per_second": {
-     "maximum": 0.356,
-     "median": 0.345,
-     "minimum": 0.329
+     "maximum": 0.81,
+     "median": 0.803,
+     "minimum": 0.787
     },
     "p99_ms": {
-     "maximum": 3.16,
-     "median": 2.97,
-     "minimum": 2.75
+     "maximum": 1.47,
+     "median": 1.39,
+     "minimum": 1.36
     },
     "server_cpu_us_per_key": {
-     "maximum": 1.61,
-     "median": 1.54,
-     "minimum": 1.49
+     "maximum": 0.722,
+     "median": 0.71,
+     "minimum": 0.697
     }
    },
    "workers": 16
@@ -399,9 +399,9 @@
       "minimum": 347.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 93.9,
-      "median": 92.5,
-      "minimum": 91.5
+      "maximum": 121.0,
+      "median": 120.0,
+      "minimum": 119.0
      },
      "client_requests_per_key": {
       "maximum": 1.0,
@@ -409,35 +409,35 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 180.0,
-      "median": 177.0,
-      "minimum": 175.0
+      "maximum": 215.0,
+      "median": 213.0,
+      "minimum": 212.0
      },
      "keys_per_second": {
-      "maximum": 2110.0,
-      "median": 2100.0,
-      "minimum": 2080.0
+      "maximum": 1770.0,
+      "median": 1750.0,
+      "minimum": 1730.0
      },
      "label": "SQL",
      "mode": "sql",
      "p50_ms": {
-      "maximum": 14.9,
-      "median": 14.7,
-      "minimum": 14.6
+      "maximum": 17.8,
+      "median": 17.7,
+      "minimum": 17.6
      },
      "p99_ms": {
-      "maximum": 22.8,
-      "median": 22.3,
-      "minimum": 22.0
+      "maximum": 26.0,
+      "median": 25.5,
+      "minimum": 25.1
      },
      "server_cpu_us_per_key": {
-      "maximum": 546.0,
-      "median": 540.0,
-      "minimum": 536.0
+      "maximum": 717.0,
+      "median": 713.0,
+      "minimum": 706.0
      },
      "storage_bytes_per_key": {
-      "maximum": 168.0,
-      "median": 167.0,
+      "maximum": 169.0,
+      "median": 166.0,
       "minimum": 166.0
      },
      "storage_requests_per_key": {
@@ -454,9 +454,9 @@
       "minimum": 140.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 4.46,
-      "median": 4.03,
-      "minimum": 2.73
+      "maximum": 4.25,
+      "median": 3.71,
+      "minimum": 3.08
      },
      "client_requests_per_key": {
       "maximum": 0.0312,
@@ -464,31 +464,31 @@
       "minimum": 0.0312
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 352.0,
-      "median": 349.0,
-      "minimum": 337.0
+      "maximum": 205.0,
+      "median": 202.0,
+      "minimum": 201.0
      },
      "keys_per_second": {
-      "maximum": 2280.0,
-      "median": 2230.0,
-      "minimum": 2200.0
+      "maximum": 3290.0,
+      "median": 3250.0,
+      "minimum": 3190.0
      },
      "label": "strong KV",
      "mode": "strong",
      "p50_ms": {
-      "maximum": 12.4,
-      "median": 12.3,
-      "minimum": 12.1
+      "maximum": 9.12,
+      "median": 9.05,
+      "minimum": 9.03
      },
      "p99_ms": {
-      "maximum": 29.5,
-      "median": 28.2,
-      "minimum": 27.3
+      "maximum": 18.8,
+      "median": 16.9,
+      "minimum": 16.5
      },
      "server_cpu_us_per_key": {
-      "maximum": 598.0,
-      "median": 593.0,
-      "minimum": 579.0
+      "maximum": 523.0,
+      "median": 520.0,
+      "minimum": 517.0
      },
      "storage_bytes_per_key": {
       "maximum": 140.0,
@@ -509,9 +509,9 @@
       "minimum": 146.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 1.93,
-      "median": 1.91,
-      "minimum": 1.9
+      "maximum": 2.71,
+      "median": 2.7,
+      "minimum": 2.68
      },
      "client_requests_per_key": {
       "maximum": 1.0,
@@ -519,31 +519,31 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 1.98,
-      "median": 1.96,
-      "minimum": 1.91
+      "maximum": 2.34,
+      "median": 2.26,
+      "minimum": 2.24
      },
      "keys_per_second": {
-      "maximum": 206000.0,
-      "median": 204000.0,
-      "minimum": 203000.0
+      "maximum": 177000.0,
+      "median": 177000.0,
+      "minimum": 173000.0
      },
      "label": "raw native",
      "mode": "raw",
      "p50_ms": {
-      "maximum": 0.154,
-      "median": 0.153,
-      "minimum": 0.15
+      "maximum": 0.179,
+      "median": 0.174,
+      "minimum": 0.173
      },
      "p99_ms": {
-      "maximum": 0.225,
-      "median": 0.216,
-      "minimum": 0.208
+      "maximum": 0.336,
+      "median": 0.26,
+      "minimum": 0.253
      },
      "server_cpu_us_per_key": {
-      "maximum": 3.31,
-      "median": 3.25,
-      "minimum": 3.21
+      "maximum": 4.14,
+      "median": 4.04,
+      "minimum": 4.03
      },
      "storage_bytes_per_key": {
       "maximum": 146.0,
@@ -560,24 +560,24 @@
    ],
    "strong_over_sql": {
     "hot_tx_cpu_us_per_key": {
-     "maximum": 2.0,
-     "median": 1.96,
-     "minimum": 1.92
+     "maximum": 0.965,
+     "median": 0.947,
+     "minimum": 0.933
     },
     "keys_per_second": {
-     "maximum": 1.08,
-     "median": 1.06,
-     "minimum": 1.05
+     "maximum": 1.89,
+     "median": 1.85,
+     "minimum": 1.82
     },
     "p99_ms": {
-     "maximum": 1.29,
-     "median": 1.27,
-     "minimum": 1.24
+     "maximum": 0.731,
+     "median": 0.67,
+     "minimum": 0.633
     },
     "server_cpu_us_per_key": {
-     "maximum": 1.12,
-     "median": 1.09,
-     "minimum": 1.08
+     "maximum": 0.735,
+     "median": 0.731,
+     "minimum": 0.722
     }
    },
    "workers": 1
@@ -593,9 +593,9 @@
       "minimum": 347.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 162.0,
-      "median": 161.0,
-      "minimum": 160.0
+      "maximum": 236.0,
+      "median": 235.0,
+      "minimum": 234.0
      },
      "client_requests_per_key": {
       "maximum": 1.0,
@@ -603,35 +603,35 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 125.0,
-      "median": 124.0,
-      "minimum": 123.0
+      "maximum": 165.0,
+      "median": 163.0,
+      "minimum": 163.0
      },
      "keys_per_second": {
-      "maximum": 6520.0,
-      "median": 6450.0,
-      "minimum": 6430.0
+      "maximum": 4620.0,
+      "median": 4610.0,
+      "minimum": 4590.0
      },
      "label": "SQL",
      "mode": "sql",
      "p50_ms": {
-      "maximum": 79.6,
-      "median": 79.1,
-      "minimum": 78.3
+      "maximum": 111.0,
+      "median": 110.0,
+      "minimum": 110.0
      },
      "p99_ms": {
-      "maximum": 99.8,
-      "median": 98.1,
-      "minimum": 96.3
+      "maximum": 143.0,
+      "median": 136.0,
+      "minimum": 134.0
      },
      "server_cpu_us_per_key": {
-      "maximum": 331.0,
-      "median": 330.0,
-      "minimum": 327.0
+      "maximum": 478.0,
+      "median": 475.0,
+      "minimum": 471.0
      },
      "storage_bytes_per_key": {
       "maximum": 168.0,
-      "median": 168.0,
+      "median": 166.0,
       "minimum": 166.0
      },
      "storage_requests_per_key": {
@@ -648,9 +648,9 @@
       "minimum": 140.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 4.88,
-      "median": 4.56,
-      "minimum": 4.11
+      "maximum": 4.47,
+      "median": 4.23,
+      "minimum": 4.12
      },
      "client_requests_per_key": {
       "maximum": 0.0312,
@@ -658,31 +658,31 @@
       "minimum": 0.0312
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 255.0,
-      "median": 244.0,
-      "minimum": 237.0
+      "maximum": 106.0,
+      "median": 104.0,
+      "minimum": 102.0
      },
      "keys_per_second": {
-      "maximum": 4130.0,
-      "median": 3980.0,
-      "minimum": 3830.0
+      "maximum": 9220.0,
+      "median": 9020.0,
+      "minimum": 8890.0
      },
      "label": "strong KV",
      "mode": "strong",
      "p50_ms": {
-      "maximum": 137.0,
-      "median": 130.0,
-      "minimum": 126.0
+      "maximum": 60.8,
+      "median": 58.9,
+      "minimum": 56.2
      },
      "p99_ms": {
-      "maximum": 219.0,
-      "median": 141.0,
-      "minimum": 137.0
+      "maximum": 166.0,
+      "median": 69.4,
+      "minimum": 68.3
      },
      "server_cpu_us_per_key": {
-      "maximum": 284.0,
-      "median": 271.0,
-      "minimum": 263.0
+      "maximum": 139.0,
+      "median": 137.0,
+      "minimum": 134.0
      },
      "storage_bytes_per_key": {
       "maximum": 140.0,
@@ -703,9 +703,9 @@
       "minimum": 146.0
      },
      "client_cpu_us_per_key": {
-      "maximum": 2.42,
-      "median": 2.41,
-      "minimum": 2.39
+      "maximum": 2.1,
+      "median": 2.09,
+      "minimum": 2.08
      },
      "client_requests_per_key": {
       "maximum": 1.0,
@@ -713,31 +713,31 @@
       "minimum": 1.0
      },
      "hot_tx_cpu_us_per_key": {
-      "maximum": 1.97,
-      "median": 1.96,
-      "minimum": 1.95
+      "maximum": 2.15,
+      "median": 2.14,
+      "minimum": 2.12
      },
      "keys_per_second": {
-      "maximum": 511000.0,
-      "median": 508000.0,
-      "minimum": 506000.0
+      "maximum": 470000.0,
+      "median": 467000.0,
+      "minimum": 465000.0
      },
      "label": "raw native",
      "mode": "raw",
      "p50_ms": {
-      "maximum": 1.01,
-      "median": 1.0,
-      "minimum": 0.996
+      "maximum": 1.1,
+      "median": 1.09,
+      "minimum": 1.08
      },
      "p99_ms": {
-      "maximum": 1.39,
-      "median": 1.26,
-      "minimum": 1.24
+      "maximum": 1.5,
+      "median": 1.4,
+      "minimum": 1.38
      },
      "server_cpu_us_per_key": {
-      "maximum": 2.47,
-      "median": 2.46,
-      "minimum": 2.42
+      "maximum": 2.7,
+      "median": 2.68,
+      "minimum": 2.66
      },
      "storage_bytes_per_key": {
       "maximum": 146.0,
@@ -754,24 +754,24 @@
    ],
    "strong_over_sql": {
     "hot_tx_cpu_us_per_key": {
-     "maximum": 2.04,
-     "median": 1.99,
-     "minimum": 1.91
+     "maximum": 0.649,
+     "median": 0.634,
+     "minimum": 0.624
     },
     "keys_per_second": {
-     "maximum": 0.641,
-     "median": 0.613,
-     "minimum": 0.595
+     "maximum": 2.01,
+     "median": 1.95,
+     "minimum": 1.93
     },
     "p99_ms": {
-     "maximum": 2.19,
-     "median": 1.45,
-     "minimum": 1.39
+     "maximum": 1.23,
+     "median": 0.507,
+     "minimum": 0.491
     },
     "server_cpu_us_per_key": {
-     "maximum": 0.858,
-     "median": 0.822,
-     "minimum": 0.799
+     "maximum": 0.294,
+     "median": 0.289,
+     "minimum": 0.281
     }
    },
    "workers": 16
@@ -781,7 +781,7 @@
  "engine": "vinyl",
  "platform": "Linux-7.0.0-1017-azure-x86_64-with-glibc2.39",
  "seconds": 5.0,
- "source_head": "46c361522f1fa201731ff59bdc578b2000b4d22a",
+ "source_head": "554e06a2c3f2bb5bcc51f95b1dd6873ac38096ac",
  "version": 1,
  "warmup": 1.0
 }
