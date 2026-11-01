@@ -88,7 +88,9 @@ protocol and is not refused when the execution cap fills.
 Decoders admit row slots and the complete backing frame before allocation.
 Ordinary query values can therefore retain zero-copy slices. Transaction
 keys/writes and retained top-K/join rows copy their string payload before a
-page's temporary account is released. Join candidate/predicate scratch and
+page's temporary account is released. So do the rows a scan keeps when the
+SQL server evaluates its WHERE: such a scan is charged for the rows it
+keeps, not for every page it reads. Join candidate/predicate scratch and
 discarded heap pages are refunded; retained output, sort keys, groups and
 DISTINCT state remain charged. Expression expansion is admitted before
 REPEAT, padding, replacement, case conversion and related allocations.
@@ -115,6 +117,24 @@ OFFSET is admitted before heap allocation and may be refused even for an
 empty input. Other shapes run with the same limits and may be refused;
 `topk: false` is a diagnostic control for matched materialization experiments.
 
+## At ten times the data
+
+`bench/resource_scale.py` runs the same filtered scan, high-fanout join and
+full sort at 1× and 10× data, with one and eight concurrent sessions, under
+the budgets in force, and checks every result against the data's formula.
+The defaults were measured at 20,000 and 200,000 rows with a 180-character
+column:
+
+- at 1×, every statement completes;
+- at 10×, the filtered scan completes;
+- at 10×, the join (400,000 result rows) and the sort (200,000 rows) are
+  refused by the query memory budget.
+
+None returns a clipped result. A sort holds whole rows, including columns it
+does not return, at several times their stored size. Raise `query_bytes`
+(and `server_bytes` for concurrent sessions) for larger statements. The
+tables are in [bench/resources](../bench/resources/README.md#scale-study).
+
 ## Monitoring and verification boundaries
 
 `SHOW STATUS` reports `Tarn_resource_bytes`, `Tarn_resource_peak_bytes`,
@@ -138,7 +158,7 @@ output, with three failing mutation controls. It does not prove concrete
 allocation sizes or scheduling. The Verus crate is unchanged. Runtime tests
 cover accounting/refunds, stable heap selection, an abandoned established
 read, exact MariaDB comparisons, oversized scans/joins/groups/offsets,
-no partial DML, explicit-transaction cleanup, slow consumers, binary long
+filtered scans of more pages than the budget holds, no partial DML, explicit-transaction cleanup, slow consumers, binary long
 data, work caps and concurrent overload.
 
 Run the dedicated fixture with native procedures or Lua fallback:

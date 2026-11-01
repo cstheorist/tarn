@@ -1,0 +1,346 @@
+{
+ "date": "2026-11-01T13:50:01+00:00",
+ "engine": "vinyl",
+ "rows_at_scale_1": 20000,
+ "groups": 50,
+ "sql": {
+  "scan": "SELECT id,v FROM a WHERE v % 10 = 3",
+  "join": "SELECT a.id,b.id FROM a JOIN b ON a.g=b.g WHERE a.h = 1",
+  "sort": "SELECT id,v FROM a ORDER BY v,id"
+ },
+ "resources": "defaults (docs/resources.md)",
+ "host": {
+  "platform": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+  "cpus": 2
+ },
+ "source": {
+  "revision": "17b6319c3c4f390d3a69c402c0741a6803cbe897",
+  "modified": false
+ },
+ "gateway": {
+  "name": "tarn-server",
+  "sha256": "39614341857ce2fbac94eb034bb924d4042c5dae0edbb0fd132d7411a2728dc9"
+ },
+ "cells": [
+  {
+   "op": "scan",
+   "rows": 20000,
+   "sessions": 1,
+   "iterations": 3,
+   "expected_rows": 2002,
+   "outcomes": {
+    "ok": 3,
+    "refused": 0,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {},
+   "elapsed_seconds": 0.142,
+   "ok_per_second": 21.08,
+   "ok_p50_seconds": 0.0481,
+   "ok_max_seconds": 0.0493,
+   "peak_bytes": 35394144,
+   "peak_work": 4208106,
+   "refusals": 0,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 75165696,
+   "gateway_rss_bytes": 75165696,
+   "failures": [],
+   "scale": 1
+  },
+  {
+   "op": "scan",
+   "rows": 20000,
+   "sessions": 8,
+   "iterations": 3,
+   "expected_rows": 2002,
+   "outcomes": {
+    "ok": 24,
+    "refused": 0,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {},
+   "elapsed_seconds": 1.185,
+   "ok_per_second": 20.25,
+   "ok_p50_seconds": 0.3617,
+   "ok_max_seconds": 0.4948,
+   "peak_bytes": 278270948,
+   "peak_work": 23618808,
+   "refusals": 0,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 77361152,
+   "gateway_rss_bytes": 67051520,
+   "failures": [],
+   "scale": 1
+  },
+  {
+   "op": "join",
+   "rows": 20000,
+   "sessions": 1,
+   "iterations": 3,
+   "expected_rows": 4000,
+   "outcomes": {
+    "ok": 3,
+    "refused": 0,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {},
+   "elapsed_seconds": 0.12,
+   "ok_per_second": 24.97,
+   "ok_p50_seconds": 0.0374,
+   "ok_max_seconds": 0.0457,
+   "peak_bytes": 34203572,
+   "peak_work": 81643,
+   "refusals": 0,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 46243840,
+   "gateway_rss_bytes": 46243840,
+   "failures": [],
+   "scale": 1
+  },
+  {
+   "op": "join",
+   "rows": 20000,
+   "sessions": 8,
+   "iterations": 3,
+   "expected_rows": 4000,
+   "outcomes": {
+    "ok": 24,
+    "refused": 0,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {},
+   "elapsed_seconds": 0.914,
+   "ok_per_second": 26.26,
+   "ok_p50_seconds": 0.2642,
+   "ok_max_seconds": 0.367,
+   "peak_bytes": 186975054,
+   "peak_work": 488049,
+   "refusals": 0,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 69296128,
+   "gateway_rss_bytes": 69296128,
+   "failures": [],
+   "scale": 1
+  },
+  {
+   "op": "sort",
+   "rows": 20000,
+   "sessions": 1,
+   "iterations": 3,
+   "expected_rows": 20000,
+   "outcomes": {
+    "ok": 3,
+    "refused": 0,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {},
+   "elapsed_seconds": 0.903,
+   "ok_per_second": 3.32,
+   "ok_p50_seconds": 0.3539,
+   "ok_max_seconds": 0.4085,
+   "peak_bytes": 55612660,
+   "peak_work": 6602097,
+   "refusals": 0,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 94068736,
+   "gateway_rss_bytes": 94068736,
+   "failures": [],
+   "scale": 1
+  },
+  {
+   "op": "sort",
+   "rows": 20000,
+   "sessions": 8,
+   "iterations": 3,
+   "expected_rows": 20000,
+   "outcomes": {
+    "ok": 24,
+    "refused": 0,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {},
+   "elapsed_seconds": 6.237,
+   "ok_per_second": 3.85,
+   "ok_p50_seconds": 1.7786,
+   "ok_max_seconds": 2.5504,
+   "peak_bytes": 251854184,
+   "peak_work": 24397742,
+   "refusals": 0,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 131862528,
+   "gateway_rss_bytes": 71725056,
+   "failures": [],
+   "scale": 1
+  },
+  {
+   "op": "scan",
+   "rows": 200000,
+   "sessions": 1,
+   "iterations": 3,
+   "expected_rows": 20000,
+   "outcomes": {
+    "ok": 3,
+    "refused": 0,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {},
+   "elapsed_seconds": 2.338,
+   "ok_per_second": 1.28,
+   "ok_p50_seconds": 0.7473,
+   "ok_max_seconds": 0.8728,
+   "peak_bytes": 51221032,
+   "peak_work": 42553033,
+   "refusals": 0,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 80908288,
+   "gateway_rss_bytes": 70881280,
+   "failures": [],
+   "scale": 10
+  },
+  {
+   "op": "scan",
+   "rows": 200000,
+   "sessions": 8,
+   "iterations": 3,
+   "expected_rows": 20000,
+   "outcomes": {
+    "ok": 24,
+    "refused": 0,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {},
+   "elapsed_seconds": 11.893,
+   "ok_per_second": 2.02,
+   "ok_p50_seconds": 3.4857,
+   "ok_max_seconds": 4.7284,
+   "peak_bytes": 362035736,
+   "peak_work": 318162560,
+   "refusals": 0,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 152920064,
+   "gateway_rss_bytes": 100556800,
+   "failures": [],
+   "scale": 10
+  },
+  {
+   "op": "join",
+   "rows": 200000,
+   "sessions": 1,
+   "iterations": 3,
+   "expected_rows": 400000,
+   "outcomes": {
+    "ok": 0,
+    "refused": 3,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {
+    "query memory budget": 3
+   },
+   "elapsed_seconds": 0.132,
+   "ok_per_second": 0.0,
+   "ok_p50_seconds": null,
+   "ok_max_seconds": null,
+   "peak_bytes": 67488954,
+   "peak_work": 498645,
+   "refusals": 3,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 75497472,
+   "gateway_rss_bytes": 75497472,
+   "failures": [],
+   "scale": 10
+  },
+  {
+   "op": "join",
+   "rows": 200000,
+   "sessions": 8,
+   "iterations": 3,
+   "expected_rows": 400000,
+   "outcomes": {
+    "ok": 0,
+    "refused": 24,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {
+    "query memory budget": 24
+   },
+   "elapsed_seconds": 0.691,
+   "ok_per_second": 0.0,
+   "ok_p50_seconds": null,
+   "ok_max_seconds": null,
+   "peak_bytes": 337726936,
+   "peak_work": 3494604,
+   "refusals": 24,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 128163840,
+   "gateway_rss_bytes": 128163840,
+   "failures": [],
+   "scale": 10
+  },
+  {
+   "op": "sort",
+   "rows": 200000,
+   "sessions": 1,
+   "iterations": 3,
+   "expected_rows": 200000,
+   "outcomes": {
+    "ok": 0,
+    "refused": 3,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {
+    "query memory budget": 3
+   },
+   "elapsed_seconds": 0.206,
+   "ok_per_second": 0.0,
+   "ok_p50_seconds": null,
+   "ok_max_seconds": null,
+   "peak_bytes": 66481104,
+   "peak_work": 9255653,
+   "refusals": 6,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 87904256,
+   "gateway_rss_bytes": 87904256,
+   "failures": [],
+   "scale": 10
+  },
+  {
+   "op": "sort",
+   "rows": 200000,
+   "sessions": 8,
+   "iterations": 3,
+   "expected_rows": 200000,
+   "outcomes": {
+    "ok": 0,
+    "refused": 24,
+    "wrong": 0,
+    "error": 0
+   },
+   "refused_by": {
+    "query memory budget": 24
+   },
+   "elapsed_seconds": 1.551,
+   "ok_per_second": 0.0,
+   "ok_p50_seconds": null,
+   "ok_max_seconds": null,
+   "peak_bytes": 512133122,
+   "peak_work": 63096024,
+   "refusals": 48,
+   "read_deadlines": 0,
+   "gateway_peak_rss_bytes": 192581632,
+   "gateway_rss_bytes": 182521856,
+   "failures": [],
+   "scale": 10
+  }
+ ]
+}

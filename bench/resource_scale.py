@@ -5,6 +5,7 @@ SQL resource budgets, with one and several sessions (#134).
   python3 bench/resource_scale.py --tarn HOST:PORT --cluster-dir DIR
         [--rows 20000] [--scales 1,10] [--sessions 1,8] [--iterations 3]
         [--engine memtx] [--out RESULTS]
+  python3 bench/resource_scale.py --markdown RESULTS...   (the cells as a table)
 
 DIR is a scripts/cluster.sh cluster whose cluster.json holds the budgets
 (TARN_RESOURCE_LIMITS when it started; the defaults of docs/resources.md
@@ -188,8 +189,8 @@ class Gateway:
             return {k: int(v) for k, v in q(c, "SHOW GLOBAL STATUS LIKE 'Tarn_resource%'")}
 
     def executable(self):
-        path = os.readlink(f"/proc/{self.pid()}/exe")
-        return {"path": path, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
+        path = Path(os.readlink(f"/proc/{self.pid()}/exe"))
+        return {"name": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 def reason(message):
@@ -249,17 +250,38 @@ def run_cell(gw, op, n, sessions, iterations):
     }
 
 
+def markdown(reports):
+    """The cells of results files as one Markdown table."""
+    seconds = lambda s: "" if s is None else f"{s:.3f}"
+    out = ["| Engine | Rows of a | Statement | Sessions | Completed | Refused | p50 s | Max s | Peak admitted MiB "
+           "| Peak RSS MiB |", "|---|---:|---|---:|---:|---|---:|---:|---:|---:|"]
+    for r in reports:
+        for c in r["cells"]:
+            refused = ", ".join(f"{n} {why}" for why, n in c["refused_by"].items()) or "0"
+            out.append(f"| {r['engine']} | {c['rows']:,} | {c['op']} | {c['sessions']} "
+                       f"| {c['outcomes']['ok']}/{c['sessions'] * c['iterations']} | {refused} "
+                       f"| {seconds(c['ok_p50_seconds'])} | {seconds(c['ok_max_seconds'])} "
+                       f"| {c['peak_bytes'] / 2**20:.0f} | {c['gateway_peak_rss_bytes'] / 2**20:.0f} |")
+    return "\n".join(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tarn", required=True)
-    ap.add_argument("--cluster-dir", required=True)
+    ap.add_argument("--tarn")
+    ap.add_argument("--cluster-dir")
     ap.add_argument("--rows", type=int, default=20000, help="rows of a at scale 1")
     ap.add_argument("--scales", default="1,10")
     ap.add_argument("--sessions", default="1,8")
     ap.add_argument("--iterations", type=int, default=3)
     ap.add_argument("--engine", choices=("memtx", "vinyl"), default="memtx")
-    ap.add_argument("--out", help="results file (bench/results_resource_scale_ENGINE.json)")
+    ap.add_argument("--out", help="results file (bench/resources/scale-ENGINE.json)")
+    ap.add_argument("--markdown", nargs="+", metavar="RESULTS", help="print the cells of results files and exit")
     args = ap.parse_args()
+    if args.markdown:
+        print(markdown([json.loads(Path(f).read_text()) for f in args.markdown]))
+        return
+    if not args.tarn or not args.cluster_dir:
+        ap.error("--tarn and --cluster-dir are required")
     gw = Gateway(args.tarn, args.cluster_dir)
     config = json.loads((Path(args.cluster_dir) / "cluster.json").read_text())
     report = {
@@ -282,7 +304,7 @@ def main():
                 report["cells"].append(cell)
                 failed |= cell["outcomes"]["wrong"] > 0 or cell["outcomes"]["error"] > 0
                 print(json.dumps(cell), flush=True)
-    out = args.out or str(Path(__file__).resolve().parent / f"results_resource_scale_{args.engine}.json")
+    out = args.out or str(Path(__file__).resolve().parent / "resources" / f"scale-{args.engine}.json")
     Path(out).write_text(json.dumps(report, indent=1) + "\n")
     print(f"wrote {out}", flush=True)
     if failed:
