@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The generated MySQL contracts page (`docs/mysql-contracts.md`) lists the
+  lazy-index contracts with the release manifest, each with its regression
+  tests, from `tests/contracts/lazy-index.json`. A new entry,
+  `lazy.move_drain`, and its test cover a bucket move while the bucket's
+  lazy deliveries are stalled: the move fails with 1205 at the move timeout
+  and the bucket stays, and a session's read-your-writes catch-up follows
+  the bucket once it has moved
+  ([#182](https://github.com/cstheorist/tarn/issues/182)).
+
 - Every 1412 ("Table definition has changed") that does not come from a
   schema change's own steps is logged at info level with its origin: a
   storage node's fence (the table, its fence and the write's version), a

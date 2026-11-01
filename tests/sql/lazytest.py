@@ -15,6 +15,8 @@ import time
 
 import pymysql
 
+from movetest import bucket_of
+
 DB = "lazytest"
 TARANTOOL = os.environ.get("TARANTOOL", "tarantool")
 
@@ -320,6 +322,69 @@ class T:
             finally:
                 q(c, "ROLLBACK")
                 resume(self.nodes)
+
+    def test_catch_up_follows_a_moved_bucket(self):
+        # A session's obligation in a bucket that moves. The move cannot
+        # flip while the bucket's lazy delivery is pending, and the session
+        # keeps waiting for the obligation meanwhile; once delivery resumes
+        # the move goes through, and catch-up then follows the bucket to its
+        # new owner for the session's next write too.
+        with self.table("t_move") as c, self.c() as admin:
+            sql = "SELECT id FROM t_move WHERE k=7 ORDER BY id"
+            count = ev(self.nodes[0], "return box.space._tarn_meta:get{'buckets'}.value.count")
+            bucket = bucket_of(1, count)
+            shard = {n: ev(n, "return box.space._tarn_meta:get{'shard_id'}.value") for n in self.nodes}
+
+            def owner():
+                states = {shard[n]: ev(n, f"local t = box.space._tarn_buckets:get{{{bucket}}} return t and t.state")
+                          for n in self.nodes}
+                active = [s for s, state in states.items() if state == "active"]
+                assert len(active) == 1, states
+                return active[0]
+
+            def catch_up_refused():
+                try:
+                    q(c, sql)
+                except pymysql.MySQLError as e:
+                    assert e.args[0] == 1205, e
+                else:
+                    raise AssertionError("catch-up returned before the session's obligation was delivered")
+
+            q(c, "INSERT INTO t_move VALUES (1,1,7,1,'a')")
+            self.caught_up(c)
+            assert self.lazy(c, sql) == ((1,),)
+            source = owner()
+            target = next(s for s in shard.values() if s != source)
+            pause(self.nodes)
+            try:
+                q(c, "INSERT INTO t_move VALUES (1,2,7,2,'b')")
+                q(c, "SET SESSION tarn_lazy_wait_timeout=0")
+                catch_up_refused()
+                # The source drains the bucket's delivery before it flips.
+                try:
+                    q(admin, f"TARN MOVE BUCKET {bucket} TO SHARD {target}")
+                except pymysql.MySQLError as e:
+                    assert e.args[0] == 1205 and "lazy delivery has not drained" in e.args[1], e
+                else:
+                    raise AssertionError("a bucket moved with its lazy delivery pending")
+                assert owner() == source
+                catch_up_refused()
+            finally:
+                resume(self.nodes)
+            q(admin, f"TARN MOVE BUCKET {bucket} TO SHARD {target}")
+            assert owner() == target
+            q(c, "SET SESSION tarn_lazy_wait_timeout=5")
+            assert self.lazy(c, sql) == ((1,), (2,))
+            pause(self.nodes)
+            try:
+                q(c, "INSERT INTO t_move VALUES (1,3,7,3,'c')")
+                q(c, "SET SESSION tarn_lazy_wait_timeout=0")
+                catch_up_refused()
+            finally:
+                resume(self.nodes)
+            q(c, "SET SESSION tarn_lazy_wait_timeout=5")
+            assert self.lazy(c, sql) == ((1,), (2,), (3,))
+            q(admin, f"TARN MOVE BUCKET {bucket} TO SHARD {source}")
 
     def test_changed_key_still_matches_where(self):
         with self.table("t_key") as c:

@@ -133,9 +133,11 @@ Own-session catch-up is causal and can still omit another session's newly
 matching row. It is not a substitute for `strong`.
 
 The versioned [lazy contract fragment](../tests/contracts/lazy-index.json)
-maps these guarantees and intentional differences to executable cases for
-the broader compatibility manifest tracked in #178. It does not claim the
-unimplemented pinned-MySQL release matrix is already complete.
+maps these guarantees and intentional differences to executable cases, and
+the generated [MySQL contracts page](mysql-contracts.md) lists them with
+the release manifest (#178). They are Tarn behavior, not paired MySQL oracle
+histories: the fragment does not claim the pinned-MySQL release matrix
+covers them.
 
 Routing, equality and identity must agree for supported SQL types. Nullable
 non-unique keys remain eligible for storage. Case-insensitive keys use
@@ -299,7 +301,10 @@ in the per-row version ledger, until the storage node deletes it: a
 background pass deletes those entries, at most 128 in a transaction, in
 buckets the node may write, noted for the move like any write. Pending
 assignments are not migrated in the initial design. Destination outage can
-therefore delay a move. Shard removal must also wait for pending,
+therefore delay a move: the source's fence waits for the bucket's pending
+deliveries up to the move timeout (`move_timeout`, 10 s by default), and if
+they have not drained by then, `TARN MOVE BUCKET` fails with 1205 and the
+bucket stays with its owner. Shard removal must also wait for pending,
 reserved and in-flight lazy obligations before decommissioning a source.
 
 Deploy lazy-aware gateways and storage modules on every replica before
