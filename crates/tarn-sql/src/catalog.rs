@@ -472,6 +472,26 @@ impl TableDef {
     pub fn field_of(&self, c: usize) -> usize {
         self.columns[c].field.map(|f| f as usize).unwrap_or(c)
     }
+    /// The most bytes a stored tuple of this table takes, from its column
+    /// types: the columns, their weight fields (eight 16-bit weights at most
+    /// per character, under unicode_ci) and `bucket_id`. None when a column's
+    /// type bounds nothing (`SqlType::max_stored_bytes`), or the table has
+    /// fields of dropped columns, which old tuples still fill with values of
+    /// the type they had.
+    pub fn max_tuple_bytes(&self) -> Option<u64> {
+        if !self.dropped.is_empty() {
+            return None;
+        }
+        let mut total = 5 + 9; // the array header and bucket_id
+        for c in &self.columns {
+            let ty = c.ty();
+            total += ty.max_stored_bytes()?;
+            if c.weight.is_some() {
+                total += 16 * u64::from(ty.len.unwrap_or(255)) + 5;
+            }
+        }
+        Some(total)
+    }
     /// Indexes the planner may use (not INVISIBLE).
     pub fn usable_indexes(&self) -> impl Iterator<Item = &IndexDef> {
         self.indexes.iter().filter(|i| !i.invisible)

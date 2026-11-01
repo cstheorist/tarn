@@ -214,7 +214,28 @@ def run(a):
         rows = q(bounded, "SELECT id FROM wide WHERE id % 97 = 5")
         assert sorted(r[0] for r in rows) == [i for i in range(1, wide + 1) if i % 97 == 5], len(rows)
         refuse(bounded, "SELECT id FROM wide WHERE id % 97 <> 5")
+        # In a transaction the second scan reads shards whose streams the
+        # first began, and pages by size as the first does (#259).
+        q(bounded, "BEGIN")
+        for _ in range(2):
+            assert sorted(q(bounded, "SELECT id FROM wide WHERE id % 97 = 5")) == sorted(rows)
+        q(bounded, "COMMIT")
         record("filtered_scan", rows=wide, payload_chars=1995, kept=len(rows), status=status(bounded))
+    # 4096 rows of 3,000 characters exceed the 8 MiB storage frame, whatever
+    # the budgets: the second scan in a transaction must not ask for them
+    # in one page (#259).
+    wider = 9000
+    with connect(a.tarn) as control, control.cursor() as cursor:
+        q(control, "CREATE TABLE wider (id INT PRIMARY KEY, s VARCHAR(3000) NOT NULL)")
+        for start in range(1, wider + 1, 200):
+            cursor.executemany("INSERT INTO wider VALUES (%s,%s)",
+                               [(i, "v" * 3000) for i in range(start, min(start + 200, wider + 1))])
+        want = [(i,) for i in range(1, wider + 1) if i % 97 == 5]
+        q(control, "BEGIN")
+        for _ in range(2):
+            assert sorted(q(control, "SELECT id FROM wider WHERE id % 97 = 5")) == want
+        q(control, "COMMIT")
+        record("transaction_scan", rows=wider, payload_chars=3000, kept=len(want))
     # Resource errors end the complete explicit transaction, freeing row locks.
     with connect(a.transaction) as txn, connect(a.tarn) as control:
         for kind in ("reads", "writes", "savepoints"):

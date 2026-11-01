@@ -587,7 +587,11 @@ with a 60 s transaction timeout). Its exact native transaction ID is marked
 before the first data read. A read handed back rolls back only a newly
 owned transaction; an existing stream and its prior reads remain intact.
 The gateway can use IPROTO SELECT for later suitable reads of that stream;
-its eventual commit still validates the stream. An arbitrary unmarked
+its eventual commit still validates the stream. Such a select cuts its page
+by count alone, so it asks for no more rows than the table's widest rows
+(from its column types) fit in 4 MiB, and a read of more than one row that
+nothing bounds (TEXT, BLOB, JSON, a dropped column's field) goes to
+`ts_select` or `tarn_select` (issue #259). An arbitrary unmarked
 ambient transaction is refused, never refreshed after it already read.
 [Native storage](native-storage.md#freshness-and-transaction-ownership)
 describes the ABI and input-lifetime boundary. A shard without the module (an older

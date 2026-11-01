@@ -66,6 +66,10 @@ is never blindly replayed. A safe read/validation conflict remains
 Storage frames for gateway connections are capped at **8 MiB**, checked from
 the length prefix before payload reservation. This allows the normal 4 MiB
 pager target and a boundary row; a larger single row is refused on reads.
+A transaction's later reads of a shard (plain IPROTO SELECT, which counts
+rows, not bytes) ask for no more rows than the table's widest rows fit in
+4 MiB; reads of rows that nothing bounds use the storage procedures, which
+cut pages by size.
 Each active read reserves 16 MiB plus its encoded arguments before dispatch,
 covering buffer growth. A query has one to four concurrent read slots,
 derived from its byte limit, so small batched joins wait for their own wire
@@ -158,7 +162,8 @@ output, with three failing mutation controls. It does not prove concrete
 allocation sizes or scheduling. The Verus crate is unchanged. Runtime tests
 cover accounting/refunds, stable heap selection, an abandoned established
 read, exact MariaDB comparisons, oversized scans/joins/groups/offsets,
-filtered scans of more pages than the budget holds, no partial DML, explicit-transaction cleanup, slow consumers, binary long
+filtered scans of more pages than the budget holds (also repeated in a
+transaction), no partial DML, explicit-transaction cleanup, slow consumers, binary long
 data, work caps and concurrent overload.
 
 Run the dedicated fixture with native procedures or Lua fallback:
