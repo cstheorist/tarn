@@ -139,6 +139,23 @@ does not return, at several times their stored size. Raise `query_bytes`
 (and `server_bytes` for concurrent sessions) for larger statements. The
 tables are in [bench/resources](../bench/resources/README.md#scale-study).
 
+
+## The cost of the limits
+
+`bench/resource_overhead.py` runs one workload of point reads, short
+ranges, counts and single-row updates with the defaults in force and with
+limits no statement reaches, under identical admission. On a two-shard
+cluster:
+
+- p99 latency is the same within noise;
+- goodput is lower by about 2% on memtx and not measurably on vinyl;
+- nothing is refused.
+
+The accounting runs in both, so this measures the limits, not the
+accounting. The SQL server's idle RSS (about 30 MiB) is outside the managed
+budget. Under the load, RSS grew by about 20 MiB while the meter admitted
+over 200 MiB. See [bench/resources](../bench/resources/README.md#goodput-and-tail-latency-budgets-in-force-and-out-of-reach).
+
 ## Monitoring and verification boundaries
 
 `SHOW STATUS` reports `Tarn_resource_bytes`, `Tarn_resource_peak_bytes`,

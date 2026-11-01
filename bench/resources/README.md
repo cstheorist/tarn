@@ -139,3 +139,63 @@ return.
 
 Regenerate the table with
 `python3 bench/resource_scale.py --markdown bench/resources/scale-*.json`.
+
+## Goodput and tail latency, budgets in force and out of reach
+
+[`resource_overhead.py`](../resource_overhead.py) runs one workload with
+the SQL resource budgets in force (the defaults) and out of reach (2^40
+bytes, 2^60 work) under identical admission (#134's third scale
+criterion). Before each run it restarts the SQL server with one of the two
+`resources` objects, everything else in `cluster.json` unchanged, in
+alternating pairs. Eight sessions run for 20 s over a 100,000-row table:
+
+- 50% point reads by primary key;
+- 20% 100-row primary-key ranges;
+- 10% counts over a secondary-index prefix (about 1,000 rows) with a
+  predicate the SQL server evaluates;
+- 20% single-row updates.
+
+Every result is checked against the data's formula, and no run had a
+refusal or an error. The runs were collected on 2026-11-01 on a two-shard
+RF1 cluster (WAL write) on a shared two-CPU host: source `6c7ff70`, release
+SQL server SHA-256 `5cbd6a345816f0f238c097e2f3095538febc8b27e6e2aa2a548d831eb258b79d`.
+Raw results: [overhead-memtx.json](overhead-memtx.json), [overhead-vinyl.json](overhead-vinyl.json).
+
+| Engine | Pair | Config | Goodput/s | p50 ms | p99 ms | Max ms | Idle RSS MiB | Peak RSS MiB | Admitted peak MiB | Refusals |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| memtx | 1 | budgets | 1,773.5 | 3.55 | 18.13 | 47.3 | 28 | 51 | 227 | 0 |
+| memtx | 1 | unbounded | 1,813.9 | 3.39 | 19.30 | 43.0 | 31 | 52 | 227 | 0 |
+| memtx | 2 | unbounded | 1,799.9 | 3.45 | 18.46 | 44.9 | 30 | 51 | 227 | 0 |
+| memtx | 2 | budgets | 1,769.9 | 3.52 | 19.02 | 40.5 | 28 | 50 | 227 | 0 |
+| memtx | 3 | budgets | 1,743.7 | 3.54 | 19.56 | 43.9 | 28 | 50 | 227 | 0 |
+| memtx | 3 | unbounded | 1,787.7 | 3.50 | 18.56 | 79.3 | 28 | 50 | 227 | 0 |
+| vinyl | 1 | budgets | 1,083.0 | 5.73 | 27.45 | 57.4 | 30 | 52 | 243 | 0 |
+| vinyl | 1 | unbounded | 1,138.5 | 5.43 | 25.55 | 57.4 | 28 | 47 | 243 | 0 |
+| vinyl | 2 | unbounded | 1,155.5 | 5.32 | 26.41 | 82.1 | 32 | 47 | 227 | 0 |
+| vinyl | 2 | budgets | 1,168.6 | 5.19 | 25.99 | 62.4 | 28 | 51 | 227 | 0 |
+| vinyl | 3 | budgets | 1,210.5 | 5.02 | 25.48 | 63.4 | 28 | 46 | 227 | 0 |
+| vinyl | 3 | unbounded | 1,252.5 | 4.87 | 24.88 | 74.3 | 31 | 50 | 227 | 0 |
+
+- **Goodput.** On memtx, each budgets run did 1.7–2.5% fewer operations
+  than the unbounded run of its pair. These runs isolate the limits, not
+  the cause of that gap. On vinyl the pairs disagree in sign, within the
+  runs' drift.
+- **Tail latency.** p99 is the same within noise: medians of 19.0 and
+  18.6 ms on memtx, 26.0 and 25.6 ms on vinyl.
+- **What the comparison covers.** It measures the limits: refusals, and
+  reads waiting for room. The accounting runs in both configurations, so
+  their admitted peaks are equal. No build without it exists to compare
+  against.
+- **Memory outside the managed budget.** The SQL server's idle RSS,
+  28–32 MiB (runtime, catalog, connection pools), is not covered. Under the
+  load its RSS peaked at 46–52 MiB while the meter admitted 227–243 MiB.
+  The accounting is conservative, so the admitted bytes bound the RSS
+  growth with a wide margin. Storage nodes' memory is outside the SQL
+  budget entirely.
+
+The contract workflows of #178 (MySQL release contracts), #180 (exact key
+contracts) and #183 (outcome contracts) run on every change and pass with
+the budgets in force.
+
+Regenerate the table with
+`python3 bench/resource_overhead.py --markdown bench/resources/overhead-*.json`.

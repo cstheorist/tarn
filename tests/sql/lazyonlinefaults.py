@@ -162,7 +162,9 @@ def main():
                 since = leaderless.setdefault(g["id"], time.monotonic())
                 if time.monotonic() - since < 8:
                     continue
-                clocks = {n: {int(k): v for k, v in st["vclock"].items()} for n, st in states.items()}
+                # (Component 0 counts a replica's local writes: not replicated.)
+                clocks = {n: {int(k): v for k, v in st["vclock"].items() if int(k) != 0}
+                          for n, st in states.items()}
 
                 def ahead(n):
                     return all(clocks[n].get(i, 0) >= lsn for m in clocks for i, lsn in clocks[m].items())
@@ -181,10 +183,6 @@ def main():
     record("settled", leaders=settle())
     # Shard 2: the policy fault test before this one crashed shard 1's leader.
     first, _ = wait_leader(groups[0])
-    victim, state = wait_leader(groups[1])
-    assert Path(state["cwd"]).parent.name == work.name
-    owned_pid = int((work / (Path(state["cwd"]).name + ".pid")).read_text())
-    assert owned_pid == state["pid"]
     c = connect(args.tarn)
     q(c, "DROP DATABASE IF EXISTS lazy_online_fault")
     q(c, "CREATE DATABASE lazy_online_fault")
@@ -233,12 +231,45 @@ def main():
         except pymysql.MySQLError as e:
             alter["error"] = list(e.args)
 
-    # A leader change in another step of the ALTER (BUILD, PREPARE) fails
-    # it with 2003 or 1213 for the client to retry, as documented; its job
-    # aborts, which retires the incarnation. Such an attempt before the
-    # scan reached the hook is retried, with the hook on shard 2's leader
-    # of the time.
+    # The scan is held on whichever replica of shard 2 leads when it runs.
+    # The build rides out a leader change before its scan (#253), and then
+    # scans on the new leader, so the hook goes on every replica. A hold
+    # lasts at most 10 s (`yield_point`), so the replicas are polled at once.
+    # A leader change in another step of the ALTER (BUILD, PREPARE) fails it
+    # with 2003 or 1213 for the client to retry, as documented; its job
+    # aborts, which retires the incarnation. Such an attempt before the scan
+    # reached the hook is retried.
     TRANSIENT = (1213, 2003, 2013)
+
+    def hook(nodes, action):
+        done = []
+        for node in nodes:
+            try:
+                r = rpc(node, "tarn_test_hook", ["lazy_bootstrap", action])
+                assert r[0] == "ok", r
+                done.append(node)
+            except RuntimeError as e:  # a replica that is down
+                record("hook_failed", node=node, action=action, error=str(e)[-300:])
+        return done
+
+    def holder(nodes, deadline):
+        found = []
+
+        def poll(node):
+            while not found and not alter and time.monotonic() < deadline:
+                try:
+                    # (waits up to 5 s on the node for a step to reach the hook)
+                    if rpc(node, "tarn_test_hook", ["lazy_bootstrap", "reached"])[1] > 0:
+                        found.append(node)
+                except Exception:  # timed out, or the replica is down
+                    time.sleep(.2)
+        pollers = [threading.Thread(target=poll, args=(n,)) for n in nodes]
+        for p in pollers:
+            p.start()
+        for p in pollers:
+            p.join()
+        return found[0] if found else None
+
     threads = [threading.Thread(target=writer)]
     retried = []
     try:
@@ -247,50 +278,49 @@ def main():
         for attempt in range(4):
             if attempt:
                 settle()
-                victim, state = wait_leader(groups[1])
-                assert Path(state["cwd"]).parent.name == work.name
-                owned_pid = int((work / (Path(state["cwd"]).name + ".pid")).read_text())
-                assert owned_pid == state["pid"]
-            r = rpc(victim, "tarn_test_hook", ["lazy_bootstrap", "hold"])
-            assert r[0] == "ok", r
+            armed = hook(groups[1]["replicas"], "hold")
             alter.clear()
             threads.append(threading.Thread(target=run_alter))
             threads[-1].start()
-            deadline = time.monotonic() + 60
-            reached = False
-            while time.monotonic() < deadline and "error" not in alter:
-                try:
-                    # (waits up to 5 s on the node, as long as the call may take)
-                    if rpc(victim, "tarn_test_hook", ["lazy_bootstrap", "reached"])[1] > 0:
-                        reached = True
-                        break
-                except RuntimeError as e:
-                    if "timed out" not in str(e):
-                        raise
-            if reached:
+            victim = holder(armed, time.monotonic() + 60)
+            if victim is not None:
                 break
             # (1105 "storage error 217": a step a new leader rolled back.)
             transient = "error" in alter and (alter["error"][0] in TRANSIENT or alter["error"][0] == 1105
                                               and str(alter["error"][1]).startswith("storage error 217:"))
             if not transient or attempt == 3:
-                fail("the scan never reached the hook", {"alter": alter, "retried": retried})
+                fail("the scan never reached the hook", {"alter": alter, "retried": retried, "armed": armed})
             retried.append(alter["error"])
             record("alter_retried", error=alter["error"])
-            try:
-                rpc(victim, "tarn_test_hook", ["lazy_bootstrap", "release"])
-            except Exception:  # the old leader may be down
-                pass
+            hook(armed, "release")
             threads[-1].join(timeout=30)
         threads[1:] = [threads[-1]]
-        before = writes[0]
-        building = ev(victim, "return tarn.lazy.building()")
-        assert building, "the scan is held, yet no online build is recorded"
-        record("scan_held", leader=victim, writes=before, gen=building)
-        receipt = ev(victim, "local pid,cwd=...;assert(tarn.cfg.test_hooks and not box.info.ro);"
-                     "assert(box.info.pid==pid and require('fio').cwd()==cwd);"
-                     "require('fiber').create(function() require('fiber').sleep(.05);"
-                     "local ffi=require('ffi');ffi.cdef('void _exit(int);');ffi.C._exit(86) end);"
-                     "return {pid=box.info.pid}", [owned_pid, state["cwd"]])
+        while True:
+            state = ev(victim, "return {pid=box.info.pid,cwd=require('fio').cwd()}")
+            assert Path(state["cwd"]).parent.name == work.name
+            owned_pid = int((work / (Path(state["cwd"]).name + ".pid")).read_text())
+            assert owned_pid == state["pid"]
+            before = writes[0]
+            building = ev(victim, "return tarn.lazy.building()")
+            assert building, "the scan is held, yet no online build is recorded"
+            record("scan_held", leader=victim, writes=before, gen=building)
+            receipt = ev(victim, "local pid,cwd=...;assert(tarn.cfg.test_hooks);"
+                         "if box.info.ro then return {ro=true} end;"
+                         "assert(box.info.pid==pid and require('fio').cwd()==cwd);"
+                         "require('fiber').create(function() require('fiber').sleep(.05);"
+                         "local ffi=require('ffi');ffi.cdef('void _exit(int);');ffi.C._exit(86) end);"
+                         "return {pid=box.info.pid}", [owned_pid, state["cwd"]])
+            if not receipt.get("ro"):
+                break
+            # The holder lost its leadership while it held the scan: the
+            # build goes on on the new leader, whose hook holds it there.
+            record("holder_lost_leadership", node=victim)
+            hook([victim], "release")
+            armed.remove(victim)
+            victim = holder(armed, time.monotonic() + 60)
+            if victim is None:
+                fail("the scan never reached the hook again", {"alter": alter, "armed": armed})
+        hook([n for n in armed if n != victim], "release")
         crashed = victim
         (work / (Path(state["cwd"]).name + ".killed")).write_text(str(owned_pid))
         record("owned_crash_scheduled", receipt=receipt)

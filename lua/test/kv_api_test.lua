@@ -366,6 +366,34 @@ local success, exception = xpcall(function()
             present(engine .. ' positive same handle after READ regrant ' .. who,
                 public(c, 'get', request(m, {1})), 1, 11)
         end
+        -- Changes while a point's read yields (#249). The check after the
+        -- read takes the full description when the schema version or the
+        -- catalog row changed: an unrelated schema change and a rewritten
+        -- identical row let the request complete, a changed row refuses it.
+        local function during(label, change, undo, refused)
+            local f = held_scan(reader, request(m, {{1}, {99}}, true))
+            change()
+            release_scan()
+            local got = future_result(f)
+            if undo then undo() end
+            if refused then
+                error_result(engine .. ' ' .. label, got, 'schema_changed', 1412)
+            else
+                check(engine .. ' ' .. label, got.status == 'ok' and #got.slots == 2
+                    and got.slots[1].status == 'present' and got.slots[2].status == 'missing', got)
+            end
+        end
+        local scratch, original = 'kv_api_scratch_' .. engine, box.space._tarn_catalog:get{def.name}:totable()
+        during('request completes over an unrelated schema change',
+            function() box.schema.space.create(scratch) end, function() box.space[scratch]:drop() end)
+        during('request completes over a rewritten identical catalog row',
+            function() box.space._tarn_catalog:replace(original) end)
+        during('changed catalog row during a read refuses the request', function()
+            local bumped = copy(def); bumped.ver = (def.ver or 0) + 50
+            box.space._tarn_catalog:replace{def.name, bumped}
+        end, function() box.space._tarn_catalog:replace(original) end, true)
+        present(engine .. ' same handle reads normally once the catalog row is restored',
+            public(reader, 'get', request(m, {1})), 1, 11)
 
         local tx = 'kv-unit-missing-' .. engine
         local vote = admin:call('tarn_prepare', {tx, 1, {1},
@@ -391,6 +419,23 @@ local success, exception = xpcall(function()
             public(reader, 'get', request(m, {3})), 'limit_exceeded')
         -- This reply-limit payload exceeds the default movement row budget.
         -- Retire it before the separate ownership roundtrip at normal limits.
+        sp:delete{3}
+        -- The reply bound is exact (#249): with the second slot's payload
+        -- sized so the encoded reply is exactly 1 MiB the read succeeds,
+        -- and one byte more refuses it.
+        local base = 900000
+        sp:replace{3, 33, string.rep('z', base), 1}
+        local sized = public(reader, 'get_many', request(m, {{1}, {3}}, true))
+        assert(sized.status == 'ok', json.encode(sized.error or {}))
+        local exact = base + 1048576 - #mp.encode(sized)
+        sp:replace{3, 33, string.rep('z', exact), 1}
+        sized = public(reader, 'get_many', request(m, {{1}, {3}}, true))
+        check(engine .. ' reply of exactly 1 MiB is returned whole',
+            sized.status == 'ok' and #sized.slots == 2 and #mp.encode(sized) == 1048576
+            and #tuple(sized.slots[2].tuple)[3] == exact, {status = sized.status, error = sized.error})
+        sp:replace{3, 33, string.rep('z', exact + 1), 1}
+        error_result(engine .. ' one byte over 1 MiB refuses the whole reply',
+            public(reader, 'get_many', request(m, {{1}, {3}}, true)), 'limit_exceeded')
         sp:delete{3}
 
         local stream = admin:new_stream(); stream:begin()

@@ -34,6 +34,9 @@ import time
 
 MASK = (1 << 64) - 1
 CAP = 250_000
+# The gateway's own storage traffic, from SHOW STATUS (local: reading it sends
+# no storage request).
+STORAGE_COUNTERS = ("Tarn_storage_rpc_enqueued", "Tarn_storage_bytes_written", "Tarn_storage_bytes_read")
 
 
 def write(path, value):
@@ -269,6 +272,17 @@ def sql_phase(args, root, prefix, cell, manifest, pymysql, credentials):
                                 autocommit=True, charset="utf8mb4", connect_timeout=3, read_timeout=5, write_timeout=5)
             conns.append(c)
             counters.append(WireCounter(c))
+        # A separate, uncounted connection reads the gateway's storage traffic
+        # around the timed window; it closes with the workers' connections.
+        probe = pymysql.connect(host=host, port=int(port), user=credentials["user"], password=credentials["password"],
+                                autocommit=True, charset="utf8mb4", connect_timeout=3, read_timeout=5, write_timeout=5)
+        conns.append(probe)
+
+        def storage_traffic():
+            with probe.cursor() as cursor:
+                cursor.execute("SHOW GLOBAL STATUS LIKE 'Tarn_storage_%'")
+                values = dict(cursor.fetchall())
+            return [int(values[name]) for name in STORAGE_COUNTERS]
 
         def one(cursor, worker, ids):
             deadline = time.monotonic() + 5
@@ -325,6 +339,7 @@ def sql_phase(args, root, prefix, cell, manifest, pymysql, credentials):
             futures = [pool.submit(worker_run, i) for i in range(cell["workers"])]
             ready.wait(timeout=10)
             record["before"] = observe(args, cell, "before", os.getpid())
+            storage0 = storage_traffic()
             counts0 = (sum(c.sent for c in counters), sum(c.received for c in counters), sum(query_count))
             cpu0, start = time.process_time(), time.monotonic()
             deadline[0] = start + args.seconds
@@ -333,6 +348,11 @@ def sql_phase(args, root, prefix, cell, manifest, pymysql, credentials):
                 f.result(timeout=args.seconds + 10)
             elapsed = time.monotonic() - start
             record["client_cpu_seconds"] = time.process_time() - cpu0
+            storage1 = storage_traffic()
+            record["gateway_storage"] = dict(zip(("requests", "bytes_written", "bytes_read"),
+                                                 (b - a for a, b in zip(storage0, storage1))),
+                                             scope="the measured gateway's storage IPROTO requests and bytes "
+                                                   "in the window, its background work included; not TCP headers")
             record["after"] = observe(args, cell, "after", os.getpid())
             record["cpu"] = cpu_delta(record["before"], record["after"])
         lat = sorted(n for t in traces for n, outcome in zip(t["latency"], t["outcomes"]) if outcome == 0)

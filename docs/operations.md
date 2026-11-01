@@ -63,6 +63,7 @@ per-leader maximum; the `topology` object supplies gateway-wide caps.
 | `TARN_WORKDIR` | `data` | data directory: WAL, snapshots and vinyl's files |
 | `TARN_INSTANCE_UUID`, `TARN_INSTANCE_NAME` | derived / unset | stable registered identity for a backup-seeded replica |
 | `TARN_ELECTION_MODE` | `candidate` with replicas | `candidate` or `voter` with replicas; `off` for a standalone instance; seeded copies require `voter` |
+| `TARN_ELECTION_WATCHDOG` | three election timeouts (15) | seconds without a leader before a candidate stands itself; `0`: never (see below) |
 | `TARN_REPLICAS` | `[]` | JSON list of every replica URI of this shard; more than one enables synchronous replication and elections |
 | `TARN_PEERS` | `{}` | JSON map of shard id to replica URIs for every shard (used by the recovery fiber; shards added with `TARN ADD SHARD` are found in the membership) |
 | `TARN_MAX_TXN_AGE` | `120` | immutable timing policy `A`, seconds; must match the gateway's `max_txn_age` |
@@ -95,6 +96,32 @@ The bootstrap enables memtx MVCC, sets the default isolation to
 `read-confirmed` (plain reads never see data that a failover could roll
 back), and in replicated shards uses `election_mode = 'candidate'`,
 `election_fencing_mode = 'strict'` and `replication_synchro_timeout = 5`.
+
+A replicated shard can be left without a leader while the only replicas
+that could win wait:
+
+- A replica refuses a candidate whose vclock lacks rows it has ("the vclock
+  is not acceptable" in its log). This happens, for example, when a leader
+  resigned under strict fencing holding a transaction its followers never
+  received.
+- Each refused candidate's failed election bumps the term.
+- Tarantool restarts a replica's election timer whenever it learns of a
+  newer term. So the replica with the newest vclock may never stand, while
+  the stale ones keep standing and failing.
+
+`box.info.election.leader` is then 0 on every replica, and the terms keep
+climbing.
+
+Each candidate therefore runs an election watchdog. After
+`TARN_ELECTION_WATCHDOG` seconds without a leader, it stands itself
+(`box.ctl.promote()`), provided it receives from a quorum of its replica
+set. The default is three election timeouts (15 s), and 0 turns it off. Only
+a replica that the others' vclocks accept can win; another one that stands
+only bumps the term. A replica that stood waits another period, plus up to
+half of it at random, before it stands again. Each stand is logged ("no
+leader for ... standing (election watchdog)") and counted in
+`tarn_info().stats.election_stands`. With the watchdog off, end the state by
+calling `box.ctl.promote()` on the replica with the newest vclock.
 
 Start every replica of a new shard before sending it traffic. Tarantool 3.9
 stops a joining replica ("can't initialize storage: timed out") when its
@@ -1267,6 +1294,7 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
 | Event | Effect |
 |---|---|
 | Shard leader dies | A replica is elected in about 2–3 s. Statements on that shard fail meanwhile with 2003 (no reachable leader) or 1213; afterwards `tarn-server` uses the new leader. Committed data survives (quorum-replicated). |
+| No replica that could win a shard's election stands (see [storage nodes](#storage-nodes)) | The shard has no leader until the election watchdog makes a candidate stand itself: after 15 s without a leader by default. Statements on that shard fail meanwhile as when its leader dies. |
 | Leader demoted while connections stay open | The old leader answers `ER_READONLY`; `tarn-server` drops those connections and finds the new leader; open transactions abort with 1213. |
 | Leader change or lost SQL-server connection while READ COMMITTED transactions hold row locks | The row locks live in the leader's memory and are released; each transaction that held some is rolled back with 1213 at its next statement on that shard or at commit, never committed without them. |
 | `tarn-server` dies during a cross-shard commit | The storage nodes' recovery fiber finishes or aborts the transaction after `recovery_after`; its locks block conflicting statements until then. |
