@@ -127,7 +127,7 @@ impl Pool {
             reads: Arc::new(tokio::sync::Semaphore::new(
                 (self.limits.query_bytes / (WIRE_BYTES * 2)).clamp(1, 4) as usize,
             )),
-            reading: AtomicUsize::new(0),
+            holding: AtomicUsize::new(0),
             returned: tokio::sync::Notify::new(),
         })
     }
@@ -159,10 +159,9 @@ pub struct Query {
     bytes: AtomicU64,
     work: AtomicU64,
     reads: Arc<tokio::sync::Semaphore>,
-    /// The storage reads that hold a reservation or are taking one
-    /// (`admit_read`), and the wake-up of reads waiting for them to return
-    /// some of it.
-    reading: AtomicUsize,
+    /// The storage reads that hold a reservation (`read_reservation`), and
+    /// the wake-up of reads waiting for them to return some of it.
+    holding: AtomicUsize,
     returned: tokio::sync::Notify,
 }
 
@@ -198,29 +197,24 @@ impl Query {
     /// so whether one more fits used to depend on whether the others had
     /// returned theirs yet (#238): while another read holds a reservation,
     /// a reservation that does not fit waits for the others to return some
-    /// of theirs. With no other read, or once the read timeout has passed,
-    /// it is charged or refused at once like any other charge. On success
-    /// the caller's reservation takes over the read's place in `reading`.
+    /// of theirs. With none held, or once the read timeout has passed, it
+    /// is charged or refused at once like any other charge. The caller's
+    /// reservation counts itself in `holding`.
     async fn admit_read(&self, bytes: u64) -> SqlResult<()> {
-        self.reading.fetch_add(1, Ordering::AcqRel);
-        let taking = Reading(Some(self));
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(self.pool.limits.read_timeout_ms);
         loop {
             // (Registered before looking, so that no return is missed.)
             let returned = self.returned.notified();
             tokio::pin!(returned);
             returned.as_mut().enable();
-            if self.reading.load(Ordering::Acquire) <= 1 || tokio::time::Instant::now() >= deadline {
-                self.charge(bytes)?;
-                break;
+            if self.holding.load(Ordering::Acquire) == 0 || tokio::time::Instant::now() >= deadline {
+                return self.charge(bytes);
             }
             if self.try_charge(bytes)? {
-                break;
+                return Ok(());
             }
             let _ = tokio::time::timeout_at(deadline, returned).await;
         }
-        taking.keep();
-        Ok(())
     }
 
     fn release(&self, bytes: u64) {
@@ -553,7 +547,7 @@ pub async fn cluster_read(
 struct ReadReservation {
     query: Arc<Query>,
     bytes: AtomicU64,
-    /// A storage read's (`read_reservation`), counted in `Query::reading`.
+    /// A storage read's (`read_reservation`), counted in `Query::holding`.
     read: bool,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
@@ -584,31 +578,13 @@ async fn read_reservation(query: &Arc<Query>, bytes: u64) -> SqlResult<Arc<ReadR
         .await
         .map_err(|_| exhausted("read admission closed"))?;
     query.admit_read(bytes).await?;
+    query.holding.fetch_add(1, Ordering::AcqRel);
     Ok(Arc::new(ReadReservation {
         query: query.clone(),
         bytes: AtomicU64::new(bytes),
         read: true,
         _permit: Some(permit),
     }))
-}
-
-/// A read taking a reservation (`Query::admit_read`), until its reservation
-/// takes over its place in `Query::reading` or it gives up.
-struct Reading<'a>(Option<&'a Query>);
-
-impl Reading<'_> {
-    fn keep(mut self) {
-        self.0 = None;
-    }
-}
-
-impl Drop for Reading<'_> {
-    fn drop(&mut self) {
-        if let Some(query) = self.0 {
-            query.reading.fetch_sub(1, Ordering::AcqRel);
-            query.returned.notify_waiters();
-        }
-    }
 }
 
 /// Admit before mutation, then keep ownership through native handback and
@@ -679,7 +655,7 @@ impl Drop for ReadReservation {
     fn drop(&mut self) {
         self.query.release(self.bytes.load(Ordering::Acquire));
         if self.read {
-            self.query.reading.fetch_sub(1, Ordering::AcqRel);
+            self.query.holding.fetch_sub(1, Ordering::AcqRel);
             self.query.returned.notify_waiters();
         }
     }
@@ -902,7 +878,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_read_alone_or_past_the_read_timeout_is_refused_and_a_cancelled_one_leaves_no_count() {
+    async fn a_read_that_cannot_fit_waits_only_for_a_held_reservation_and_only_until_the_read_timeout() {
         let pool = Pool::new(Limits {
             read_timeout_ms: 100,
             ..Limits::default()
@@ -910,24 +886,32 @@ mod tests {
         .unwrap();
         let query = pool.query();
         query.charge(3 * WIRE_BYTES + MIB).unwrap();
-        // Alone, a reservation that does not fit is refused at once.
-        let alone = tokio::time::timeout(Duration::from_millis(50), read_reservation(&query, WIRE_BYTES));
-        assert!(is_exhausted(&alone.await.unwrap().unwrap_err()));
-        assert_eq!(query.reading.load(Ordering::Acquire), 0);
+        // With no reservation held, one that does not fit is refused at
+        // once, also when two reads ask together.
+        let (one, two) = tokio::time::timeout(Duration::from_millis(50), async {
+            tokio::join!(
+                read_reservation(&query, WIRE_BYTES),
+                read_reservation(&query, WIRE_BYTES)
+            )
+        })
+        .await
+        .unwrap();
+        assert!(is_exhausted(&one.unwrap_err()) && is_exhausted(&two.unwrap_err()));
         query.release(WIRE_BYTES);
         let first = read_reservation(&query, WIRE_BYTES).await.unwrap();
+        assert_eq!(query.holding.load(Ordering::Acquire), 1);
         // Behind a read that never returns its reservation: refused at the
         // read timeout.
         let start = tokio::time::Instant::now();
         assert!(is_exhausted(&read_reservation(&query, WIRE_BYTES).await.unwrap_err()));
         assert!(start.elapsed() >= Duration::from_millis(100));
-        // A waiting read that is cancelled gives up its place.
+        // A waiting read that is cancelled leaves nothing behind.
         let waiting = tokio::time::timeout(Duration::from_millis(20), read_reservation(&query, WIRE_BYTES));
         assert!(waiting.await.is_err());
-        assert_eq!(query.reading.load(Ordering::Acquire), 1);
+        assert_eq!(query.holding.load(Ordering::Acquire), 1);
         drop(first);
-        assert_eq!(query.reading.load(Ordering::Acquire), 0);
+        assert_eq!(query.holding.load(Ordering::Acquire), 0);
         assert_eq!(pool.stats()[0], 2 * WIRE_BYTES + MIB);
-        assert_eq!(pool.stats()[5], 2);
+        assert_eq!(pool.stats()[5], 3);
     }
 }
