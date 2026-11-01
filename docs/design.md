@@ -1523,6 +1523,11 @@ commit would meet the fence anyway). One that only read the table goes on
 under READ COMMITTED, each statement decoding rows with its own definition;
 under SERIALIZABLE the ALTER's DDL aborts the stream transactions that read
 the table (memtx MVCC invalidates an altered space), which fail with 1213.
+Each such 1412 is logged at info level with what was found: the storage
+node names the table, its fence and the write's version (or the missing
+index of a read), and the SQL server the transaction's write version
+against its statement's, or the error a statement met while the catalog
+changed. Outside schema changes these lines should not appear.
 
 **Protocol.** One SQL server drives a change to version V through four
 idempotent steps per shard (lua/tarn.lua "Schema changes"):

@@ -224,6 +224,7 @@ pub fn from_iproto(e: tarn_iproto::Error) -> SqlError {
                 SqlError::new(1062, "23000", duplicate_message(&message))
             } else if code == tarn_iproto::errcode::ER_NO_SUCH_INDEX_ID {
                 // an index an ALTER TABLE dropped: re-plan with the new catalog
+                tracing::info!(%message, "storage has no such index (1412)");
                 SqlError::new(1412, "HY000", "Table definition has changed, please retry transaction")
             } else if code == tarn_iproto::errcode::ER_NO_SUCH_SPACE {
                 // a table dropped (or recreated) through another server
@@ -437,6 +438,7 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
                     SqlError::new(1146, "42S02", format!("Table does not exist ({})", msg))
                 }
                 c if c == tarn_iproto::errcode::ER_NO_SUCH_INDEX_ID as i64 => {
+                    tracing::info!(message = %msg, "storage has no such index (1412)");
                     SqlError::new(1412, "HY000", "Table definition has changed, please retry transaction")
                 }
                 0 => SqlError::internal(msg),

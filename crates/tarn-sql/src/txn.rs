@@ -444,7 +444,15 @@ impl Txn {
     /// (memtx MVCC invalidates an altered space).
     pub fn check_def(&self, t: &TableDef) -> SqlResult<()> {
         match self.defs.get(&t.space_id) {
-            Some(&v) if v != t.ver => Err(definition_changed()),
+            Some(&v) if v != t.ver => {
+                tracing::info!(
+                    table = %t.name,
+                    written_with = v,
+                    planned_with = t.ver,
+                    "a transaction's buffered writes predate the definition its statement uses (1412)"
+                );
+                Err(definition_changed())
+            }
             _ => Ok(()),
         }
     }
