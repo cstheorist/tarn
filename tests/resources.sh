@@ -8,7 +8,7 @@ export TARN_BIN=$TARN
 W=$(mktemp -d /tmp/tarn-resources.XXXX)
 PORT=${TARN_RESOURCE_PORT:-4700}
 cleanup() {
-  for name in bounded transaction work materialized matched; do
+  for name in bounded transaction work materialized matched pressure; do
     [ ! -f "$W/$name.pid" ] || kill "$(cat "$W/$name.pid")" 2>/dev/null || true
   done
   bash "$ROOT/scripts/cluster.sh" stop -d "$W/cluster" >/dev/null 2>&1 || true
@@ -27,6 +27,7 @@ profiles={
  'work':dict(query_work=20000),
  'materialized':dict(common,topk=False),
  'matched':common,
+ 'pressure':dict(query_bytes=64<<20,server_bytes=64<<20),
 }
 print(json.dumps(dict(kind='manifest', profiles=profiles, shards=2, replicas=1, wal='write',
  build=os.environ.get('TARN_RESOURCE_BUILD','unspecified'),
@@ -40,12 +41,12 @@ kill "$(cat "$W/cluster/tarn1.pid")"
 TARN_LOG=warn "$TARN" --config "$W/control.json" --listen "127.0.0.1:$PORT" --node-id 1 --threads 2 --pool 2 > "$W/control.log" 2>&1 &
 echo $! > "$W/cluster/tarn1.pid"
 i=1
-for name in bounded transaction work materialized matched; do
+for name in bounded transaction work materialized matched pressure; do
   TARN_LOG=warn "$TARN" --config "$W/$name.json" --listen "127.0.0.1:$((PORT+i))" --node-id "$((i+1))" --threads 2 --pool 2 > "$W/$name.log" 2>&1 &
   echo $! > "$W/$name.pid"
   i=$((i+1))
 done
-for p in $(seq "$PORT" "$((PORT+5))"); do
+for p in $(seq "$PORT" "$((PORT+6))"); do
   for _ in $(seq 100); do (exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null && break; sleep .1; done
 done
 set +e
@@ -55,6 +56,8 @@ python3 "$ROOT/tests/sql/resourcetest.py" --tarn "127.0.0.1:$PORT" --bounded "12
   --ref "${TARN_RESOURCE_REF:?set TARN_RESOURCE_REF to MariaDB 10.11}" \
   --pid "$(cat "$W/cluster/tarn1.pid")" --bounded-pid "$(cat "$W/bounded.pid")" --materialized-pid "$(cat "$W/materialized.pid")"
 rc=$?
+python3 "$ROOT/tests/sql/resourcefaults.py" --control "127.0.0.1:$PORT" --bounded "127.0.0.1:$((PORT+1))" \
+  --pressure "127.0.0.1:$((PORT+6))" || rc=1
 set -e
 if grep -q 'lock copy differs' "$W/cluster"/*.log; then rc=1; fi
 if [ -n "${TARN_RESOURCE_EVIDENCE:-}" ]; then cp -R "$W" "$TARN_RESOURCE_EVIDENCE"; fi

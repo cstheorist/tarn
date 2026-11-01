@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `tests/sql/resourcefaults.py` checks the SQL resource budgets alongside
+  storage continuations, client disconnects and slow readers, reading back
+  what each failure left. `tests/resources.sh` runs it, and CI runs that
+  suite with the Lua procedures (`TARN_NATIVE=0`) too:
+  - a scan refused at a later page rolls its explicit transaction back in
+    full;
+  - a disconnected `INSERT ... SELECT` leaves all of its rows or none;
+  - a statement refused while a slow reader holds its result returns the
+    exact rows once the reader is gone
+  ([#134](https://github.com/cstheorist/tarn/issues/134)).
+
 - `ALTER TABLE ... ADD INDEX ... COMMENT 'tarn:lazy'` builds the new lazy
   index while the table's writes go on, when the change leaves the columns
   the index reads as they are. A short drain turns on capture of the

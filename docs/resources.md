@@ -158,8 +158,22 @@ output, with three failing mutation controls. It does not prove concrete
 allocation sizes or scheduling. The Verus crate is unchanged. Runtime tests
 cover accounting/refunds, stable heap selection, an abandoned established
 read, exact MariaDB comparisons, oversized scans/joins/groups/offsets,
-filtered scans of more pages than the budget holds, no partial DML, explicit-transaction cleanup, slow consumers, binary long
-data, work caps and concurrent overload.
+filtered scans of more pages than the budget holds, no partial DML,
+explicit-transaction cleanup, slow consumers, binary long data, work caps
+and concurrent overload.
+
+`tests/sql/resourcefaults.py` reads back what each failure left, with the
+native procedures and with the Lua ones:
+
+- A scan refused at a later page, inside an explicit transaction, rolls the
+  whole transaction back and releases its charges. The session's next
+  transaction then commits.
+- A client that disconnects while its `INSERT ... SELECT` runs leaves all
+  of the rows or none, and the statement's ownership drains. In these runs,
+  the statement always completed.
+- A reader that stops reading keeps its result charged. Meanwhile, another
+  session's statement that would exceed the SQL server's budget is refused.
+  It returns the exact rows once the reader is gone.
 
 Run the dedicated fixture with native procedures or Lua fallback:
 
@@ -168,7 +182,7 @@ TARN_RESOURCE_REF=127.0.0.1:3407 tests/resources.sh
 TARN_NATIVE=0 TARN_RESOURCE_REF=127.0.0.1:3407 tests/resources.sh
 ```
 
-It owns a separate two-shard cluster and six gateways. Its JSONL records the
+It owns a separate two-shard cluster and seven gateways. Its JSONL records the
 executable hash, effective profiles, matched query timings/RSS, overload
 useful completions/refusals/tails and accounting peaks. It changes no running
 cluster. `TARN_RESOURCE_PORT`, `TARN_RESOURCE_BASE`, `TARN_RESOURCE_EVIDENCE`
