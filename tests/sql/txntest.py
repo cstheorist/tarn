@@ -38,6 +38,26 @@ def q(c, sql, args=None):
     return rows
 
 
+def vinyl_refusal(e):
+    """Vinyl admission's documented refusal of a fresh write, 1205: throttled
+    while dump or compaction catches up, past the write attempt's deadline, or
+    rolled back by a native quota wait (docs/operations.md). Nothing was
+    written, and the remedy is to retry."""
+    return e.args[0] == 1205 and "Vinyl" in str(e.args[1])
+
+
+def load(c, sql, args=None):
+    """An autocommit write that vinyl admission may refuse, retried: vinyl
+    tables read from disk can meet those refusals while dumps catch up."""
+    for attempt in range(40):
+        try:
+            return q(c, sql, args)
+        except pymysql.MySQLError as e:
+            if not vinyl_refusal(e) or attempt == 39:
+                raise
+            time.sleep(min(0.5, 0.05 * (attempt + 1)))
+
+
 def expect_conflict(fn):
     try:
         fn()
@@ -400,9 +420,9 @@ class T:
         # only what it read, so writes past it do not conflict
         c = self.fresh("ol", "CREATE TABLE ol (g INT, id INT, t INT, del TINYINT, PRIMARY KEY (g, id), "
                              "KEY bt (g, t, id)) PARTITION BY KEY(g)", [])
-        for lo in range(0, 5000, 1000):
-            q(c, "INSERT INTO ol VALUES " + ",".join(f"(1, {i}, {5000 - i}, {int(i % 4 == 0)})"
-                                                   for i in range(lo, lo + 1000)))
+        for lo in range(0, 5000, 250):
+            load(c, "INSERT INTO ol VALUES " + ",".join(f"(1, {i}, {5000 - i}, {int(i % 4 == 0)})"
+                                                      for i in range(lo, lo + 250)))
         page = "SELECT id FROM ol WHERE g = 1 AND del = 0 ORDER BY t, id LIMIT 50"
         want = [i for i in range(4999, -1, -1) if i % 4][:50]
         # issue #50: ORDER BY ... DESC reads the index backwards
@@ -451,9 +471,9 @@ class T:
                              "KEY bc (g, cust, id)) PARTITION BY KEY(g)", [])
         rows = [(i, (i * 7919) % 5000, None if i % 5 in (1, 3) else i, int(i % 10 == 0), i % 300)
                 for i in range(5000)]
-        for lo in range(0, 5000, 1000):
-            q(c, "INSERT INTO oc VALUES " + ",".join(
-                f"(1, {i}, {t}, {'NULL' if cl is None else cl}, {d}, {cu})" for i, t, cl, d, cu in rows[lo:lo + 1000]))
+        for lo in range(0, 5000, 250):
+            load(c, "INSERT INTO oc VALUES " + ",".join(
+                f"(1, {i}, {t}, {'NULL' if cl is None else cl}, {d}, {cu})" for i, t, cl, d, cu in rows[lo:lo + 250]))
         by_t = sorted(rows, key=lambda r: (r[1], r[0]))
         estimates = lambda: int(dict(q(c, "SHOW STATUS LIKE 'Tarn_path_estimates'"))["Tarn_path_estimates"])
         cases = (
@@ -738,9 +758,9 @@ class T:
         # read records, per shard, only what that shard returned
         c = self.fresh("om", "CREATE TABLE om (tenant_id INT, id INT, st VARCHAR(8), t INT, PRIMARY KEY (tenant_id, id), "
                              "KEY bst (st, t, id)) PARTITION BY KEY(tenant_id)", [])
-        for lo in range(0, 6000, 1000):
-            q(c, "INSERT INTO om VALUES " + ",".join(f"({i % 97}, {i}, '{'open' if i % 3 else 'done'}', {i // 2})"
-                                                   for i in range(lo, lo + 1000)))
+        for lo in range(0, 6000, 250):
+            load(c, "INSERT INTO om VALUES " + ",".join(f"({i % 97}, {i}, '{'open' if i % 3 else 'done'}', {i // 2})"
+                                                      for i in range(lo, lo + 250)))
         rows = sorted(((i // 2, i % 97, i) for i in range(6000) if i % 3), key=lambda r: (r[0], r[2]))
         page = "SELECT id FROM om WHERE st = 'open' ORDER BY t, id LIMIT 30"
         rpage = "SELECT id FROM om WHERE st = 'open' ORDER BY t DESC, id DESC LIMIT 30"
@@ -808,7 +828,7 @@ class T:
         c = self.fresh("gx", "CREATE TABLE gx (id INT PRIMARY KEY, h VARCHAR(10), UNIQUE KEY uh (h))", [])
         stop = time.time() + 4
         errors = []
-        counts = {"ok": 0, "dup": 0, "conflict": 0}
+        counts = {"ok": 0, "dup": 0, "conflict": 0, "vinyl_refused": 0}
 
         def worker(w):
             s = connect(self.args.tarn)
@@ -840,6 +860,8 @@ class T:
                         counts["dup"] += 1
                     elif code == 1213:
                         counts["conflict"] += 1
+                    elif vinyl_refusal(e):
+                        counts["vinyl_refused"] += 1
                     else:
                         errors.append(e.args)
 
