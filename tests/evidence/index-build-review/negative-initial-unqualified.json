@@ -1,0 +1,21 @@
+{
+  "source": "0d7734727f331c0a981ac83471054cecea131e2f",
+  "control": "Actual PREPARE before BUILD; must reject held/unfenced witness",
+  "qualified": false,
+  "rejected": true,
+  "failure": "AssertionError([])",
+  "replicas": [
+    {
+      "prepared": true,
+      "reply": [
+        "ok"
+      ]
+    },
+    {
+      "prepared": true,
+      "reply": [
+        "ok"
+      ]
+    }
+  ]
+}

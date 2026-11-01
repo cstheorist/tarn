@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'tests/sql/lazy_routing_cost.py'
+      - 'tests/sql/lazy_routing_cost_test.py'
       - '.github/workflows/lazy-routing.yml'
   workflow_dispatch:
 permissions:
@@ -27,6 +28,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install PyMySQL
+      - name: Measurement failure retention controls
+        run: python3 tests/sql/lazy_routing_cost_test.py
       - uses: actions/cache@v6
         with:
           path: ~/.local/tarantool
@@ -55,14 +58,22 @@ jobs:
             every=1; prefix=10; rate=0
             if [ "$workload" != write-heavy ]; then every=10; prefix=20; fi
             if [ "$workload" = low-load ]; then rate=50; fi
-            python3 tests/sql/lazy_routing_cost.py \
+            log="/tmp/lazy-routing-evidence/$workload.log"
+            if ! python3 tests/sql/lazy_routing_cost.py \
               --nodes 127.0.0.1:3311,127.0.0.1:3321,127.0.0.1:3331,127.0.0.1:3341 \
               --cluster-dir /tmp/lazy-routing-cluster --pairs 5 --seconds 10 --threads 16 --batch 8 \
               --lanes '${{ matrix.lanes }}' --shapes '${{ matrix.shape }}' \
               --write-every "$every" --prefix-every "$prefix" --rate "$rate" --p99-ms 250 \
               --source "$(git rev-parse HEAD)" --binary target/release/tarn-server --native target/release/libtarn_storage.so \
               --output "/tmp/lazy-routing-evidence/$workload.json" \
-              > "/tmp/lazy-routing-evidence/$workload.log" 2>&1
+              > "$log" 2>&1; then
+              # The log is in the artifact; its end (the exception) also goes
+              # in an annotation, which is at hand when the artifact is not.
+              tail -n 40 "$log"
+              msg=$(tail -c 3000 "$log" | sed 's/%/%25/g; s/\r//g' | sed ':a;N;$!ba;s/\n/%0A/g')
+              echo "::error title=$workload measurement failed (${{ matrix.lanes }}, ${{ matrix.shape }})::$msg"
+              exit 1
+            fi
           done
       - name: Stop only the owned fixture
         if: always()

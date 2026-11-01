@@ -1,0 +1,4 @@
+    completed BUILD before PREPARE and ten acknowledged writes on each of 2 shards
+    ADD INDEX on 300000 vinyl rows: 0.57 s; 560 writes during it, the slowest overlapping one 61 ms (observational; includes the controlled BUILD hold when enabled)
+ok   test_index_build_ahead (12.4s)
+1 tests, 0 failures
