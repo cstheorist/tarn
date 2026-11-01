@@ -78,7 +78,7 @@ jobs:
       - name: Stop only the owned fixture
         if: always()
         run: KEEP=1 scripts/cluster.sh stop -d /tmp/lazy-routing-cluster
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: lazy-routing-${{ matrix.shape }}-${{ matrix.lanes }}

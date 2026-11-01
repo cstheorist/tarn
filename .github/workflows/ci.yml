@@ -343,7 +343,7 @@ jobs:
           fi
       - name: Retain failover inputs and crash evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: failover-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -362,7 +362,7 @@ jobs:
           KV_CLOCK_FAULT=1 TARN_NATIVE=0 ci/annotate.sh strong-kv-clock-lua tests/kv.sh
       - name: Retain strong KV histories and fixture evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: strong-kv-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -384,14 +384,14 @@ jobs:
           retention-days: 30
       - name: Retain integrity outcomes
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integrity-${{ github.run_id }}-${{ github.run_attempt }}
           path: integrity-evidence
           retention-days: 30
       - name: Retain Vinyl pressure evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vinyl-pressure-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/tarn-vinylpressure-*/*
@@ -399,7 +399,7 @@ jobs:
           retention-days: 30
       - name: Retain cluster backup and restore evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cluster-backup-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -411,7 +411,7 @@ jobs:
           retention-days: 30
       - name: Retain bounded movement evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bounded-movement-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -435,7 +435,7 @@ jobs:
           true
       - name: Retain native freshness evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-freshness-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
@@ -490,7 +490,7 @@ jobs:
         run: ENGINE=${{ matrix.engine }} bash tests/rolling_upgrade.sh
       - name: Retain upgrade evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: rolling-upgrade-${{ matrix.engine }}
           path: |
@@ -599,7 +599,7 @@ jobs:
           ci/annotate.sh "strong-kv-$KV_COHORT" tests/kv.sh
       - name: Retain histories, measurements, failures and source identities
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: strong-kv-qualification-${{ matrix.cohort }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

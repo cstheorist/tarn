@@ -55,7 +55,7 @@ jobs:
           cargo build --release --locked -p tarn-server -p tarn-storage 2>&1 | tee "$RUNNER_TEMP/binaries/build.log"
           cp target/release/tarn-server target/release/libtarn_storage.so "$RUNNER_TEMP/binaries/"
           python3 ../harness/scripts/gc_failover_review.py bind --source . --output "$RUNNER_TEMP/binaries"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: gc-build-${{ matrix.revision }}-${{ github.run_id }}
@@ -88,7 +88,7 @@ jobs:
           path: source
           ref: ${{ matrix.revision == 'observed' && '420bde9fa9393c847cf022d4230b233c49b01fa7' || github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: gc-build-${{ matrix.revision }}-${{ github.run_id }}
           path: ${{ runner.temp }}/binaries
@@ -131,7 +131,7 @@ jobs:
           cp "$HOME/.local/tarantool/bin/tarantool" "$RUNNER_TEMP/runtime/"
           sha256sum "$RUNNER_TEMP/runtime/tarantool" > "$RUNNER_TEMP/runtime/SHA256SUMS"
           tar -czf "$RUNNER_TEMP/crash-cores.tar.gz" -C "$RUNNER_TEMP" gc-cores core-pattern-before.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: gc-${{ matrix.revision }}-${{ matrix.engine }}-${{ matrix.mode }}-${{ matrix.jit }}-${{ github.run_id }}

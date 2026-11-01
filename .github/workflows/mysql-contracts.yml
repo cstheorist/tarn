@@ -36,7 +36,7 @@ jobs:
           git rev-parse HEAD > /tmp/contract-build/source.txt
           rustc -Vv > /tmp/contract-build/rustc.txt
           sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/contract-build/binaries.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: contract-build-${{ github.run_id }}
           path: /tmp/contract-build
@@ -64,7 +64,7 @@ jobs:
           --health-interval=5s --health-timeout=5s --health-retries=30
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: contract-build-${{ github.run_id }}
           path: /tmp/contract-build
@@ -114,7 +114,7 @@ jobs:
       - name: Stop owned fixture
         if: always()
         run: KEEP=1 scripts/cluster.sh stop -d /tmp/tarn-contract-cluster
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: contracts-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}

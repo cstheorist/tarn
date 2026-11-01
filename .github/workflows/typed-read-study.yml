@@ -37,7 +37,7 @@ jobs:
           git rev-parse HEAD > /tmp/pushdown-build/source.txt
           rustc -Vv > /tmp/pushdown-build/rustc.txt
           sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/pushdown-build/binaries.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pushdown-build-${{ github.run_id }}
           path: /tmp/pushdown-build
@@ -65,7 +65,7 @@ jobs:
           --health-interval=5s --health-timeout=5s --health-retries=30
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pushdown-build-${{ github.run_id }}
           path: /tmp/pushdown-build
@@ -123,7 +123,7 @@ jobs:
       - name: Stop the owned fixture
         if: always()
         run: KEEP=1 scripts/cluster.sh stop -d /tmp/pushdown-cluster
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pushdown-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
