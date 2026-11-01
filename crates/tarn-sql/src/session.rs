@@ -1132,6 +1132,15 @@ impl Session {
             None => crate::observe::disable(),
         }
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
+        // Prepared administration has the same execution-time diagnostic
+        // inputs as text SQL. Capture before releasing the old messages,
+        // once per EXECUTE (not PREPARE or a stale-plan retry).
+        let captured = self.prepared.get(&id).and_then(|p| {
+            (p.admin.is_some() && !admin::reads_diagnostics(&p.template))
+                .then(|| admin::capture_diagnostics(&p.template, self.warnings.len() + self.omitted_warnings))
+                .flatten()
+        });
+        let captured_admin = captured.as_deref().map(admin::recognize).transpose()?.flatten();
         if !self
             .prepared
             .get(&id)
@@ -1143,7 +1152,7 @@ impl Session {
         let mut retry = StaleRetry::new(self.lock_wait_timeout);
         loop {
             retry.start(&self.cluster);
-            let r = self.execute_once(id, params).await;
+            let r = self.execute_once(id, params, captured_admin.as_ref()).await;
             match retry.again(&self.cluster, &r, rp.can_retry()).await? {
                 Stale::Retry => self.restart(&rp),
                 Stale::Done => return r,
@@ -1152,7 +1161,7 @@ impl Session {
         }
     }
 
-    async fn execute_once(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
+    async fn execute_once(&mut self, id: u32, params: &[Value], captured_admin: Option<&Admin>) -> SqlResult<Output> {
         if let Some(c) = self.prepared.get(&id).and_then(|p| p.complex.clone()) {
             if params.len() != self.prepared[&id].n_params {
                 return Err(SqlError::new(
@@ -1179,7 +1188,7 @@ impl Session {
                 Some((v, s)) if *v == self.plan_version(s) => Some(s.clone()),
                 _ => None,
             };
-            (p.admin.clone(), stmt)
+            (captured_admin.or(p.admin.as_ref()).cloned(), stmt)
         };
         if let Some(a) = admin {
             return self.run_admin(a).await;

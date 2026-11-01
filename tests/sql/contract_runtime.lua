@@ -8,10 +8,29 @@ for shard = 1, 2 do
         local c = net.connect('tarn:tarn@' .. address, {wait_connected = 5})
         assert(c:is_connected(), address)
         local info = c:call('tarn_info')
-        local state = {ro=info.ro, info=info}
+        local durability = c:eval([[
+local cfg=box.cfg
+local sync={}
+for _,name in ipairs{'_tarn_meta','_tarn_part','_tarn_txn','_tarn_locks','_tarn_catalog'} do
+    local sp=box.space[name]
+    sync[name]=sp and sp.is_sync or false
+end
+return {wal_mode=cfg.wal_mode,quorum_config=cfg.replication_synchro_quorum,
+    quorum=box.info.synchro.quorum,
+    replica_count=type(cfg.replication)=='table' and #cfg.replication or 0,
+    sync=tarn.cfg.sync,spaces=sync}
+]])
+        local state = {ro=info.ro, info=info, durability=durability}
         c:close()
         state.address = address
         rows[#rows + 1] = state
+        if durability.wal_mode ~= 'fsync' or durability.quorum ~= 2
+           or durability.replica_count ~= 3 or durability.sync ~= true then
+            failures[#failures + 1] = 'RF3/quorum2/fsync configuration not established on ' .. address
+        end
+        for name, synchronous in pairs(durability.spaces) do
+            if not synchronous then failures[#failures + 1] = 'non-synchronous ' .. name .. ' on ' .. address end
+        end
         if not state.ro then
             writable = writable + 1
             if arg[1] == 'enabled' then
