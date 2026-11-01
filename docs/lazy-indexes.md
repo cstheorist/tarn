@@ -38,7 +38,10 @@ pages by normalized typed index columns and typed primary keys. Each shard
 retains one page (128 inspected entries, at most 1 MiB); the gateway caps
 buffered page and result bytes at 16 MiB (or an eighth of the statement's
 memory budget, if less), total candidates at 65,536 and page calls at
-1,024. Empty pages containing only obsolete ownership copies still advance
+1,024. Kept rows count at the memory they are charged, and a page and its
+rechecks stay charged only until its candidates are rechecked, so a large
+result falls back before the statement's budget would refuse it (#247).
+Empty pages containing only obsolete ownership copies still advance
 the cursor. Larger reads use the complete strong fallback or fail explicitly
 under the statement resource budget. ORDER BY that does not follow the
 index requires collecting and sorting the complete qualifying bounded result.
