@@ -777,7 +777,9 @@ function M.new(c)
             return {'ok', true}
         end)
         if box.is_in_txn() then box.rollback() end
-        return ok and result or c.failure(result)
+        -- A batch a leader change rolled back took no effect: 1213 sends
+        -- it again from the durable cursor.
+        return ok and result or (c.commit_failure or c.failure)(result)
     end
     function L.bootstrap_status(_, a, owner)
         c.writable()
@@ -817,7 +819,7 @@ function M.new(c)
             return {'ok'}
         end)
         if box.is_in_txn() then box.rollback() end
-        return ok and result or c.failure(result)
+        return ok and result or (c.commit_failure or c.failure)(result)
     end
     local function rowid(sid, pk) return tostring(bin({sid, pk})) end
     function L.initial(writes, target, plain)
