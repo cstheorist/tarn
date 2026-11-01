@@ -83,6 +83,27 @@ async fn check(
     completion: bool,
     read_only_replica: bool,
 ) -> SqlResult<()> {
+    check_loaded(client, shard, max_txn_age, completion, read_only_replica, false)
+        .await
+        .map(|_| ())
+}
+
+/// As `admit`, for a node whose role is not known yet: `Ok(false)` when it
+/// does not define the handshake's procedure, as a node does that is still
+/// loading its storage code after a (re)start (or one older than the
+/// contract). It is not admitted, and its connection is closed.
+pub(crate) async fn admit_loaded(client: &Client, shard: u32, max_txn_age: f64, completion: bool) -> SqlResult<bool> {
+    check_loaded(client, shard, max_txn_age, completion, false, true).await
+}
+
+async fn check_loaded(
+    client: &Client,
+    shard: u32,
+    max_txn_age: f64,
+    completion: bool,
+    read_only_replica: bool,
+    unloaded_ok: bool,
+) -> SqlResult<bool> {
     let result = async {
         let call = async {
             if completion {
@@ -91,10 +112,13 @@ async fn check(
                 client.call(0, "tarn_compatibility", &[0x90]).await
             }
         };
-        let reply = tokio::time::timeout(Duration::from_secs(3), call)
-            .await
-            .map_err(|_| incompatible("compatibility check timed out"))?
-            .map_err(incompatible)?;
+        let reply = match tokio::time::timeout(Duration::from_secs(3), call).await {
+            Err(_) => return Err(incompatible("compatibility check timed out")),
+            Ok(Err(e)) if unloaded_ok && e.server_code() == Some(tarn_iproto::errcode::ER_NO_SUCH_PROC) => {
+                return Ok(false)
+            }
+            Ok(r) => r.map_err(incompatible)?,
+        };
         let data = reply
             .data()
             .ok_or_else(|| incompatible("compatibility reply has no data"))?;
@@ -103,10 +127,11 @@ async fn check(
         } else {
             validate(&data, shard, max_txn_age)
         }
-        .map_err(incompatible)
+        .map_err(incompatible)?;
+        Ok(true)
     }
     .await;
-    if result.is_err() {
+    if !matches!(result, Ok(true)) {
         // Retire a cancelled/failed handshake's waiter with its socket.
         client.close();
     }

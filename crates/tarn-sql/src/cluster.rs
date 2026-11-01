@@ -660,7 +660,18 @@ async fn role_probe(
                     "production storage requires the bounded tarn_role RPC",
                 ));
             }
-            crate::compat::admit(c, shard, age, completion).await?;
+            // Neither procedure: a node still loading its storage code after
+            // a (re)start, or storage older than the compatibility contract.
+            // It is no leader to route to now; the caller tries the next
+            // replica (as it does a read-only one), keeping this reason.
+            if !crate::compat::admit_loaded(c, shard, age, completion).await? {
+                return Err(SqlError::new(
+                    2003,
+                    "HY000",
+                    "storage procedures are not loaded: a node still starting, or Tarn storage older \
+                     than its compatibility contract (see docs/upgrades.md)",
+                ));
+            }
             let role = if completion {
                 c.eval_control(0, "return box.info.ro", &[0x90]).await
             } else {
@@ -2994,8 +3005,10 @@ mod tests {
             rd.string().unwrap()
         }
         // Production refuses a missing bounded RPC. Development falls back
-        // only after a valid compatibility contract; legacy refusal is 1235.
-        for mode in 0..3 {
+        // only after a valid compatibility contract; a node that defines
+        // neither procedure (still starting, or older) is skipped (2003);
+        // one with another contract is refused (1235).
+        for mode in 0..4 {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
             let peer = tokio::spawn(async move {
@@ -3028,7 +3041,7 @@ mod tests {
                         .arr(1)
                         .arr(8)
                         .str("ok")
-                        .uint(crate::compat::PROTOCOL)
+                        .uint(crate::compat::PROTOCOL + u64::from(mode == 3))
                         .uint(crate::compat::FORMAT)
                         .uint(1)
                         .str("3.9.0")
@@ -3036,6 +3049,16 @@ mod tests {
                         .str("ready")
                         .f64(120.0);
                     reply(&mut socket, sync, 0, &report.0).await;
+                    if mode == 3 {
+                        assert_eq!(
+                            tokio::time::timeout(Duration::from_secs(3), socket.read(&mut [0]))
+                                .await
+                                .unwrap()
+                                .unwrap(),
+                            0
+                        );
+                        return;
+                    }
                     let (kind, sync, _, _) = request(&mut socket).await;
                     assert_eq!(kind, 8, "only compatible development storage may receive EVAL");
                     reply(&mut socket, sync, 0, &[0x81, 0x30, 0x91, 0xc2]).await;
@@ -3049,12 +3072,14 @@ mod tests {
             });
             let c = Client::connect(&Opts::new(addr.to_string())).await.unwrap();
             let got = role_probe(&c, 1, 120.0, false, mode == 0).await;
-            if mode == 1 {
-                let (reply, admitted) = got.unwrap();
-                assert!(admitted);
-                assert_eq!(reply.data().unwrap().as_ref(), &[0x91, 0xc2]);
-            } else {
-                assert_eq!(got.unwrap_err().code, 1235);
+            match mode {
+                0 | 3 => assert_eq!(got.unwrap_err().code, 1235),
+                1 => {
+                    let (reply, admitted) = got.unwrap();
+                    assert!(admitted);
+                    assert_eq!(reply.data().unwrap().as_ref(), &[0x91, 0xc2]);
+                }
+                _ => assert_eq!(got.unwrap_err().code, 2003),
             }
             peer.await.unwrap();
             c.close();
