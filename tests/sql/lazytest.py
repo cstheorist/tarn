@@ -219,14 +219,13 @@ class T:
             # actual strong restart, which fits the budget; a clipped
             # candidate prefix must never count as success. (One 64 KiB row
             # per statement: a text statement is charged 128 bytes per byte.)
-            # One tenant puts every row on one shard, whose pages the restart
-            # reads one at a time: spread over two shards that both return a
-            # full page and need another, the two concurrent reads' reply
-            # reservations exceed the budget when they overlap (#238).
+            # Spread over 11 tenants, the rows usually span both shards, whose
+            # pages the restart reads concurrently: a read whose reservation
+            # does not fit waits for the other's reply (#238).
             payload = b'x' * (64 * 1024)
             with c.cursor() as cur:
                 for i in range(1, 161):
-                    cur.execute("INSERT INTO t_policy_budget VALUES (%s,%s,%s,%s,%s)", (1, i, 7, i, payload))
+                    cur.execute("INSERT INTO t_policy_budget VALUES (%s,%s,%s,%s,%s)", (i % 11, i, 7, i, payload))
             self.caught_up(c)
             sql = "SELECT id FROM t_policy_budget WHERE k=7 ORDER BY n,id"
             self.consistency(c, sql, "eventual")
