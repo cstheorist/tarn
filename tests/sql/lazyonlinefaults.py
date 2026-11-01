@@ -65,6 +65,20 @@ def main():
             time.sleep(.05)
         raise AssertionError(f"no writable leader: group={group['id']} excluded={exclude}")
 
+    # Lazy DDL checks every replica's capabilities, so every replica must
+    # answer, including a leader an earlier test crashed and restarted.
+    deadline = time.monotonic() + 60
+    for node in (n for g in groups for n in g["replicas"]):
+        while True:
+            try:
+                reply = rpc(node, "tarn_lazy_capabilities", [])
+                if reply[0] == "ok":
+                    break
+            except Exception as e:  # still starting
+                reply = repr(e)
+            if time.monotonic() >= deadline:
+                raise AssertionError(f"replica {node} did not answer: {reply}")
+            time.sleep(.2)
     # Shard 2: the policy fault test before this one crashed shard 1's leader.
     first, _ = wait_leader(groups[0])
     victim, state = wait_leader(groups[1])

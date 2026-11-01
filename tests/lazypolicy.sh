@@ -44,6 +44,13 @@ for engine in memtx vinyl; do
         --engine "$engine" --only consistency | tee "$DIR/$engine/policy.log"
     python3 "$ROOT/tests/sql/lazypolicyfaults.py" --tarn "127.0.0.1:$PORT" --cluster-dir "$DIR/$engine" \
         --engine "$engine" | tee "$DIR/$engine/fault.log"
+    # Lazy DDL checks every replica's capabilities: restart the leader the
+    # policy fault test crashed before the online build's.
+    for killed in "$DIR/$engine"/*.killed; do
+        [ -f "$killed" ] || continue
+        "$ROOT/scripts/cluster.sh" restart -d "$DIR/$engine" "$(basename "$killed" .killed)"
+        rm -f "$killed"
+    done
     python3 "$ROOT/tests/sql/lazyonlinefaults.py" --tarn "127.0.0.1:$PORT" --cluster-dir "$DIR/$engine" \
         --engine "$engine" | tee "$DIR/$engine/online.log"
     KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$DIR/$engine"

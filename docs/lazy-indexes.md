@@ -277,6 +277,31 @@ online build runs there: a bucket that moved before the scan reached its
 rows would leave them out. A move already in progress delays the start.
 Backups also wait for a build to finish.
 
+**Measured.** `bench/online_lazy_build.py` loads two shards above the
+fenced build's default limit (1,237,327 and 1,162,673 rows; the limit is
+1,000,000). It then adds a lazy index while one session updates random
+rows at up to 200 a second, each update changing the indexed key. Every
+write's latency is recorded. Afterwards, the index's live entries are
+compared with the table's rows on every shard (a count and two
+order-independent digests), and eventual reads with strong reads for the
+first page of every key value. Setup: one local host, 2 CPUs, one
+replica per shard, `wal_mode = 'write'`, Tarantool 3.9.0, commit
+`7cacb4e`, results in `bench/results_online_lazy_build_*.json`.
+
+| Engine | ALTER | Build rate | Writes during the ALTER | p50 / p99 | Longest write | Index = table |
+|---|---:|---:|---:|---:|---:|---|
+| vinyl | 262 s | 9,170 rows/s | 42,150, none refused | 2.7 / 20.8 ms | 146 ms | 2,400,000 rows, exact |
+| memtx | 300 s | 7,993 rows/s | 23,904, none refused | 7.6 / 50.3 ms | 6,778 ms | 2,400,000 rows, exact |
+
+Before the ALTER, the writer's p99 was 3.1 ms on both engines. The
+longest write bounds the time writes waited behind the build's fences.
+On vinyl, that is the start's drain and PREPARE through APPLY. Memtx also
+builds the index's local Tarantool index in PREPARE, behind the fence:
+6.8 s for 1.2 million rows. The build added 81 to 97 MB of WAL per
+shard. The leaders' RSS went from 171-184 MB to 427-454 MB on vinyl, and
+from 155-159 MB to 916-1,081 MB on memtx, where the index's entries are
+in memory.
+
 Other changes build the index behind PREPARE's fence: an index on a column
 the ALTER adds or retypes, a backfill, an engine change, and any change on
 storage nodes from before #184. That build can pause writes while it scans

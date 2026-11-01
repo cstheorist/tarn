@@ -17,7 +17,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deliveries. Bucket moves wait while such a build runs on their shards.
   Other changes, and older storage nodes, still build behind the fence.
   `tla/LazyBaseline.tla` models writes during the build, with three new
-  negative controls
+  negative controls. `bench/online_lazy_build.py` measures a build above a
+  million rows per shard with a writer
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
 - The generated MySQL contracts page (`docs/mysql-contracts.md`) lists the
