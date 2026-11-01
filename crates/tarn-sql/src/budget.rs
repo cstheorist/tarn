@@ -271,6 +271,11 @@ pub fn current() -> Option<Arc<Query>> {
     CURRENT.try_with(Arc::clone).ok()
 }
 
+/// The memory budget of the current query, if one is accounted.
+pub fn query_bytes_limit() -> Option<u64> {
+    current().map(|q| q.pool.limits.query_bytes)
+}
+
 pub async fn scope<T>(query: Arc<Query>, future: impl std::future::Future<Output = T>) -> T {
     CURRENT.scope(query, future).await
 }

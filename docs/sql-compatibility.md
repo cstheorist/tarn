@@ -19,7 +19,13 @@ and unsupported shapes retain strong execution. Session-only
 `tarn_lazy_read_your_writes` (OFF by default) and
 `tarn_lazy_wait_timeout` (integer seconds 0..60, default 5) control causal
 catch-up; an incomplete attempted catch-up returns 1205 and retains its
-history. See [the full contract and supported identities](lazy-indexes.md).
+history. `SET SESSION tarn_lazy_consistency='strong'` bypasses the lazy
+copy under ordinary SQL isolation; `eventual` (default) permits only the
+existing annotated/eligible path. Prepared execution observes policy
+changes, and EXPLAIN reports the selected consistency and refusal reason.
+The policy never drops catch-up history. On MySQL/MariaDB the same comment
+is inert, so an opted-in lazy read is an intentional Tarn extension rather
+than equivalent index membership. See [the full contract and supported identities](lazy-indexes.md).
 
 ## Protocol
 

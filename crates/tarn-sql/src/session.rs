@@ -121,6 +121,7 @@ pub struct Session {
     warning_bytes: u64,
     lazy_history: crate::lazy::History,
     lazy_read_your_writes: bool,
+    lazy_consistency: crate::lazy::Consistency,
     lazy_wait_timeout: u64,
 }
 
@@ -466,6 +467,7 @@ impl Session {
             warning_bytes: 0,
             lazy_history: crate::lazy::History::default(),
             lazy_read_your_writes: false,
+            lazy_consistency: crate::lazy::Consistency::default(),
             lazy_wait_timeout: 5,
             cluster,
         }
@@ -737,7 +739,7 @@ impl Session {
                 self.set_system_value(name.to_string(), Value::str(&policy))?;
                 return Ok(());
             }
-            "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" => {
+            "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" | "tarn_lazy_consistency" => {
                 if scope == VarScope::Global {
                     return Err(SqlError::new(
                         1228,
@@ -751,6 +753,9 @@ impl Session {
                 let v = if name == "tarn_lazy_read_your_writes" {
                     self.lazy_read_your_writes = crate::lazy::flag(value.as_ref())?;
                     Value::Int(self.lazy_read_your_writes as i64)
+                } else if name == "tarn_lazy_consistency" {
+                    self.lazy_consistency = crate::lazy::Consistency::parse(value.as_ref())?;
+                    Value::str(self.lazy_consistency.name())
                 } else {
                     self.lazy_wait_timeout = crate::lazy::wait_seconds(value.as_ref())?;
                     Value::Int(self.lazy_wait_timeout as i64)
@@ -1492,7 +1497,17 @@ impl Session {
             .as_ref()
             .map(|t| t.writes.keys().map(|(space, _)| *space).collect())
             .unwrap_or_default();
-        let mut value = exec::diagnostics::render(&self.cluster, stmt, version, &cx, committed, &buffered)?;
+        let mut value = exec::diagnostics::render(
+            &self.cluster,
+            stmt,
+            version,
+            &cx,
+            exec::diagnostics::SessionContext {
+                committed,
+                buffered: &buffered,
+                lazy: self.lazy_read_context(),
+            },
+        )?;
         value["key_contract"] = serde_json::json!({
             "requested": if self.mysql_keys() { "MYSQL" } else { "LEGACY" },
             "connection_declared": self.collation_connection,
@@ -1537,6 +1552,15 @@ impl Session {
         self.txn.is_some() || !self.autocommit
     }
 
+    fn lazy_read_context(&self) -> crate::lazy::ReadContext {
+        crate::lazy::ReadContext {
+            consistency: self.lazy_consistency,
+            transaction: self.txn_needed(),
+            history_strong: self.lazy_history.strong,
+            read_your_writes: self.lazy_read_your_writes,
+        }
+    }
+
     pub(crate) fn ensure_txn(&mut self) {
         if self.txn.is_none() {
             self.txn = Some(self.new_txn(true));
@@ -1576,7 +1600,7 @@ impl Session {
                 }),
             );
         }
-        if crate::lazy::eligible(p) && !self.lazy_history.strong {
+        if self.lazy_read_context().strong_reason(p).is_none() {
             if self.lazy_read_your_writes && !self.lazy_history.catch_up(&self.cluster, self.lazy_wait_timeout).await {
                 return Err(SqlError::new(
                     1205,
@@ -1585,7 +1609,11 @@ impl Session {
                 ));
             }
             let cx = self.cx(params, &now);
-            if let Some(rows) = crate::lazy::select(&self.cluster, p, &cx).await? {
+            // The lazy attempt's memory is charged in its own frame, which
+            // a fallback refunds before the strong read.
+            let frame = crate::budget::Frame::new();
+            if let Some(rows) = frame.scope(crate::lazy::select(&self.cluster, p, &cx)).await? {
+                frame.retain_all();
                 self.cluster.stats.lazy_reads.fetch_add(1, Ordering::Relaxed);
                 self.found_rows = rows.len() as u64;
                 return Ok(Output::Rows {

@@ -8,6 +8,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `SET SESSION tarn_lazy_consistency='strong'` selects ordinary SQL reads
+  on lazy-index tables without rebuilding indexes (#182). The default
+  `eventual` policy retains explicit schema opt-in; prepared statements
+  observe changes at execution, EXPLAIN reports consistency/fallback
+  reasons, and switching policies preserves session catch-up obligations.
+
 - Explicit composite lazy-index routing with `COMMENT 'tarn:lazy=N'`,
   bounded typed merging for partial prefixes, single-destination complete
   keys, routing diagnostics and guarded incarnation migration (#185).
@@ -49,6 +55,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   See [the procedure and RPO/RTO boundaries](docs/cluster-backup.md).
 
 ### Fixed
+
+- A lazy-index read whose rows outgrow its limit falls back to the strong
+  path before the statement's memory budget refuses it, and the fallback
+  gets back the memory the lazy attempt used. The limit is 16 MiB, or an
+  eighth of the statement's memory budget if less (decoded rows are
+  charged about four times their bytes): with the default 64 MiB budget,
+  such reads used to fail with 1041 instead of falling back.
 
 - A SQL server that takes over a bucket move whose server stopped gives the
   move up when a step fails before the send, as the move's own server does.
