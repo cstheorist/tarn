@@ -45,6 +45,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A SQL server that takes over a bucket move whose server stopped gives the
+  move up when a step fails before the send, as the move's own server does.
+  It used to only try to go forward, so a move that could not go on (its
+  shards refuse to begin one while a replica of either is down) stayed half
+  done: the bucket could not move again until the replica was back. The
+  failover test, which kills replicas for good, failed on this
+  intermittently ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
 - A SQL server's catalog poller no longer reloads a catalog that a
   statement already reloaded when it met the new version. Each such reload
   discarded every cached plan once more after a schema change made on

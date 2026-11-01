@@ -150,6 +150,33 @@ for s in 1 2; do
     os.exit(0)" < /dev/null 2> /dev/null
 done
 grep -h -E "tarn recovery|resolve" "$DIR"/s*.log | grep -v "^$" | tail -5
+# A move left half done (movetest's last check): the jobs in progress (shard
+# 1 keeps them), what each shard has of those buckets, and what the SQL
+# server logged about them -- read before the cluster stops.
+moves_state() {
+  local stuck b s
+  stuck=$(grep -o "half done: \[.*" "$DIR/moves.out" | grep -oE "'[0-9]+ " | tr -d "' " | sort -un | tr '\n' ' ')
+  [ -n "$stuck" ] || return 0
+  for s in 1 2; do
+    "$T" -e "
+      local c = require('net.box').connect('tarn:tarn@127.0.0.1:$(leader_of $s)', {wait_connected = 1})
+      local json = require('json').new()
+      json.cfg{encode_use_tostring = true}
+      if $s == 1 then print('jobs (on shard 1): ' .. json.encode(c:call('tarn_jobs'))) end
+      local want, mine = {}, {}
+      for b in ('$stuck'):gmatch('%d+') do want[tonumber(b)] = true end
+      for _, o in ipairs(c:call('tarn_buckets')[5] or {}) do
+        if want[o[1]] then mine[#mine + 1] = o end
+      end
+      print('shard $s has of them: ' .. json.encode(mine))
+      os.exit(0)" < /dev/null 2>&1 | tail -3
+  done
+  for b in $stuck; do
+    echo "--- tarn-server on bucket $b"
+    grep -h -E "bucket[: ]$b([^0-9]|$)" "$DIR"/tarn*.log | sed 's/\x1b\[[0-9;]*m//g' | tail -10
+  done
+}
+[ $mvrc -ne 0 ] && moves_state | tee "$DIR/moves-state.out"
 # (TARN_CHECK_LOCKS: the native module's copy of the lock index held what the
 # index held, through the leader changes)
 copy=0
@@ -162,17 +189,23 @@ else
   KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$DIR"
   echo "FAILOVER TEST FAILED (bank rc=$rc rc-bank rc=$rcrc moves rc=$mvrc kv=$kv lock copy=$copy move_failed=${MOVE_FAILED:-0}); logs kept in $DIR"
   [ -n "$crashed" ] && echo "$crashed"
-  # On GitHub Actions, put the evidence in an annotation (job logs are not
-  # always at hand; annotations are).
+  # On GitHub Actions, put the evidence in annotations (job logs are not
+  # always at hand; annotations are). An annotation keeps about 4 KB: one
+  # per part, each its last 4000 bytes.
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
-    msg=$({ echo "bank rc=$rc rc-bank rc=$rcrc moves rc=$mvrc kv=$kv lock copy=$copy move_failed=${MOVE_FAILED:-0}"
-            [ -n "$crashed" ] && echo "$crashed"
-            grep -E "^[0-9]{2}:" "$DIR/events.out" | tail -12
-            echo "--- workload"; tail -25 "$DIR/bank.out"; tail -8 "$DIR/rcbank.out"; tail -14 "$DIR/moves.out"
-            echo "--- storage logs"; grep -h -iE "error|warn|election|promote" "$DIR"/s*.log | tail -15
-            echo "--- tarn-server"; grep -h -iE "error|warn" "$DIR"/tarn*.log | tail -8; } |
-          sed 's/%/%25/g; s/\r//g' | sed ':a;N;$!ba;s/\n/%0A/g')
-    echo "::error title=Failover test failed::$msg"
+    annotate() {  # title; the text on stdin
+      local msg
+      msg=$(sed 's/\x1b\[[0-9;]*m//g' | tail -c 4000 | sed 's/%/%25/g; s/\r//g' | sed ':a;N;$!ba;s/\n/%0A/g')
+      echo "::error title=$1::$msg"
+    }
+    { echo "bank rc=$rc rc-bank rc=$rcrc moves rc=$mvrc kv=$kv lock copy=$copy move_failed=${MOVE_FAILED:-0}"
+      [ -n "$crashed" ] && echo "$crashed"
+      grep -E "^[0-9]{2}:" "$DIR/events.out" | tail -12; } | annotate "Failover test failed"
+    { tail -25 "$DIR/bank.out"; tail -8 "$DIR/rcbank.out"; } | cut -c1-200 | annotate "Failover: bank workloads"
+    sed -n '/ buckets moved (/,$p' "$DIR/moves.out" | cut -c1-300 | annotate "Failover: moves"
+    [ -s "$DIR/moves-state.out" ] && cut -c1-600 "$DIR/moves-state.out" | annotate "Failover: moves left half done"
+    grep -h -iE "error|warn|election|promote" "$DIR"/s*.log | tail -15 | annotate "Failover: storage logs"
+    grep -h -iE "error|warn" "$DIR"/tarn*.log | tail -12 | annotate "Failover: tarn-server log"
   fi
   exit 1
 fi
