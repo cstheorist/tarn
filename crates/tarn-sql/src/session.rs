@@ -269,6 +269,13 @@ impl StaleRetry {
                 Ok(if autocommit && self.attempt <= 3 {
                     Stale::Retry
                 } else {
+                    tracing::info!(
+                        code = e.code,
+                        message = %e.message,
+                        planned_with = self.seen,
+                        catalog = cluster.catalog().version,
+                        "a statement failed while the catalog changed: reported as such (1412)"
+                    );
                     Stale::Changed
                 })
             }
@@ -627,7 +634,13 @@ impl Session {
                     cs
                 )));
             }
+            if self.mysql_keys() && !matches!(cs.to_ascii_lowercase().as_str(), "utf8mb4" | "binary" | "default") {
+                return Err(SqlError::unsupported("MYSQL key contract: connection character set"));
+            }
             if cs.eq_ignore_ascii_case("default") {
+                if self.mysql_keys() {
+                    crate::key_contract::collation(&self.client_collation)?;
+                }
                 for v in [
                     "character_set_client",
                     "character_set_connection",
@@ -645,6 +658,9 @@ impl Session {
                 if let Some(c) = words.next() {
                     co = planner::known_collation(c)?;
                 }
+            }
+            if self.mysql_keys() {
+                crate::key_contract::collation(&co)?;
             }
             for v in [
                 "character_set_client",
@@ -715,6 +731,24 @@ impl Session {
                 self.sys_vars.insert(name.into(), Value::str(policy));
                 return Ok(());
             }
+            "tarn_key_contract" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(1228, "HY000", "tarn_key_contract is a SESSION variable"));
+                }
+                let policy = if value.is_none() {
+                    "LEGACY".into()
+                } else {
+                    text.to_ascii_uppercase()
+                };
+                if !matches!(policy.as_str(), "MYSQL" | "LEGACY") {
+                    return Err(admin::bad_value(name, &text));
+                }
+                if policy == "MYSQL" {
+                    crate::key_contract::collation(&self.collation_connection)?;
+                }
+                self.set_system_value(name.to_string(), Value::str(&policy))?;
+                return Ok(());
+            }
             "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" | "tarn_lazy_consistency" => {
                 if scope == VarScope::Global {
                     return Err(SqlError::new(
@@ -740,6 +774,13 @@ impl Session {
                 return Ok(());
             }
             n if n.starts_with("character_set_") && n != "character_set_system" => {
+                if self.mysql_keys()
+                    && value.is_some()
+                    && !matches!(value, Some(Value::Null))
+                    && !matches!(text.to_ascii_lowercase().as_str(), "utf8mb4" | "binary")
+                {
+                    return Err(SqlError::unsupported("MYSQL key contract: connection character set"));
+                }
                 if value.is_some() && !matches!(value, Some(Value::Null)) && !utf8_compatible_charset(&text) {
                     return Err(SqlError::unsupported(format!(
                         "character set '{}' (connections are utf8mb4)",
@@ -747,20 +788,28 @@ impl Session {
                     )));
                 }
                 if n == "character_set_connection" && scope != VarScope::Global {
-                    self.collation_connection = match value.as_ref() {
+                    let collation = match value.as_ref() {
                         Some(Value::Null) | None => self.client_collation.clone(),
                         _ => planner::charset_default_collation(&text)
                             .unwrap_or("utf8mb4_general_ci")
                             .to_string(),
                     };
+                    if self.mysql_keys() {
+                        crate::key_contract::collation(&collation)?;
+                    }
+                    self.collation_connection = collation;
                 }
             }
             "collation_connection" => {
                 if scope != VarScope::Global {
-                    self.collation_connection = match value.as_ref() {
+                    let collation = match value.as_ref() {
                         Some(Value::Null) | None => self.client_collation.clone(),
                         _ => planner::known_collation(&text)?,
                     };
+                    if self.mysql_keys() {
+                        crate::key_contract::collation(&collation)?;
+                    }
+                    self.collation_connection = collation;
                 }
                 return Ok(());
             }
@@ -768,6 +817,9 @@ impl Session {
                 // per table, from its definition: accepted, not kept
                 if value.is_some() && !matches!(value, Some(Value::Null)) {
                     planner::known_collation(&text)?;
+                    if self.mysql_keys() {
+                        crate::key_contract::collation(&text)?;
+                    }
                 }
                 return Ok(());
             }
@@ -852,6 +904,18 @@ impl Session {
             Err(e) if e.code == 1049 && self.cluster.refresh_if_newer().await? => self.use_db(db),
             r => r,
         }
+    }
+
+    fn mysql_keys(&self) -> bool {
+        matches!(self.sys_vars.get("tarn_key_contract"), Some(Value::Str(v)) if v.as_ref() == b"MYSQL")
+    }
+
+    fn check_key_sql(&self, sql: &str) -> SqlResult<()> {
+        if self.mysql_keys() {
+            crate::key_contract::collation(&self.collation_connection)?;
+            crate::key_contract::sql(sql)?;
+        }
+        Ok(())
     }
 
     // ---- entry points -------------------------------------------------------
@@ -965,6 +1029,7 @@ impl Session {
             }
             return self.select_into(&select, &vars).await;
         }
+        self.check_key_sql(&sql)?;
         let substituted = self.substitute_vars(&sql, false)?;
         let sql: &str = substituted.as_deref().unwrap_or(&sql);
         if crate::complex::may_need(sql) {
@@ -973,6 +1038,9 @@ impl Session {
             normalize(sql, Mode::Placeholders)?;
             if let Some(stmt) = crate::complex::parse_if_needed(sql)? {
                 crate::observe::disable();
+                if self.mysql_keys() {
+                    return Err(SqlError::unsupported("MYSQL key contract: subqueries/UNION"));
+                }
                 return self.run_complex(stmt).await;
             }
         }
@@ -1072,9 +1140,13 @@ impl Session {
         if crate::prep::has_var_refs(sql) {
             return Err(SqlError::unsupported("variables in prepared statements"));
         }
+        self.check_key_sql(sql)?;
         let n = normalize(sql, Mode::Placeholders)?;
         if crate::complex::may_need(&n.template) {
             if let Some(stmt) = crate::complex::parse_if_needed(&n.template)? {
+                if self.mysql_keys() {
+                    return Err(SqlError::unsupported("MYSQL key contract: subqueries/UNION"));
+                }
                 self.prepared.insert(
                     id,
                     Prepared {
@@ -1170,6 +1242,14 @@ impl Session {
     }
 
     async fn execute_once(&mut self, id: u32, params: &[Value], captured_admin: Option<&Admin>) -> SqlResult<Output> {
+        if let Some(p) = self.prepared.get(&id) {
+            if p.admin.is_none() {
+                self.check_key_sql(&p.template)?;
+            }
+            if p.complex.is_some() && self.mysql_keys() {
+                return Err(SqlError::unsupported("MYSQL key contract: subqueries/UNION"));
+            }
+        }
         if let Some(c) = self.prepared.get(&id).and_then(|p| p.complex.clone()) {
             if params.len() != self.prepared[&id].n_params {
                 return Err(SqlError::new(
@@ -1202,6 +1282,10 @@ impl Session {
             return self.run_admin(a).await;
         }
         let stmt = match stmt {
+            _ if self.mysql_keys() => {
+                let template = self.prepared[&id].template.clone();
+                self.plan_cached(&template, params)?
+            }
             // A binary value is typed, and compares, as a binary string: its
             // statement is planned for the kinds of its parameters.
             _ if params.iter().any(|v| matches!(v, Value::Bin(_))) => {
@@ -1315,7 +1399,8 @@ impl Session {
         // and on the kinds of the parameters' values, by which their
         // expressions are typed: a binary string compares by bytes, and
         // `SELECT ?1` is an integer column for 1 but a string one for 'abc'.
-        let mut key = format!("{}\0{}", self.collation_connection, template);
+        self.check_key_sql(template)?;
+        let mut key = format!("{}\0{}\0{}", self.mysql_keys(), self.collation_connection, template);
         if !params.is_empty() {
             key.push('\0');
             key.extend(params.iter().map(|v| match v {
@@ -1345,6 +1430,9 @@ impl Session {
             default_coll: &self.cluster.cfg.default_collation,
         };
         let stmt = planner::plan(template, &ctx)?;
+        if self.mysql_keys() {
+            crate::key_contract::statement(&stmt, &catalog, None)?;
+        }
         let cache_guard = tarn_common::ResourceMemory::reserve(
             self.cluster.resources.clone(),
             4096 + (template.len() as u64 + key.len() as u64).saturating_mul(128),
@@ -1387,6 +1475,9 @@ impl Session {
     // ---- dispatch -------------------------------------------------------------
 
     async fn run(&mut self, stmt: &Stmt, params: &[Value]) -> SqlResult<Output> {
+        if self.mysql_keys() {
+            crate::key_contract::statement(stmt, &self.cluster.catalog(), Some(params))?;
+        }
         match stmt {
             Stmt::Explain {
                 statement,
@@ -1416,7 +1507,7 @@ impl Session {
             .as_ref()
             .map(|t| t.writes.keys().map(|(space, _)| *space).collect())
             .unwrap_or_default();
-        let value = exec::diagnostics::render(
+        let mut value = exec::diagnostics::render(
             &self.cluster,
             stmt,
             version,
@@ -1427,6 +1518,13 @@ impl Session {
                 lazy: self.lazy_read_context(),
             },
         )?;
+        value["key_contract"] = serde_json::json!({
+            "requested": if self.mysql_keys() { "MYSQL" } else { "LEGACY" },
+            "connection_declared": self.collation_connection,
+            "connection_effective": crate::collation::Collation::from_name(&self.collation_connection).map(|c| c.name()),
+            "scope": "bounded key equality/order; see docs/key-semantics.md",
+            "tables": crate::key_contract::describe(stmt),
+        });
         let text = serde_json::to_string(&value).map_err(|e| SqlError::internal(e.to_string()))?;
         Ok(Output::Rows {
             resource_guard: None,
@@ -2330,6 +2428,8 @@ impl Session {
         // A key dropped meanwhile (its space gone): the catalog changed.
         self.global_holder_once(txn, t, g, key).await.map_err(|e| {
             if e.code == 1146 {
+                tracing::info!(table = %t.name, entries = %g.table.name, message = %e.message,
+                    "a global index's entries are gone (1412)");
                 crate::txn::definition_changed()
             } else {
                 e
@@ -3957,6 +4057,7 @@ impl Session {
                 [
                     Collation::General { pad: true },
                     Collation::Utf8Bin,
+                    Collation::Utf8NoPad,
                     Collation::Unicode { pad: true },
                     Collation::General { pad: false },
                     Collation::Unicode { pad: false },

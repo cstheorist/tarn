@@ -65,4 +65,34 @@ mod tests {
             assert!(shard_of_bucket(b, 3000, 3) < 3);
         }
     }
+
+    #[test]
+    fn sql_equal_supported_keys_share_routing_bytes() {
+        use crate::types::{compare, SqlType};
+        use std::cmp::Ordering;
+        // These exercise encoding boundaries as well as signed/unsigned
+        // and scaled-decimal probes of the same typed integer key.
+        let ty = SqlType::parse("BIGINT UNSIGNED").unwrap();
+        for n in (0..1024).chain([65535, 65536, 1 << 32, 9007199254740993, u64::MAX]) {
+            let values = [Value::UInt(n), Value::Decimal(format!("{n}.000"))];
+            assert_eq!(compare(&values[0], &values[1]), Some(Ordering::Equal));
+            let stored = ty.coerce(values[0].clone(), "k").unwrap();
+            let probe = crate::exec::coerce_key_part(&ty, &values[1]).unwrap();
+            for count in [1, 256, 30000] {
+                assert_eq!(
+                    bucket_of(std::slice::from_ref(&stored), count),
+                    bucket_of(std::slice::from_ref(&probe), count)
+                );
+            }
+            if n <= i64::MAX as u64 {
+                assert_eq!(bucket_of(&[Value::Int(n as i64)], 30000), bucket_of(&[stored], 30000));
+            }
+        }
+        for value in ["a", "a ", "a\t", "é", "e\u{301}", "😀", "\0"] {
+            let a = Value::str(value);
+            let b = Value::Bin(bytes::Bytes::copy_from_slice(value.as_bytes()));
+            assert_eq!(compare(&a, &b), Some(Ordering::Equal));
+            assert_eq!(bucket_of(&[a], 30000), bucket_of(&[b], 30000));
+        }
+    }
 }

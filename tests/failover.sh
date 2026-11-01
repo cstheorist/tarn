@@ -202,6 +202,12 @@ else
       [ -n "$crashed" ] && echo "$crashed"
       grep -E "^[0-9]{2}:" "$DIR/events.out" | tail -12; } | annotate "Failover test failed"
     { tail -25 "$DIR/bank.out"; tail -8 "$DIR/rcbank.out"; } | cut -c1-200 | annotate "Failover: bank workloads"
+    # The banks' unexpected errors in full (the lines above are cut), and
+    # every 1412 the servers logged with its origin (issue #215).
+    errors=$(grep -h -E "FAIL.*(no other errors|unexpected errors)" "$DIR/bank.out" "$DIR/rcbank.out" | cut -c1-1500)
+    [ -n "$errors" ] && echo "$errors" | annotate "Failover: unexpected errors"
+    origins=$(grep -h "(1412)" "$DIR"/tarn*.log "$DIR"/s*.log | tail -12)
+    [ -n "$origins" ] && echo "$origins" | annotate "Failover: 1412 origins"
     sed -n '/ buckets moved (/,$p' "$DIR/moves.out" | cut -c1-300 | annotate "Failover: moves"
     [ -s "$DIR/moves-state.out" ] && cut -c1-600 "$DIR/moves-state.out" | annotate "Failover: moves left half done"
     grep -h -iE "error|warn|election|promote" "$DIR"/s*.log | tail -15 | annotate "Failover: storage logs"
