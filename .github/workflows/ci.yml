@@ -140,8 +140,8 @@ jobs:
         env:
           SOURCE_REVISION: ${{ github.sha }}
         run: |
-          python3 tests/production.py --bin target/release --native target/release/libtarn_storage.so --work /tmp/tarn-production-native --require-drivers
-          python3 tests/production.py --bin target/release --work /tmp/tarn-production-lua --require-drivers --skip-cost
+          ci/annotate.sh production-native python3 tests/production.py --bin target/release --native target/release/libtarn_storage.so --work /tmp/tarn-production-native --require-drivers
+          ci/annotate.sh production-lua python3 tests/production.py --bin target/release --work /tmp/tarn-production-lua --require-drivers --skip-cost
       - name: Retain production security evidence
         if: always()
         uses: actions/upload-artifact@v6

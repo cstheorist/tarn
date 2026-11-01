@@ -68,6 +68,12 @@ def pki(d):
                 "/CN=Tarn fixture " + ca,
                 "-days",
                 "2",
+                # (strict X.509 verification, the default from Python 3.13,
+                # requires a CA's key usage)
+                "-addext",
+                "basicConstraints=critical,CA:TRUE",
+                "-addext",
+                "keyUsage=critical,keyCertSign,cRLSign",
             ]
         )
         (d / (ca + ".key")).chmod(0o600)
@@ -97,6 +103,8 @@ def pki(d):
         (d / (name + ".key")).chmod(0o600)
         (d / (name + ".ext")).write_text(
             "subjectAltName=" + san + "\nextendedKeyUsage=serverAuth,clientAuth\n"
+            "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n"
+            "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n"
         )
         run(
             [
