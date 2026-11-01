@@ -28,6 +28,13 @@ local function values(t, fields)
     return out
 end
 local function bad(code, message) error(box.error.new{code = code, reason = message}) end
+-- A build step whose replica stopped leading while it yielded did nothing.
+-- ER_READONLY then reaches the SQL server as an IPROTO error, as from any
+-- other storage procedure (tarn.lua, reraise_readonly), so that it sends
+-- the step to the new leader instead of failing the ALTER.
+local function reraise_readonly(e)
+    if type(e) == 'cdata' and e.code == box.error.READONLY then error(e) end
+end
 
 function M.new(c)
     local L = {stale = true, sources = {}, paused = false, inflight = 0, uncertain = 0, wake = fiber.cond()}
@@ -778,7 +785,8 @@ function M.new(c)
         end)
         if box.is_in_txn() then box.rollback() end
         -- A batch a leader change rolled back took no effect: 1213 sends
-        -- it again from the durable cursor.
+        -- it again from the durable cursor, and so does ER_READONLY.
+        if not ok then reraise_readonly(result) end
         return ok and result or (c.commit_failure or c.failure)(result)
     end
     function L.bootstrap_status(_, a, owner)
@@ -819,6 +827,7 @@ function M.new(c)
             return {'ok'}
         end)
         if box.is_in_txn() then box.rollback() end
+        if not ok then reraise_readonly(result) end
         return ok and result or (c.commit_failure or c.failure)(result)
     end
     local function rowid(sid, pk) return tostring(bin({sid, pk})) end
