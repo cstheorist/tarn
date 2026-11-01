@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""An online lazy-index build above alter_check_rows, with a writer (#184).
+
+  python3 bench/online_lazy_build.py --tarn HOST:PORT --kv LEADER,LEADER
+        [--rows-per-shard 1200000] [--rate 200] [--engine vinyl] [--out RESULTS]
+
+Needs the Python `tarantool` connector for its storage probes.
+
+Loads a table (t: tenant_id, id, k, n, v) with ROWS-PER-SHARD rows on each
+shard, more than the fenced build's default limit (alter_check_rows, one
+million), then runs ALTER TABLE t ADD INDEX lk(k,n,id) COMMENT 'tarn:lazy'
+while one session updates random rows at RATE writes per second (each
+changes the indexed key). It records:
+
+- the ALTER's wall time and the build's rate (rows per second);
+- every write's latency, before, during and after the ALTER; the longest
+  write during it bounds the time writes waited behind its fences;
+- each shard leader's RSS, its WAL bytes, its rows and the new index's
+  entries (vinyl counts are estimates);
+- after the deliveries drain, whether the index's live entries are exactly
+  the table's rows (a count and two order-independent digests over every
+  shard), and whether lazy reads return what strong reads return for the
+  first page of every key value.
+
+A write's latency includes the SQL server; a refused write counts as an
+error and is not retried by this script.
+"""
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import platform
+import random
+import statistics
+import subprocess
+import sys
+import threading
+import time
+
+import pymysql
+import tarantool
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, os.path.join(ROOT, "tests", "sql"))
+from lazytest import wait_empty  # noqa: E402
+
+DB = "online_lazy_build"
+KEYS = 64
+
+
+def connect(endpoint, db=DB, read_timeout=3600):
+    host, port = endpoint.rsplit(":", 1)
+    return pymysql.connect(host=host, port=int(port), user="sb", password="", database=db, autocommit=True,
+                           charset="utf8mb4", connect_timeout=3, read_timeout=read_timeout, write_timeout=60)
+
+
+def q(c, sql, args=None):
+    with c.cursor() as cur:
+        cur.execute(sql, args)
+        return cur.fetchall() if cur.description else cur.rowcount
+
+
+NODE_STATE = """
+local fio = require('fio')
+local rss
+local f = io.open('/proc/self/status')
+if f then
+    for line in f:lines() do
+        local kb = line:match('^VmRSS:%s+(%d+)')
+        if kb then rss = tonumber(kb) * 1024 end
+    end
+    f:close()
+end
+local wal = 0
+for _, name in ipairs(fio.glob(fio.pathjoin(box.cfg.wal_dir, '*.xlog'))) do
+    local st = fio.stat(name); if st then wal = wal + st.size end
+end
+local entries
+for _, d in box.space._tarn_lazy_defs:pairs() do
+    local sp = box.space[d.gen]
+    if d.phase ~= 'retired' and sp ~= nil then entries = (entries or 0) + sp:len() end
+end
+local rows = 0
+for _, t in box.space._tarn_catalog:pairs() do
+    if t.name == ... and box.space[t.name] then rows = box.space[t.name]:len() end
+end
+return {rss = rss, wal_bytes = wal, lazy_entries = entries, rows = rows,
+        check_rows = tarn.cfg.alter_check_rows, engine = box.space[...] and box.space[...].engine}
+"""
+
+
+def ev(node, script, args):
+    host, port = node.rsplit(":", 1)
+    conn = tarantool.Connection(host, int(port), user="tarn", password="tarn", socket_timeout=1800,
+                                connect_now=True)
+    try:
+        return conn.eval(script, args).data[0]
+    finally:
+        conn.close()
+
+
+def nodes_state(nodes):
+    return [ev(n, NODE_STATE, [f"{DB}.t"]) for n in nodes]
+
+
+# Every row's index identity (key k, n, id and primary key tenant_id, id),
+# hashed two ways and summed modulo 2^32, with the count: over the table's
+# rows, and over the live entries of the published lazy index. Summed over
+# the shards, the two must be equal.
+DIGEST = """
+local digest, fiber = require('digest'), require('fiber')
+local name = ...
+local sp = box.space[name]
+local gen
+for _, d in box.space._tarn_lazy_defs:pairs() do
+    if d.base_id == sp.id and d.phase == 'ready' then gen = d.gen end
+end
+local M = 4294967296
+local function add(acc, k, n, id, t, pid)
+    local text = string.format('%s/%s/%s/%s/%s', tostring(k), tostring(n), tostring(id), tostring(t), tostring(pid))
+    acc[1] = acc[1] + 1
+    acc[2] = (acc[2] + digest.crc32(text)) % M
+    acc[3] = (acc[3] + digest.murmur(text)) % M
+    -- (memtx reads do not yield: stay within the fiber slice; nothing
+    -- writes the table by now)
+    if acc[1] % 10000 == 0 then fiber.yield() end
+end
+local rows, entries = {0, 0, 0}, {0, 0, 0}
+for _, r in sp:pairs() do add(rows, r[3], r[4], r[2], r[1], r[2]) end
+local target = gen and box.space[gen]
+if target then
+    for _, e in target.index.ordered:pairs({true}, {iterator = 'GE'}) do
+        if e.live then add(entries, e.k1, e.k2, e.k3, e.p1, e.p2) end
+    end
+end
+return {rows = rows, entries = entries, gen = gen}
+"""
+
+
+def percentile(values, p):
+    if not values:
+        return None
+    s = sorted(values)
+    return s[min(len(s) - 1, int(round(p / 100 * (len(s) - 1))))]
+
+
+def summary(samples):
+    lat = [x[1] for x in samples if x[2]]
+    return {"writes": len(lat), "errors": sum(1 for x in samples if not x[2]),
+            "p50_ms": percentile(lat, 50), "p99_ms": percentile(lat, 99), "max_ms": max(lat) if lat else None}
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--tarn", required=True)
+    ap.add_argument("--kv", required=True, help="one leader per shard, comma-separated")
+    ap.add_argument("--rows-per-shard", type=int, default=1_200_000)
+    ap.add_argument("--rate", type=float, default=200, help="writer target, writes per second")
+    ap.add_argument("--engine", choices=("memtx", "vinyl"), default="vinyl")
+    ap.add_argument("--before", type=float, default=10, help="seconds of writes before the ALTER")
+    ap.add_argument("--out", help="results file (bench/results_online_lazy_build_ENGINE.json)")
+    args = ap.parse_args()
+    args.out = args.out or os.path.join(HERE, f"results_online_lazy_build_{args.engine}.json")
+    nodes = args.kv.split(",")
+    shards = len(nodes)
+
+    with connect(args.tarn, db=None) as c:
+        q(c, f"DROP DATABASE IF EXISTS {DB}")
+        q(c, f"CREATE DATABASE {DB}")
+    c = connect(args.tarn)
+    q(c, "CREATE TABLE t (tenant_id INT NOT NULL,id INT NOT NULL,k INT,n INT,v VARCHAR(16),"
+         f"PRIMARY KEY(tenant_id,id)) PARTITION BY KEY(tenant_id) ENGINE={args.engine}")
+    total = args.rows_per_shard * shards
+    started = time.monotonic()
+    batch, refusals = 500, 0
+    with c.cursor() as cur:
+        for first in range(0, total, batch):
+            ids = range(first + 1, min(total, first + batch) + 1)
+            values = ",".join(f"({i % 997},{i},{i % KEYS},{i},'v{i % 1000}')" for i in ids)
+            for attempt in range(200):
+                try:
+                    cur.execute(f"INSERT INTO t VALUES {values}")
+                    break
+                except pymysql.MySQLError as e:
+                    # Vinyl admission refuses a fresh write before any effect
+                    # while dump or compaction catches up: retry it later.
+                    if e.args[0] != 1205 or "Vinyl" not in str(e.args[1]) or attempt == 199:
+                        raise
+                    refusals += 1
+                    time.sleep(min(1.0, 0.05 * (attempt + 1)))
+            if first and first % 200_000 == 0:
+                print(f"loaded {first} rows ({time.monotonic() - started:.0f} s)", flush=True)
+    load_s = time.monotonic() - started
+    before_state = nodes_state(nodes)
+    print(f"loaded {total} rows in {load_s:.0f} s; per shard: {[s['rows'] for s in before_state]}", flush=True)
+    assert all(s["rows"] > s["check_rows"] for s in before_state), ("each shard must exceed alter_check_rows",
+                                                                    before_state)
+
+    samples, stop = [], threading.Event()
+
+    def writer():
+        rnd = random.Random(184)
+        period = 1 / args.rate
+        with connect(args.tarn, read_timeout=120) as w:
+            nxt = time.monotonic()
+            while not stop.is_set():
+                rid = rnd.randrange(1, total + 1)
+                t0 = time.monotonic()
+                try:
+                    q(w, "UPDATE t SET k=%s,n=n+1 WHERE tenant_id=%s AND id=%s", (rnd.randrange(KEYS), rid % 997, rid))
+                    ok = True
+                except pymysql.MySQLError:
+                    ok = False
+                t1 = time.monotonic()
+                samples.append((t0, (t1 - t0) * 1000, ok))
+                nxt = max(nxt + period, t1)
+                time.sleep(max(0, nxt - time.monotonic()))
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        time.sleep(args.before)
+        alter_begin = time.monotonic()
+        q(c, "ALTER TABLE t ADD INDEX lk(k,n,id) COMMENT 'tarn:lazy'")
+        alter_end = time.monotonic()
+        time.sleep(5)
+    finally:
+        stop.set()
+        thread.join()
+    alter_s = alter_end - alter_begin
+    print(f"ALTER returned after {alter_s:.1f} s", flush=True)
+    wait_empty(nodes, timeout=600)
+    after_state = nodes_state(nodes)
+
+    # Exact: the index's live entries are the table's rows, on all shards.
+    digests = [ev(n, DIGEST, [f"{DB}.t"]) for n in nodes]
+    rows = [sum(d["rows"][i] for d in digests) % (2 ** 32 if i else 2 ** 63) for i in range(3)]
+    entries = [sum(d["entries"][i] for d in digests) % (2 ** 32 if i else 2 ** 63) for i in range(3)]
+    # And through SQL: the first page of every key, eventual against strong.
+    q(c, "SET tarn_lazy_read_your_writes=ON")
+    mismatched, checked = [], rows[0]
+    if rows != entries:
+        mismatched.append({"rows": rows, "entries": entries})
+    for k in range(KEYS):
+        sql = f"SELECT tenant_id,id FROM t WHERE k={k} ORDER BY n,id LIMIT 100"
+        q(c, "SET tarn_lazy_consistency='strong'")
+        strong = q(c, sql)
+        q(c, "SET tarn_lazy_consistency='eventual'")
+        lazy = q(c, sql)
+        if lazy != strong:
+            mismatched.append({"k": k, "strong": len(strong), "lazy": len(lazy)})
+    phases = {
+        "before": summary([x for x in samples if x[0] < alter_begin]),
+        "during": summary([x for x in samples if alter_begin <= x[0] < alter_end]),
+        "after": summary([x for x in samples if x[0] >= alter_end]),
+    }
+    server = os.environ.get("TARN_BIN", os.path.join(ROOT, "target", "release", "tarn-server"))
+    result = {
+        "issue": 184,
+        "date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "source": subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip(),
+        "dirty": bool(subprocess.run(["git", "-C", ROOT, "status", "--porcelain", "--untracked-files=no"],
+                                     capture_output=True, text=True).stdout.strip()),
+        "tarn_server_sha256": sha256(server) if os.path.exists(server) else None,
+        "tarantool": subprocess.run([os.environ.get("TARANTOOL", "tarantool"), "--version"],
+                                    capture_output=True, text=True).stdout.splitlines()[0],
+        "host": {"cpus": os.cpu_count(), "machine": platform.machine(), "kernel": platform.release()},
+        "engine": args.engine, "shards": shards, "rows_per_shard": args.rows_per_shard,
+        "alter_check_rows": before_state[0]["check_rows"], "writer_rate": args.rate,
+        "load_s": round(load_s, 1), "load_vinyl_refusals": refusals, "alter_s": round(alter_s, 2),
+        "build_rows_per_s": round(total / alter_s), "writes": phases,
+        "nodes_before": before_state, "nodes_after": after_state,
+        "checked_rows": checked, "mismatched_keys": mismatched,
+    }
+    with open(args.out, "w") as f:
+        json.dump(result, f, indent=2)
+        f.write("\n")
+    print(json.dumps({k: result[k] for k in ("engine", "rows_per_shard", "alter_s", "build_rows_per_s", "writes",
+                                             "checked_rows", "mismatched_keys")}, indent=1), flush=True)
+    assert not mismatched, mismatched
+    assert phases["during"]["writes"] > 0, "no write completed during the ALTER"
+
+
+if __name__ == "__main__":
+    main()

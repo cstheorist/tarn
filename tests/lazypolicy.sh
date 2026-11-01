@@ -1,5 +1,6 @@
 #!/bin/bash
-# Private RF3/fsync policy and leader-crash controls, both native engines.
+# Private RF3/fsync policy and leader-crash controls, both native engines: the
+# strong lazy policy across a crash (#182), and an online lazy build (#184).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DIR=$(mktemp -d /tmp/tarn-lazy-policy.XXXX)
@@ -19,7 +20,8 @@ cleanup() {
 trap cleanup EXIT
 find "$ROOT/lua" "$ROOT/crates/tarn-sql" "$ROOT/crates/tarn-storage" "$ROOT/crates/tarn-verified" \
     -type f -print0 | sort -z | xargs -0 sha256sum > "$DIR/source.sha256"
-sha256sum "$ROOT/tests/sql/lazytest.py" "$ROOT/tests/sql/lazypolicyfaults.py" "$ROOT/tests/lazypolicy.sh" \
+sha256sum "$ROOT/tests/sql/lazytest.py" "$ROOT/tests/sql/lazypolicyfaults.py" "$ROOT/tests/sql/lazyonlinefaults.py" \
+    "$ROOT/tests/lazypolicy.sh" \
     "$ROOT/Cargo.lock" "$ROOT/rust-toolchain.toml" >> "$DIR/source.sha256"
 sha256sum "${TARN_BIN:-$ROOT/target/release/tarn-server}" > "$DIR/gateway.sha256"
 native=${TARN_NATIVE:-$ROOT/target/release/libtarn_storage.so}
@@ -42,5 +44,14 @@ for engine in memtx vinyl; do
         --engine "$engine" --only consistency | tee "$DIR/$engine/policy.log"
     python3 "$ROOT/tests/sql/lazypolicyfaults.py" --tarn "127.0.0.1:$PORT" --cluster-dir "$DIR/$engine" \
         --engine "$engine" | tee "$DIR/$engine/fault.log"
+    # Lazy DDL checks every replica's capabilities: restart the leader the
+    # policy fault test crashed before the online build's.
+    for killed in "$DIR/$engine"/*.killed; do
+        [ -f "$killed" ] || continue
+        "$ROOT/scripts/cluster.sh" restart -d "$DIR/$engine" "$(basename "$killed" .killed)"
+        rm -f "$killed"
+    done
+    python3 "$ROOT/tests/sql/lazyonlinefaults.py" --tarn "127.0.0.1:$PORT" --cluster-dir "$DIR/$engine" \
+        --engine "$engine" | tee "$DIR/$engine/online.log"
     KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$DIR/$engine"
 done

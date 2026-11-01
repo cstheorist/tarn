@@ -59,6 +59,10 @@ function M.new(c)
                  {'cursor', 'any', is_nullable = true}, {'done', 'boolean'}}, {{'pk', {'gen'}}})
         internal('_tarn_lazy_capture', {{'base_id', 'unsigned'}, {'ver', 'unsigned'}, {'specs', 'array'}},
                  {{'pk', {'base_id'}}})
+        -- Building incarnations that writes capture before publication: an
+        -- online build (issue #184, L.capture_start). Publication moves them
+        -- to _tarn_lazy_capture (L.activate); retirement deletes them.
+        internal('_tarn_lazy_online', {{'gen', 'unsigned'}, {'base_id', 'unsigned'}}, {{'pk', {'gen'}}})
         internal('_tarn_lazy_counter', {{'bucket_id', 'unsigned'}, {'seq', 'unsigned'}},
                  {{'pk', {'bucket_id'}}, {'bucket_id', {'bucket_id'}, false}})
         internal('_tarn_lazy_version', {{'base_id', 'unsigned'}, {'pk', 'varbinary'},
@@ -93,7 +97,7 @@ function M.new(c)
             for _, t in box.space._tarn_catalog:pairs() do
                 local sp = box.space[t.name]
                 if sp ~= nil then
-                    sources[sp.id] = {ver = t.def.ver or 0, specs = {}, declared = t.def.lazy or {}}
+                    sources[sp.id] = {ver = t.def.ver or 0, specs = {}, building = {}, declared = t.def.lazy or {}}
                     sources[sp.id].requires = #sources[sp.id].declared > 0
                 end
             end
@@ -121,8 +125,31 @@ function M.new(c)
             for _, t in box.space._tarn_lazy_defs:pairs() do
                 if t.phase ~= 'retired' then
                     excluded[t.base_id] = true
-                    if sources[t.base_id] == nil then sources[t.base_id] = {ver = -1, specs = {}, declared = {}} end
+                    if sources[t.base_id] == nil then
+                        sources[t.base_id] = {ver = -1, specs = {}, building = {}, declared = {}}
+                    end
                     sources[t.base_id].requires = true
+                end
+            end
+            -- An online build's incarnations are captured from its start
+            -- (L.capture_start) until publication puts them among the specs.
+            local online = box.space._tarn_lazy_online
+            if online ~= nil then
+                for _, o in online:pairs() do
+                    local d, source = box.space._tarn_lazy_defs:get{o.gen}, sources[o.base_id]
+                    if d ~= nil and d.phase ~= 'retired' and d.base_id == o.base_id and source ~= nil then
+                        local published = false
+                        for _, s in ipairs(source.specs) do published = published or s.gen == o.gen end
+                        if not published then source.building[#source.building + 1] = d.spec end
+                    end
+                end
+            end
+            for _, source in pairs(sources) do
+                source.capture = source.specs
+                if #source.building > 0 then
+                    source.capture = {}
+                    for _, s in ipairs(source.specs) do source.capture[#source.capture + 1] = s end
+                    for _, s in ipairs(source.building) do source.capture[#source.capture + 1] = s end
                 end
             end
             end)
@@ -255,13 +282,6 @@ function M.new(c)
         sp:create_index('tombstones', {parts = {{6, 'boolean'}, {7, 'unsigned'}, {4, 'unsigned'},
             {5, 'unsigned'}, {1, 'varbinary'}}, unique = false, if_not_exists = true})
         return sp
-    end
-    function L.needs_bootstrap(def)
-        for _, s in ipairs((def and def.lazy) or {}) do
-            local d = box.space._tarn_lazy_defs:get{s.gen}
-            if d == nil or d.phase ~= 'ready' then return true end
-        end
-        return false
     end
     local function valid_spec(s)
         if type(s) ~= 'table' or sequence(s.gen) == nil or s.gen < 10000
@@ -444,10 +464,87 @@ function M.new(c)
     end
     function L.retire(generations)
         L.invalidate()
+        local online = box.space._tarn_lazy_online
         for _, gen in ipairs(generations or {}) do
             local d = box.space._tarn_lazy_defs:get{gen}
             if d ~= nil then box.space._tarn_lazy_defs:update(gen, {{'=', 4, 'retired'}}) end
+            if online ~= nil then online:delete{gen} end
         end
+    end
+    -- Online builds (issue #184). Whether a build of def's new incarnations
+    -- can capture writes before publication: each field its incarnations
+    -- read (key, primary key, bucket) holds the same column, of the same
+    -- type, in the stored layout the table's writes use until APPLY.
+    -- Otherwise (an index on a column the ALTER adds or changes) the build
+    -- runs behind PREPARE's fence, after materialization.
+    function L.online_eligible(sp, def)
+        local old, new = sp:format(), def.format
+        if type(new) ~= 'table' then return false end
+        for _, s in ipairs(def.lazy or {}) do
+            local d = box.space._tarn_lazy_defs:get{s.gen}
+            if d == nil or d.phase ~= 'ready' then
+                local fields = {s.bucket_field}
+                for _, list in ipairs({s.key_fields, s.pk_fields, s.pk_native_fields}) do
+                    for _, f in ipairs(list) do fields[#fields + 1] = f end
+                end
+                for _, f in ipairs(fields) do
+                    local a, b = old[f], new[f]
+                    if a == nil or b == nil or a.name ~= b.name or a.type ~= b.type
+                       or (a.collation or '') ~= (b.collation or '') then return false end
+                end
+            end
+        end
+        return true
+    end
+    -- Capture def's building incarnations from the commit of the caller's
+    -- transaction: every write of the table, and the APPLY of every
+    -- transaction prepared afterwards, plans their assignments too. The
+    -- caller has fenced the table and drained its commits in flight and its
+    -- prepared transactions (tarn.lua, tarn_lazy_start), so no write planned
+    -- without them can commit after the scan reads its row
+    -- (tla/LazyBaseline.tla, BugScanBeforeCapture, BugNoPrepareDrain).
+    function L.capture_start(def, owner)
+        L.invalidate()
+        local online = box.space._tarn_lazy_online
+        if online == nil then bad(1412, 'Online lazy builds require an upgraded storage schema') end
+        for _, s in ipairs(def.lazy or {}) do
+            local d = box.space._tarn_lazy_defs:get{s.gen}
+            if d == nil or d.phase == 'retired' or (d.phase ~= 'ready' and d.owner ~= (owner or 0)) then
+                bad(1412, 'Stale lazy build owner')
+            end
+            if d.phase == 'building' and online:get{s.gen} == nil then online:insert{s.gen, def.id} end
+        end
+    end
+    -- Whether every building incarnation of def is captured already.
+    function L.capturing(def)
+        local online = box.space._tarn_lazy_online
+        for _, s in ipairs(def.lazy or {}) do
+            local d = box.space._tarn_lazy_defs:get{s.gen}
+            if d == nil then return false end
+            if d.phase == 'building' and (online == nil or online:get{s.gen} == nil) then return false end
+        end
+        return true
+    end
+    -- Whether def has an incarnation whose baseline scan has not finished:
+    -- PREPARE then scans behind its fence, within tarn.cfg.alter_check_rows.
+    function L.needs_scan(def)
+        for _, s in ipairs((def and def.lazy) or {}) do
+            local d = box.space._tarn_lazy_defs:get{s.gen}
+            if d == nil or (d.phase ~= 'ready' and not d.done) then return true end
+        end
+        return false
+    end
+    -- An online build in progress on this shard. A bucket that moves while
+    -- its rows may not have been scanned yet, on either shard, would leave
+    -- them out of the baseline: moves wait until the builds are done.
+    function L.building()
+        local online = box.space._tarn_lazy_online
+        if online == nil then return nil end
+        for _, o in online:pairs() do
+            local d = box.space._tarn_lazy_defs:get{o.gen}
+            if d ~= nil and d.phase == 'building' then return o.gen end
+        end
+        return nil
     end
     function L.abort(def)
         if def == nil then return end
@@ -547,6 +644,11 @@ function M.new(c)
         if def.id == nil then return end -- legacy non-lazy native definitions
         if #(def.lazy or {}) == 0 then box.space._tarn_lazy_capture:delete{def.id}
         else box.space._tarn_lazy_capture:replace{def.id, def.ver or 0, def.lazy} end
+        -- An online build's incarnations are now published ones.
+        local online = box.space._tarn_lazy_online
+        if online ~= nil then
+            for _, s in ipairs(def.lazy or {}) do online:delete{s.gen} end
+        end
     end
     function L.bucket(s, key)
         if c.bk.count == 0 then bad(1210, 'Lazy indexes require an initialized bucket map') end
@@ -567,6 +669,71 @@ function M.new(c)
         q.change(1, bytes, 0, 0, promised)
         out:insert{a[1], a[3], a[4], a[2], a, clock.realtime(), bytes}
     end
+    -- The baseline scan (issues #177, #184). The scan goes through the
+    -- shard's buckets in order and, in each, reads the bucket's counter
+    -- before its rows; a baseline assignment takes that counter as its
+    -- sequence. A change of the row after the scan read it takes a greater
+    -- sequence and supersedes the baseline at the target, and the
+    -- incarnation's floors begin after READY: any value up to the counter
+    -- would do (tla/LazyBaseline.tla), and the counter holds the bucket's
+    -- completed prefix back the least while the baseline is pending. That
+    -- holds whether the table's writes are fenced (the build of an empty or
+    -- truncated table, or one behind PREPARE) or captured (an online build,
+    -- L.capture_start), so the rows are read in a read-only transaction, and
+    -- the batch's assignments and cursor are written afterwards in another
+    -- that rechecks the owner and the cursor: a takeover, a retirement or
+    -- another batch in between refuses it, and the table's writes cannot
+    -- abort it.
+    -- Only owned buckets are read: moves wait for online builds (L.building).
+    -- The cursor is {bucket, position in its rows}; any other value (an
+    -- older release's primary-index position) starts over, which only
+    -- enqueues baselines again under the same identity.
+    local SCAN_BUCKETS, ONLINE_PENDING = 4096, BATCH * 16
+    local function scan(sp, spec, cursor)
+        local ix = sp.index.bucket_id
+        if ix == nil then bad(1412, 'Lazy source has no bucket index') end
+        local b, pos = 1, nil
+        if type(cursor) == 'table' and sequence(cursor[1]) ~= nil and cursor[1] >= 1 then
+            b, pos = cursor[1], cursor[2]
+            if isnull(pos) then pos = nil end
+        end
+        local events, n, bytes, visited = {}, 0, 0, 0
+        while b <= c.bk.count do
+            if c.bk.state[b] == 'active' then
+                local t = box.space._tarn_lazy_counter:get{b}
+                local seq = t and sequence(t.seq) or 0
+                if seq == nil then bad(1041, 'Lazy sequence capacity exhausted') end
+                local opts = {iterator = 'EQ'}
+                if pos ~= nil then opts.after = pos end
+                for _, row in ix:pairs({b}, opts) do
+                    local pk, raw = values(row, spec.pk_native_fields), values(row, spec.pk_fields)
+                    local key = values(row, spec.key_fields)
+                    local event = {bin({0, spec.gen, key, pk}), spec.gen, b, seq,
+                                   L.bucket(spec, key), key, pk, raw, true, true}
+                    local size = #mp.encode(event)
+                    if size > BYTES - 1024 then bad(1041, 'Lazy baseline exceeds packet bound') end
+                    if n > 0 and (n >= BATCH or bytes + size > BYTES - 1024) then return events, {b, pos}, false end
+                    events[#events + 1] = event
+                    pos, n, bytes = ix:tuple_pos(row), n + 1, bytes + size
+                end
+            end
+            b, pos, visited = b + 1, nil, visited + 1
+            if visited >= SCAN_BUCKETS and b <= c.bk.count then return events, {b, box.NULL}, false end
+        end
+        return events, box.NULL, true
+    end
+    -- An online build leaves most of the outbox to the writes it captures:
+    -- a batch waits, up to a second, while the incarnation's own pending
+    -- assignments fill sixteen batches, then returns without progress.
+    local function backlog(gen)
+        local deadline = clock.monotonic() + 1
+        while box.space._tarn_lazy_outbox.index.generation:count{gen} >= ONLINE_PENDING do
+            if clock.monotonic() >= deadline then return true end
+            if not L.paused then pcall(L.ship_once) end
+            fiber.sleep(0.01)
+        end
+        return false
+    end
     function L.bootstrap(name, a, owner)
         c.bk.fresh()
         local guard = L.ddl_guard('bootstrap', name, a)
@@ -574,61 +741,39 @@ function M.new(c)
         c.writable()
         local sp = box.space[a.def.id]
         if sp == nil then return {'error', 1412, 'Lazy source disappeared'} end
+        local online = box.space._tarn_lazy_online
         local ok, result = pcall(function()
-            -- Confirmed row/counter view and durable cursor advance share
-            -- one transaction; the DDL fence prevents new source writes.
-            box.begin{txn_isolation = 'read-confirmed'}
             for _, spec in ipairs(a.def.lazy or {}) do
                 local d = box.space._tarn_lazy_defs:get{spec.gen}
                 if d == nil or d.phase == 'retired' or (d.phase ~= 'ready' and d.owner ~= (owner or 0)) then
                     bad(1412, 'Stale lazy bootstrap owner')
                 end
                 if not d.done then
-                    if a.lazy_empty then
-                        box.space._tarn_lazy_defs:update(spec.gen, {{'=', 8, true}})
-                    else
-                        local opts, n, bytes, cursor, complete = {iterator = 'ALL'}, 0, 0, d.cursor, true
-                        if not isnull(cursor) then opts.after = cursor end
-                        -- A baseline assignment's sequence is its bucket's
-                        -- counter in this view (issue #177): every later
-                        -- change of the row takes a greater one, and this
-                        -- incarnation's floors begin after READY. Any value
-                        -- up to the counter would do (tla/LazyBaseline.tla);
-                        -- the counter holds the bucket's completed prefix back
-                        -- the least while the baseline is pending.
-                        local counters = {}
-                        for _, row in sp.index[0]:pairs({}, opts) do
-                            local pk, raw = values(row, spec.pk_native_fields), values(row, spec.pk_fields)
-                            local key, bucket = values(row, spec.key_fields), row[spec.bucket_field]
-                            local seq = counters[bucket]
-                            if seq == nil then
-                                local t = box.space._tarn_lazy_counter:get{bucket}
-                                seq = t and sequence(t.seq) or 0
-                                if seq == nil then bad(1041, 'Lazy sequence capacity exhausted') end
-                                counters[bucket] = seq
-                            end
-                            local event = {bin({0, spec.gen, key, pk}), spec.gen, bucket, seq,
-                                           L.bucket(spec, key), key, pk, raw, true, true}
-                            local size = #mp.encode(event)
-                            if size > BYTES - 1024 then bad(1041, 'Lazy baseline exceeds packet bound') end
-                            if n > 0 and (n >= BATCH or bytes + size > BYTES - 1024) then complete = false; break end
-                            enqueue(event)
-                            cursor, n, bytes = sp.index[0]:tuple_pos(row), n + 1, bytes + size
+                    local events, cursor, complete = {}, box.NULL, true
+                    if not a.lazy_empty then
+                        if online ~= nil and online:get{spec.gen} ~= nil and backlog(spec.gen) then
+                            return {'ok', false}
                         end
-                        box.space._tarn_lazy_defs:update(spec.gen, {{'=', 7, cursor or box.NULL}, {'=', 8, complete}})
+                        -- Confirmed reads only: a baseline must not carry a
+                        -- write a leader change can still roll back. Read-
+                        -- only, the transaction cannot be aborted.
+                        box.begin{txn_isolation = 'read-confirmed'}
+                        events, cursor, complete = scan(sp, spec, d.cursor)
+                        box.rollback()
                     end
                     c.hook('lazy_bootstrap')
-                    -- MVCC validates this owner read if takeover/retirement
-                    -- committed while scanning vinyl or the hook yielded.
+                    box.begin(c.rw)
                     local current = box.space._tarn_lazy_defs:get{spec.gen}
-                    if current.owner ~= (owner or 0) or current.phase ~= 'building' then
+                    if current == nil or current.owner ~= (owner or 0) or current.phase ~= 'building'
+                       or current.done or mp.encode(current.cursor) ~= mp.encode(d.cursor) then
                         bad(1412, 'Lazy bootstrap ownership changed')
                     end
+                    for _, e in ipairs(events) do enqueue(e) end
+                    box.space._tarn_lazy_defs:update(spec.gen, {{'=', 7, cursor}, {'=', 8, complete}})
                     box.commit()
                     return {'ok', false}
                 end
             end
-            box.rollback()
             return {'ok', true}
         end)
         if box.is_in_txn() then box.rollback() end
@@ -680,7 +825,7 @@ function M.new(c)
         local out = {}
         for _, w in ipairs(writes) do
             local source, sp = L.sources[w[2]], box.space[w[2]]
-            if source ~= nil and #source.specs > 0 and sp ~= nil then
+            if source ~= nil and #source.capture > 0 and sp ~= nil then
                 local pk = target(sp, w)
                 local id = rowid(sp.id, pk)
                 if out[id] == nil then out[id] = {sp:get(pk) or false} end
@@ -700,7 +845,7 @@ function M.new(c)
         local rows, order, out = {}, {}, {}
         for _, p in ipairs(plans) do
             local source = L.sources[p[1].id]
-            if source ~= nil and #source.specs > 0 and not p[6] then
+            if source ~= nil and #source.capture > 0 and not p[6] then
                 local id = rowid(p[1].id, p[2])
                 if rows[id] == nil then
                     local initial = plans.lazy_initial and plans.lazy_initial[id]
@@ -717,10 +862,10 @@ function M.new(c)
             -- The first image was read before any physical rewrite; read the
             -- final image after all writes. PREPARE has not changed user rows.
             if plans.lazy_initial then r.new = r.sp:get(r.pk) end
-            local t, sample = r.new or r.old, r.source.specs[1]
+            local t, sample = r.new or r.old, r.source.capture[1]
             if t ~= nil then
                 local memberships = {}
-                for _, spec in ipairs(r.source.specs) do
+                for _, spec in ipairs(r.source.capture) do
                     local oldkey = r.old ~= nil and values(r.old, spec.key_fields) or nil
                     local newkey = r.new ~= nil and values(r.new, spec.key_fields) or nil
                     local same = oldkey ~= nil and newkey ~= nil and mp.encode(oldkey) == mp.encode(newkey)
@@ -849,7 +994,9 @@ function M.new(c)
                 if d == nil then bad(1412, 'Unknown lazy generation') end
                 if d.phase ~= 'retired' then
                     local s, sp = d.spec, box.space[a[2]]
-                    if sp == nil or (d.phase ~= 'ready' and not a[10]) then bad(1412, 'Lazy target is not ready') end
+                    -- A building incarnation takes the writes an online build
+                    -- captures (L.capture_start) as well as its baseline.
+                    if sp == nil then bad(1412, 'Lazy target is not ready') end
                     if #a[6] ~= #s.key_fields or #a[7] ~= #s.pk_fields or #a[8] ~= #s.pk_fields
                        or a[5] ~= L.bucket(s, a[6]) then bad(1210, 'Lazy assignment identity/routing mismatch') end
                     buckets[#buckets + 1] = a[5]
@@ -1347,7 +1494,11 @@ function M.new(c)
         else return {'error', 1210, 'Unknown lazy test control'} end
         return {'ok', L.paused, L.inflight, L.uncertain}
     end
-    L.capabilities = function() return {'ok', 1, {max_entries = BATCH, max_bytes = BYTES, max_seq = MAX_SEQ, aux_names = 1, route_parts = 16}} end
+    -- online_build: this node captures building incarnations (issue #184);
+    -- an online build needs it on every replica of the shard, since one
+    -- without it that became leader would not capture them.
+    L.capabilities = function() return {'ok', 1, {max_entries = BATCH, max_bytes = BYTES, max_seq = MAX_SEQ, aux_names = 1,
+                                                  route_parts = 16, online_build = 1}} end
     function L.final_check(buckets, plans)
         c.writable()
         if c.bk.stale then return {'moved', 1213, 'Lazy ownership cache became stale'} end

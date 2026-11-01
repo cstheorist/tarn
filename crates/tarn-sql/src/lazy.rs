@@ -785,7 +785,8 @@ pub struct StatsSample {
     pub values: BTreeMap<String, Value>,
 }
 
-fn capability(d: &[u8], route_parts: u32) -> SqlResult<()> {
+/// The storage's lazy limits, after checking that they suit this server.
+fn capability(d: &[u8], route_parts: u32) -> SqlResult<BTreeMap<String, u64>> {
     let mut rd = ok_table(d, 3)?;
     if unsigned(&mut rd, u32::MAX as u64)? != 1 {
         return Err(proto("unsupported lazy storage version"));
@@ -807,11 +808,14 @@ fn capability(d: &[u8], route_parts: u32) -> SqlResult<()> {
     {
         return Err(proto("incompatible lazy storage limits"));
     }
-    Ok(())
+    Ok(limits)
 }
 
 impl Cluster {
-    pub(crate) async fn lazy_capabilities_on(&self, replicas: &[String], route_parts: u32) -> SqlResult<()> {
+    /// Check the lazy capabilities of `replicas`; whether every one of them
+    /// builds lazy indexes online (`online_build`, issue #184).
+    pub(crate) async fn lazy_capabilities_on(&self, replicas: &[String], route_parts: u32) -> SqlResult<bool> {
+        let mut online = true;
         for addr in replicas {
             self.reclaim_connections(false).await;
             let client = tarn_iproto::Client::connect(&self.opts(addr))
@@ -825,9 +829,11 @@ impl Cluster {
             .map_err(|_| SqlError::unsupported("lazy storage capability check timed out"))?
             .map_err(|e| SqlError::unsupported(format!("lazy indexes require storage V1 on every replica ({e})")))?;
             let data = r.data().ok_or_else(|| proto("missing lazy capability"))?;
-            capability(&data, route_parts)?;
+            online &= capability(&data, route_parts)?
+                .get("online_build")
+                .is_some_and(|&v| v >= 1);
         }
-        Ok(())
+        Ok(online)
     }
 
     pub(crate) async fn require_lazy_capabilities(&self, route_parts: u32) -> SqlResult<()> {
@@ -838,17 +844,24 @@ impl Cluster {
         Ok(())
     }
 
+    /// `checked`: this run of the job checked every replica's capabilities
+    /// already, when its online build started (`online_lazy`). A replica
+    /// that went down since, as a leader that crashed during the scan,
+    /// restarts with the code it had; checking again would only fail.
     pub(crate) async fn bootstrap_lazy(
         &self,
         job: &crate::cluster::Job,
         call: &[u8],
         shards: &[usize],
+        checked: bool,
     ) -> SqlResult<()> {
         let (active, seconds, route_parts) = job_lazy(&job.args)?;
         if !active {
             return Ok(());
         }
-        self.require_lazy_capabilities(route_parts).await?;
+        if !checked {
+            self.require_lazy_capabilities(route_parts).await?;
+        }
         let work = async {
             for &s in shards {
                 loop {
@@ -887,7 +900,130 @@ impl Cluster {
             .await
             .map_err(|_| SqlError::new(1205, "HY000", "lazy index bootstrap timed out before publication"))?
     }
+
+    /// The online build of an ALTER TABLE's new lazy indexes (issue #184),
+    /// before PREPARE: on each shard, capture the table's writes for them
+    /// (`tarn_lazy_start`), then run the baseline scan to its end while the
+    /// writes go on. A shard whose storage predates it, or a change that is
+    /// not eligible (1846: an index on a column the change adds or alters),
+    /// is left to the build behind PREPARE's fence (`bootstrap_lazy`), which
+    /// finds the other shards done and only waits for their deliveries.
+    /// Whether it checked every replica's lazy capabilities (the job has
+    /// lazy indexes).
+    pub(crate) async fn online_lazy(
+        &self,
+        job: &crate::cluster::Job,
+        call: &[u8],
+        shards: &[usize],
+    ) -> SqlResult<bool> {
+        let (active, _, route_parts) = job_lazy(&job.args)?;
+        if !active {
+            return Ok(false);
+        }
+        // Every replica of every shard, as `bootstrap_lazy` checks them. A
+        // replica that does not capture building incarnations could become
+        // the leader during the build and drop those writes.
+        let mut capable = Vec::with_capacity(shards.len());
+        for &s in shards {
+            capable.push(
+                self.lazy_capabilities_on(self.shards[s].replicas(), route_parts)
+                    .await?,
+            );
+        }
+        let mut online = Vec::new();
+        for (&s, &all) in shards.iter().zip(&capable) {
+            if all && self.lazy_start(s, call).await? {
+                online.push(s);
+            }
+        }
+        for r in crate::topology::collect(
+            online.iter().map(|&s| self.lazy_scan(s, call)),
+            self.cfg.topology.fanout,
+        )
+        .await
+        {
+            r?;
+        }
+        Ok(true)
+    }
+
+    /// Whether shard `s` builds online: capture started there.
+    async fn lazy_start(&self, s: usize, call: &[u8]) -> SqlResult<bool> {
+        let mut retry = OnlineRetry::default();
+        loop {
+            let r = self
+                .call(s, "tarn_lazy_start", call)
+                .await
+                .and_then(|d| lua_status(&d).map(|_| ()));
+            match r {
+                Ok(()) => return Ok(true),
+                Err(e) if e.code == 1846 => return Ok(false),
+                Err(e) if e.message.contains("'tarn_lazy_start' is not defined") => return Ok(false),
+                // Besides a leader change: a bucket move on the shard, which
+                // ends within the move timeout while no other one begins, or
+                // a table that did not drain within the ALTER's timeout.
+                Err(e) if e.code == 1205 || online_transient(&e) => retry.wait(e).await?,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// The baseline scan of shard `s`, one bounded batch per call. Every
+    /// batch may be sent again: one refused before it wrote anything (a
+    /// conflict, the admission meter rebuilding, the outbox full, a leader
+    /// change), and one whose reply was lost, which its cursor check makes
+    /// harmless. A new leader continues from the durable cursor.
+    async fn lazy_scan(&self, s: usize, call: &[u8]) -> SqlResult<()> {
+        let mut retry = OnlineRetry::default();
+        loop {
+            let r = self.call(s, "tarn_lazy_bootstrap", call).await.and_then(|d| {
+                let mut rd = ok_table(&d, 2)?;
+                let done = boolean(&mut rd)?;
+                end(&rd)?;
+                Ok(done)
+            });
+            match r {
+                Ok(true) => return Ok(()),
+                Ok(false) => retry = OnlineRetry::default(),
+                Err(e) if online_transient(&e) => retry.wait(e).await?,
+                Err(e) => return Err(e),
+            }
+        }
+    }
 }
+
+/// A step of an online lazy build refused before it changed anything, or
+/// lost with its connection: a conflict or leader change (1213), no leader
+/// yet (2003), a lost connection (2013), storage admission (1205) or a full
+/// outbox (1041).
+fn online_transient(e: &SqlError) -> bool {
+    matches!(e.code, 1213 | 2003 | 2013)
+        || (e.code == 1205 && e.message.contains("admission refused"))
+        || (e.code == 1041 && e.message.contains("admission limit"))
+}
+
+/// Consecutive refusals of one online build step are sent again, with a
+/// growing pause, for up to a minute; then the ALTER fails with the last one.
+#[derive(Default)]
+struct OnlineRetry {
+    since: Option<Instant>,
+    tries: u32,
+}
+
+impl OnlineRetry {
+    async fn wait(&mut self, e: SqlError) -> SqlResult<()> {
+        let since = *self.since.get_or_insert_with(Instant::now);
+        if since.elapsed() >= ONLINE_RETRY {
+            return Err(e);
+        }
+        self.tries += 1;
+        tracing::debug!(error = %e.message, tries = self.tries, "online lazy build step refused; sending it again");
+        tokio::time::sleep(Duration::from_millis(20u64 << self.tries.min(5))).await;
+        Ok(())
+    }
+}
+
+const ONLINE_RETRY: Duration = Duration::from_secs(60);
 
 fn boolean(rd: &mut Rd<'_>) -> SqlResult<bool> {
     let b = match rd.buf.first() {
@@ -1396,6 +1532,21 @@ mod tests {
         let mut d = make(1, MAX_SEQ, Some(1));
         d.push(0xc0);
         assert!(capability(&d, 1).is_err());
+        // Storage from before #184 builds lazy indexes behind the fence only.
+        assert_eq!(
+            capability(&make(1, MAX_SEQ, Some(1)), 1).unwrap().get("online_build"),
+            None
+        );
+        let mut m = Mp::new();
+        m.arr(1).arr(3).str("ok").uint(1).map(5);
+        m.str("max_entries")
+            .uint(128)
+            .str("max_bytes")
+            .uint(1048576)
+            .str("max_seq")
+            .uint(MAX_SEQ);
+        m.str("aux_names").uint(1).str("online_build").uint(1);
+        assert_eq!(capability(&m.0, 1).unwrap().get("online_build"), Some(&1));
     }
 
     #[test]

@@ -5739,19 +5739,27 @@ function tarn_alter_prepare(name, a, gen)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     local cur = catalog_ver(sp.name)
     if cur >= a.ver then return {OK, 'applied'} end
-    local fills = (a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0) or M.lazy.needs_bootstrap(a.def)
+    -- A lazy index whose baseline scan has not run while writes went on
+    -- (tarn_lazy_start) scans behind this fence.
+    local uix_fill = a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0
+    local lazy_fill = M.lazy.needs_scan(a.def)
+    local fills = uix_fill or lazy_fill
     if (a.checks ~= nil and a.checks ~= box.NULL and #a.checks > 0) or fills then
         -- Writes to the table wait while the rows are checked, or read to
-        -- fill a new global index; vinyl's count is an estimate, which is
-        -- enough for a limit.
+        -- fill a new global or lazy index; vinyl's count is an estimate,
+        -- which is enough for a limit.
         local rows = sp.index[0]:len()
         if rows > M.cfg.alter_check_rows then
             return {'error', 1846, string.format(
                 "%s the existing rows of '%s' is not supported. Reason: a shard holds about %d rows "
                 .. "of it (limit %d, tarn.cfg.alter_check_rows), and writes to the table would wait for "
-                .. "the whole scan. %s", fills and 'Building a global unique index from' or 'Checking',
+                .. "the whole scan. %s",
+                uix_fill and 'Building a global unique index from' or lazy_fill and 'Building a lazy index from'
+                    or 'Checking',
                 sp.name, rows, M.cfg.alter_check_rows,
-                fills and 'Add the unique key while the table is small, or include the shard key in it'
+                uix_fill and 'Add the unique key while the table is small, or include the shard key in it'
+                    or lazy_fill and 'Add the lazy index in an ALTER TABLE that changes no column it indexes: '
+                        .. 'that one builds it while writes go on'
                     or 'Try a change that needs no check, such as a wider type or a nullable column')}
         end
     end
@@ -6943,6 +6951,8 @@ end
 function tarn_bucket_recv_begin(b, from, move, protocol)
     writable(); BK.fresh()
     if BK.move[b] ~= move or (BK.state[b] ~= 'receiving' and BK.state[b] ~= 'held') then
+        local gen = M.lazy.building()
+        if gen then return {'timeout', 1205, string.format('Bucket moves wait for the lazy index build %d', gen)} end
         M.move.capable(from); M.move.capable(M.cfg.shard_id)
     end
     M.move.headroom(0)
@@ -6975,6 +6985,10 @@ function tarn_bucket_send_begin(b, to, move, timeout)
     writable()
     BK.fresh()
     if BK.move[b] ~= move or (BK.state[b] ~= 'sending' and BK.state[b] ~= 'fenced') then
+        -- A bucket that moves while an online build may not have scanned its
+        -- rows would leave them out of the baseline (L.building).
+        local gen = M.lazy.building()
+        if gen then return {'timeout', 1205, string.format('Bucket moves wait for the lazy index build %d', gen)} end
         M.move.capable(to); M.move.capable(M.cfg.shard_id)
     end
     local lazy = M.lazy.move_ready(to)
@@ -7868,6 +7882,7 @@ BK.production_functions = {
         'tarn_lazy_gc',
         'tarn_lazy_ready',
         'tarn_lazy_select',
+        'tarn_lazy_start',
         'tarn_lazy_stats',
         'tarn_lock',
         'tarn_lock_range',
@@ -7976,6 +7991,85 @@ function tarn_engine_decision(name, old_id, new_id, ver, gen)
     return M.engine.decision(name, old_id, new_id, ver, gen)
 end
 function tarn_engine_counter_alias(old_id, new_id) return M.engine.counter_alias(old_id, new_id) end
+-- The online build of an ALTER's new lazy indexes (issue #184): store their
+-- descriptors and targets, then, behind a short fence that drains the
+-- table's commits in flight and its prepared transactions, capture the
+-- table's writes for them (L.capture_start). The baseline scan
+-- (tarn_lazy_bootstrap) then runs while writes go on, before PREPARE, which
+-- only finds it done. A write planned without the new incarnations either
+-- finished before this returns or is refused by the fence: the second drain
+-- covers one that planned while the capture's commit was in flight, and a
+-- lost in-memory fence (tla/LazyBaseline.tla, BugScanBeforeCapture,
+-- BugNoPrepareDrain). {'ok'} or {'ok', 'applied'}; 1846 when the change is
+-- not eligible (an index on a column it adds or changes, a backfill, an
+-- engine change): the coordinator then builds behind PREPARE's fence; 1205
+-- while a bucket of the shard moves, or when the table does not drain.
+function UIX.lazy_start(name, a, gen)
+    writable()
+    local sp = alter_space(name, a)
+    if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
+    local cur = catalog_ver(sp.name)
+    if cur >= a.ver then return {OK, 'applied'} end
+    -- No new incarnation, or its scan is done already.
+    if type(a.def) == 'table' and not M.lazy.needs_scan(a.def) then return {OK} end
+    if a.materialize == true or type(a.def) ~= 'table' or not M.lazy.online_eligible(sp, a.def) then
+        return {'error', 1846, 'This change builds its lazy indexes behind the ALTER fence'}
+    end
+    BK.fresh()
+    for b, state in pairs(BK.state) do
+        if state ~= 'active' and state ~= 'sent' then
+            return {'timeout', 1205, string.format('A lazy index build waits for the move of bucket %d', b)}
+        end
+    end
+    M.lazy.prepare(a.def, gen)
+    local started = M.lazy.capturing(a.def)
+    fence_fresh()
+    local raised = (FENCE[sp.id] or 0) < a.ver
+    if raised then FENCE[sp.id] = a.ver; BK.ns_fence(sp.id) end
+    local function lower(res)
+        if raised and FENCE[sp.id] == a.ver then FENCE[sp.id] = cur > 0 and cur or nil; BK.ns_fence(sp.id) end
+        return res
+    end
+    local deadline = clock.monotonic() + (a.timeout or 50)
+    if not started then
+        if not drain(sp.id, deadline) then
+            M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+            return lower({'timeout', 1205, LOCK_TIMEOUT_MSG})
+        end
+        local ok, err = pcall(function()
+            box.begin(RW)
+            M.lazy.capture_start(a.def, gen)
+            box.commit()
+        end)
+        if box.is_in_txn() then box.rollback() end
+        -- A registry rebuilt while the commit was in flight did not see it.
+        M.lazy.invalidate()
+        if not ok then return lower(failure(err)) end
+        yield_point('lazy_capture_start')
+    end
+    -- Also when a start that turned capture on did not return: a write
+    -- planned before then may still be in flight.
+    if not drain(sp.id, deadline) then
+        M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+        return lower({'timeout', 1205, LOCK_TIMEOUT_MSG})
+    end
+    -- A move that began before capture did must end before the scan does;
+    -- no move begins now (tarn_bucket_send_begin, tarn_bucket_recv_begin).
+    BK.fresh()
+    for b, state in pairs(BK.state) do
+        if state ~= 'active' and state ~= 'sent' then
+            return lower({'timeout', 1205, string.format('A lazy index build waits for the move of bucket %d', b)})
+        end
+    end
+    return lower({OK})
+end
+function tarn_lazy_start(name, a, gen)
+    a.ver = a.ver or a.def.ver or 0
+    if type(a.engine_change) == 'table' then
+        return {'error', 1846, 'This change builds its lazy indexes behind the ALTER fence'}
+    end
+    return UIX.alter_serial(UIX.lazy_start, 'lazy_start', name, a, gen)
+end
 function tarn_lazy_bootstrap(name, a, gen)
     a.ver = a.ver or a.def.ver or 0
     if type(a.engine_change) == 'table' then return M.engine.run('bootstrap', name, a, gen) end
