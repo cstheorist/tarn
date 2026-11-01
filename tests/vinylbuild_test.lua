@@ -69,11 +69,14 @@ check('the table is vinyl and synchronous', setup.engine == 'vinyl' and setup.sy
 
 -- Sixteen writers to w, so that writes are in flight, waiting for their
 -- quorum, whenever the build's DDL row is written. A write the schema change
--- refuses as stale (1412) is one the SQL server retries.
+-- refuses as stale (1412), or that vinyl admission throttles while a dump
+-- catches up (1205), is one the SQL server retries or the client is told to
+-- retry. A refused write returns without yielding: the writer sleeps, or a
+-- leader that resigned would spin in its writers and answer nothing else.
 eval(L, [[
     local fiber = require('fiber')
     local w = box.space['test.w']
-    _G.vb = {writes = 0, stale = 0, errors = {}, stop = false, running = 0}
+    _G.vb = {writes = 0, retried = 0, errors = {}, stop = false, running = 0}
     for f = 1, 16 do
         fiber.create(function()
             _G.vb.running = _G.vb.running + 1
@@ -82,8 +85,12 @@ eval(L, [[
                 id = id + 1
                 local ok, r = pcall(tarn_autocommit, {{'insert', w.id, {id, id % 7, 1}}})
                 if ok and r[1] == 'ok' then _G.vb.writes = _G.vb.writes + 1
-                elseif ok and r[2] == 1412 then _G.vb.stale = _G.vb.stale + 1
-                elseif #_G.vb.errors < 5 then _G.vb.errors[#_G.vb.errors + 1] = tostring(ok and r[3] or r) end
+                else
+                    local code = ok and r[2] or (type(r) == 'cdata' and r.code) or nil
+                    if code == 1412 or code == 1205 then _G.vb.retried = _G.vb.retried + 1
+                    elseif #_G.vb.errors < 5 then _G.vb.errors[#_G.vb.errors + 1] = tostring(ok and r[3] or r) end
+                    fiber.sleep(0.01)
+                end
             end
             _G.vb.running = _G.vb.running - 1
         end)
@@ -197,12 +204,19 @@ for i = 1, 3 do
     end
 end
 
+-- (Vinyl admission may throttle writes for a while after the builds' dumps.)
 local writes = eval(L, 'return _G.vb.writes')
-fiber.sleep(1)
-local after = eval(L, 'return {writes = _G.vb.writes, errors = _G.vb.errors}')
+local after
+deadline = fiber.clock() + 10
+repeat
+    fiber.sleep(0.2)
+    after = eval(L, 'return {writes = _G.vb.writes, retried = _G.vb.retried, errors = _G.vb.errors}')
+until after.writes > writes or fiber.clock() > deadline
 check('writes went on during the build', alter.writes_during > 0, alter)
-check('writes go on after the build', after.writes > writes, {before = writes, after = after.writes})
-check('no write failed but for retries of stale ones', #after.errors == 0, after.errors)
+check('writes go on after the build', after.writes > writes,
+      {before = writes, after = after.writes, retried = after.retried})
+check('no write failed but for ones to retry', #after.errors == 0, after.errors)
+print(string.format('  (%d writes, %d refused to retry)', after.writes, after.retried))
 
 eval(L, '_G.vb.stop = true')
 deadline = fiber.clock() + 15
