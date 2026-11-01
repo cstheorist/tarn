@@ -48,14 +48,18 @@ jobs:
         run: |
           if [ '${{ matrix.native }}' = 0 ]; then export TARN_NATIVE=0
           else export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"; fi
-          tests/outcomes.sh
+          ci/annotate.sh outcomes tests/outcomes.sh
       - name: Cross-client RPC admission and abandoned replies
         run: |
           if [ '${{ matrix.native }}' = 0 ]; then export TARN_NATIVE=0
           else export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"; fi
           for client in pymysql connector prepared; do
-            R=3 WAL=fsync RPC_CLIENT="$client" RPC_DIR="$OUTCOME_DIR/rpcs-$client" \
-              tests/rpcs.sh > "$OUTCOME_DIR/rpcs-$client.log" 2>&1
+            log="$OUTCOME_DIR/rpcs-$client.log"
+            if ! R=3 WAL=fsync RPC_CLIENT="$client" RPC_DIR="$OUTCOME_DIR/rpcs-$client" \
+                tests/rpcs.sh > "$log" 2>&1; then
+              # The log stays in the artifact; repeat its failure lines here.
+              ci/annotate.sh "rpcs-$client" sh -c 'cat "$1"; exit 1' sh "$log"
+            fi
           done
       - name: Retain every history and storage log
         if: always()
