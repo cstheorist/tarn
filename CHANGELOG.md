@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The generated MySQL contracts page (`docs/mysql-contracts.md`) lists the
+  lazy-index contracts with the release manifest, each with its regression
+  tests, from `tests/contracts/lazy-index.json`. A new entry,
+  `lazy.move_drain`, and its test cover a bucket move while the bucket's
+  lazy deliveries are stalled: the move fails with 1205 at the move timeout
+  and the bucket stays, and a session's read-your-writes catch-up follows
+  the bucket once it has moved
+  ([#182](https://github.com/cstheorist/tarn/issues/182)).
+
 - Every 1412 ("Table definition has changed") that does not come from a
   schema change's own steps is logged at info level with its origin: a
   storage node's fence (the table, its fence and the write's version), a
@@ -71,6 +80,27 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   See [the deployment procedure and proof boundaries](docs/production.md).
 
 ### Fixed
+
+- A statement reading two or more shards is no longer refused by its memory
+  budget (1041) just because its shards' reads overlapped. Each concurrent
+  read reserves a whole reply (16 MiB) before it is sent; with a full page
+  decoded from each of two shards, the second shard's next read was refused
+  whenever the first shard's was still reserved, and went through when it
+  was not. Such a reservation now waits while another read of the statement
+  holds one (for at most `read_timeout_ms`), and a read whose reply has
+  arrived keeps only twice the reply's size reserved. A statement is
+  refused when what it keeps leaves no room for one read
+  ([#238](https://github.com/cstheorist/tarn/issues/238)).
+
+- A storage node's restart no longer keeps a memtx MVCC transaction story,
+  300 to 400 bytes, per recovered row of a memtx table with a secondary
+  index that precedes another memtx table with rows: about 380 MiB for a
+  million rows. With MVCC on, Tarantool built such a table's secondary keys
+  inside the next table's first recovered transaction, tracking a read of
+  every row. Storage nodes now write sort data with each checkpoint
+  (`memtx_use_sort_data`) and build secondary keys from it, which also
+  restarts faster; the file backup accepts the `.sortdata` files
+  ([#218](https://github.com/cstheorist/tarn/issues/218)).
 
 - A lazy-index read whose rows outgrow its limit falls back to the strong
   path before the statement's memory budget refuses it, and the fallback

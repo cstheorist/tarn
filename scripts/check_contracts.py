@@ -39,6 +39,20 @@ def extensions(root, manifest):
         yield name, extension, entries
 
 
+def fragments(root):
+    """The contract fragments (tests/contracts/*.json): Tarn-specific
+    behavior mapped to the suites that run it, whose links
+    tests/contracts/check.py checks. They are documented here, not paired
+    with the oracle."""
+    for path in sorted((root / 'tests/contracts').glob('*.json')):
+        spec = json.loads(path.read_text())
+        assert spec['format'] == 'tarn-contract-fragment-v1', path
+        for entry in spec['contracts']:
+            assert entry['behavior'] and '|' not in entry['behavior'], entry
+            assert entry['tests'] and all('|' not in t for t in entry['tests']), entry
+        yield path.relative_to(root).as_posix(), spec
+
+
 def render(root=ROOT):
     m = json.loads((root / "contracts/manifest.json").read_text())
     assert m["schema"] == 1
@@ -60,13 +74,22 @@ def render(root=ROOT):
               "These Tarn diagnostics are read-only session variables. `@@global.transaction_isolation`, `@@global.innodb_lock_wait_timeout` and SHOW GLOBAL VARIABLES report gateway defaults independently of session overrides. Global defaults are gateway-local, not cluster-wide, and affect new connections only. Tarn fixes `max_error_count` at 64; other values fail explicitly with 1235/42000. Other GLOBAL assignments (including autocommit and sql_mode) are explicitly unsupported with 1235/42000; they do not alter session behavior or commit pending work.", "",
               "`SET SESSION tarn_isolation_contract='MYSQL'` refuses an exact MySQL-isolation request with 1235/42000, without committing or discarding buffered writes. `TARN` (also DEFAULT) acknowledges the documented contract. Clients migrating from the REPEATABLE READ alias should explicitly select SERIALIZABLE when they want Tarn's strong contract, and handle known 1213/40001 aborts. Applications requiring InnoDB's exact snapshot/current-read behavior cannot select it in this release. 1180/40003 remains outcome unknown and must not trigger automatic mutation replay.", "",
               "## Extending the gate", "",
-              "Add a uniquely named `case_<id>` and matching manifest entry, with paired assertions for both outcomes and precise scope. Run `python3 scripts/check_contracts.py` and commit the generated page. `--check` rejects missing/duplicate/unregistered cases or stale generated documentation. Register Tarn-specific suites through the extensions list, with unique case functions and a matching source manifest. The checker validates those registrations and renders their scope below. Unregistered integrity, key/collation, KV and lazy-consistency histories remain outside the certified scope.", ""]
+              "Add a uniquely named `case_<id>` and matching manifest entry, with paired assertions for both outcomes and precise scope. Run `python3 scripts/check_contracts.py` and commit the generated page. `--check` rejects missing/duplicate/unregistered cases or stale generated documentation. Register Tarn-specific suites through the extensions list, with unique case functions and a matching source manifest. The checker validates those registrations and renders their scope below. Contract fragments (`tests/contracts/*.json`) classify Tarn-specific behavior and link each entry to the suites that run it in CI; `tests/contracts/check.py` rejects stale links, and the fragments are rendered at the end of this page. They are not paired oracle histories. Unregistered integrity, key/collation and KV histories remain outside the certified scope.", ""]
     for name, extension, registered in extensions(root, m):
         lines += [f"## Registered extension: {name}", "", extension['scope'], "",
                   f"Source: `contracts/{name}.json`. These histories run in their own required workflow; the paired oracle runner above does not execute storage-specific faults.", "",
                   "| Contract/test ID | Classification | Guaranteed scope / observed difference |", "|---|---|---|"]
         for entry in registered:
             lines.append(f"| `{name}:{entry['id']}` | {entry['classification']} | {entry['description']} |")
+        lines += [""]
+    for path, spec in fragments(root):
+        doc = Path(spec['documentation']).relative_to('docs').as_posix()
+        lines += [f"## Contract fragment: {spec['scope']}", "", spec['oracle_boundary'], "",
+                  f"Source: `{path}`, documented in [{doc}]({doc}). Each entry's regression tests run in the CI suites that own them.", "",
+                  "| Contract ID | Classification | Behavior | Regression tests |", "|---|---|---|---|"]
+        for entry in spec['contracts']:
+            tests = "<br>".join(f"`{t}`" for t in entry['tests'])
+            lines.append(f"| `{entry['id']}` | {entry['classification']} | {entry['behavior']} | {tests} |")
         lines += [""]
     return "\n".join(lines)
 

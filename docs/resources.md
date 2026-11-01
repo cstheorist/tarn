@@ -70,6 +70,12 @@ Each active read reserves 16 MiB plus its encoded arguments before dispatch,
 covering buffer growth. A query has one to four concurrent read slots,
 derived from its byte limit, so small batched joins wait for their own wire
 slots instead of multiplying maximum-frame reservations without bound.
+Once its reply has arrived, a read keeps twice the reply's size reserved
+until it is decoded and released. A read whose reservation does not fit
+waits while another read of the same query holds one, for at most
+`read_timeout_ms`, and is refused at once when none does: a query that keeps
+decoded pages from several shards is refused when they leave no room for one
+read, not because its shards' reads overlapped.
 
 A cancelled read retains its reservation until reply or deadline. The read
 deadline retires its physical connection. Fast autocommit has a deadline of

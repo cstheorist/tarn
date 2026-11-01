@@ -70,6 +70,7 @@ per-leader maximum; the `topology` object supplies gateway-wide caps.
 | `TARN_CLOCK_MAX_GAP` | `2` | immutable local observation-gap/certificate lifetime, seconds |
 | `TARN_CLOCK_MAX_DRIFT` | `0.25` | immutable wall/monotonic elapsed-time drift allowance, seconds |
 | `TARN_MEMORY_MB` | `1024` | memtx memory: memtx tables, the protocol's records and the system spaces |
+| `TARN_MEMTX_SORT_DATA` | `1` | write sort data with each checkpoint (`memtx_use_sort_data`) and build memtx secondary keys from it on restart; `0`: build them by scanning, which leaves a transaction story (about 300 to 400 bytes) per row of a memtx table recovered before another one, held long after the restart (see [Sizing](#sizing)) |
 | `TARN_VINYL_MEMORY_MB` | `128` | vinyl's in-memory level: recent writes of vinyl tables, dumped to disk when full |
 | `TARN_VINYL_CACHE_MB` | `128` | vinyl's cache of recently read rows |
 | `TARN_VINYL_TIMEOUT` | `0.25` | seconds a native vinyl statement may wait for memory quota; Tarantool's standalone default is 60 seconds. This is not a whole-transaction, disk-I/O or replication deadline. |
@@ -338,7 +339,15 @@ lazy indexes; JOIN and moves check the required transfer capabilities.
 ### Sizing
 
 **memtx.** `TARN_MEMORY_MB` holds every row of the memtx tables, the
-protocol's records (see above) and the system spaces.
+protocol's records (see above) and the system spaces. Each checkpoint also
+writes a `.sortdata` file next to its snapshot, 12 bytes per row per index
+(the primary key included) of every memtx table that has a secondary index;
+it is removed with its snapshot. A restart builds the secondary keys from
+it, faster than by sorting. Without it (`TARN_MEMTX_SORT_DATA=0`, or the
+first restart after an upgrade, before a checkpoint has written one), MVCC
+tracks a read of every row of a memtx table recovered before another one,
+and the node keeps a story of 300 to 400 bytes per such row until later
+transactions release them; its RSS does not come back down.
 
 **vinyl.** The rows of a vinyl table are on disk. Besides memtx, a storage
 node's RAM holds:
