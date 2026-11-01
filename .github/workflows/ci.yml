@@ -246,7 +246,9 @@ jobs:
       - name: READ COMMITTED tests
         run: ci/annotate.sh rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
       - name: Query resource bounds and overload
-        run: TARN_RESOURCE_REF=127.0.0.1:3407 ci/annotate.sh resources tests/resources.sh
+        run: |
+          TARN_RESOURCE_REF=127.0.0.1:3407 ci/annotate.sh resources tests/resources.sh
+          TARN_NATIVE=0 TARN_RESOURCE_REF=127.0.0.1:3407 ci/annotate.sh resources-lua tests/resources.sh
       - name: Schema changes and dumps
         run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --kv 127.0.0.1:3311,127.0.0.1:3321 --seconds 20
       - name: Lazy-index semantics and own-commit recovery
