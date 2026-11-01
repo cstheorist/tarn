@@ -91,6 +91,9 @@ local M = {
         check_yields = false,    -- tests: an atomic section that yields is an error
         test_hooks = false,      -- tests: tarn_test_hook may hold yield points
         check_locks = false,     -- tests: the native module's copy of the lock index is checked (BK.ns_check_locks)
+        -- election_watchdog: seconds without a leader before a candidate
+        -- stands itself (nil: three election timeouts; 0: never; see
+        -- "Election watchdog").
     },
     stats = {commit_local = 0, prepare_yes = 0, prepare_no = 0, apply = 0,
              abort = 0, conflicts = 0, recovered = 0, recovery_attempts = 0, recovery_failures = 0,
@@ -99,7 +102,8 @@ local M = {
              plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0,
              stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0, alter_conflicts = 0,
              creates = 0, drops = 0, truncates = 0, ddl_doomed = 0, read_oom = 0, heap_collects = 0,
-             moved = 0, move_broken_locks = 0, bucket_sends = 0, bucket_recvs = 0, lock_copy_errors = 0},
+             moved = 0, move_broken_locks = 0, bucket_sends = 0, bucket_recvs = 0, lock_copy_errors = 0,
+             election_stands = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -5284,6 +5288,101 @@ function M.start_recovery()
 end
 
 -------------------------------------------------------------------------------
+-- Election watchdog (#254)
+-------------------------------------------------------------------------------
+-- An election succeeds only once a replica whose vclock the others accept
+-- stands. The others refuse a stale candidate ("the vclock is not
+-- acceptable"). But Tarantool restarts a replica's election timer whenever
+-- it learns of a newer term, and each failed election bumps the term. So
+-- while stale replicas keep standing, the timer of the one replica that
+-- could win may never fire, and the shard stays without a leader as its
+-- terms climb. (Seen: a leader resigned, by strict fencing, holding a
+-- transaction its followers never received.)
+--
+-- A candidate that has seen no leader for cfg.election_watchdog seconds
+-- (nil: three election timeouts; 0: off) therefore stands itself with
+-- box.ctl.promote(), whatever its timer did meanwhile, if it receives from
+-- a quorum of its replica set. A stale replica standing wins nothing:
+-- it only bumps the term, as the stale replicas' own elections do. After
+-- standing, a replica waits another period before it stands again. Each
+-- period gets up to half of itself added at random, so that replicas
+-- whose periods began together do not stand together.
+local EW = {seen = nil, extra = 0, fiber = nil, standing = false,
+            promote = function() return box.ctl.promote() end}
+M.election_watchdog = EW   -- (tests)
+
+function EW.period()
+    local p = M.cfg.election_watchdog
+    if p == nil then p = 3 * (box.cfg.election_timeout or 5) end
+    return p
+end
+
+-- The random extra wait of a period of p seconds.
+function EW.jitter(p) return math.random() * p / 2 end
+
+function EW.restart(t)
+    EW.seen, EW.extra = t, EW.jitter(EW.period())
+end
+
+-- Whether to stand at monotonic time t, in state s: {leader = the leader's
+-- id or 0, leading = this replica leads, candidate = it is in candidate
+-- mode, running = box.info.status is 'running', quorum = it receives from
+-- a quorum of its replica set}.
+function EW.decide(t, s)
+    if EW.seen == nil or s.leader ~= 0 or s.leading or not s.candidate or not s.running or EW.standing then
+        EW.restart(t)
+        return false
+    end
+    local p = EW.period()
+    if p <= 0 or t - EW.seen < p + EW.extra or not s.quorum then return false end
+    EW.restart(t)
+    return true
+end
+
+-- This replica and the replicas it receives from: a quorum?
+function EW.quorum()
+    local n = 1
+    for id, r in pairs(box.info.replication) do
+        if id ~= box.info.id and r.upstream ~= nil
+                and (r.upstream.status == 'follow' or r.upstream.status == 'sync') then
+            n = n + 1
+        end
+    end
+    return n >= box.info.synchro.quorum
+end
+
+function EW.tick(t)
+    local e = box.info.election
+    local seen = EW.seen
+    if not EW.decide(t, {leader = e.leader, leading = e.state == 'leader',
+                         candidate = box.cfg.election_mode == 'candidate',
+                         running = box.info.status == 'running', quorum = EW.quorum()}) then
+        return
+    end
+    log.warn('tarn: no leader for %.1f s at term %d; standing (election watchdog)', t - (seen or t), e.term)
+    M.stats.election_stands = M.stats.election_stands + 1
+    EW.standing = true
+    fiber.create(function()
+        fiber.name('tarn_stand')
+        local ok, err = pcall(EW.promote)
+        if not ok then log.info('tarn: standing did not win: %s', tostring(err)) end
+        EW.standing = false
+    end)
+end
+
+function M.start_election_watchdog()
+    if EW.fiber ~= nil then return end
+    EW.fiber = fiber.create(function()
+        fiber.name('tarn_election_watchdog')
+        while true do
+            fiber.sleep(0.5)
+            local ok, err = pcall(EW.tick, fiber.clock())
+            if not ok then log.warn('tarn election watchdog: %s', tostring(err)) end
+        end
+    end)
+end
+
+-------------------------------------------------------------------------------
 -- DDL and catalog
 -------------------------------------------------------------------------------
 -- SQL servers run CREATE TABLE, DROP TABLE, TRUNCATE and ALTER TABLE as jobs
@@ -7739,6 +7838,7 @@ function M.init(cfg)
     M.clock.load()
     M.clock.start()
     M.start_recovery()
+    M.start_election_watchdog()
     M.lazy.start()
     PG.watch_heap()
     rawset(_G, 'tarn', M)
@@ -8045,8 +8145,14 @@ function UIX.lazy_start(name, a, gen)
         -- A registry rebuilt while the commit was in flight did not see it.
         M.lazy.invalidate()
         -- A leader change that rolled the marker back: the coordinator
-        -- starts again (1213), as for a local commit.
-        if not ok then return lower(commit_failure(err)) end
+        -- starts again (1213), as for a local commit. A replica that
+        -- stopped leading while the start drained wrote nothing: the start
+        -- goes to the new leader (reraise_readonly), its fence lowered here.
+        if not ok then
+            lower()
+            reraise_readonly(err)
+            return commit_failure(err)
+        end
         yield_point('lazy_capture_start')
     end
     -- Also when a start that turned capture on did not return: a write
@@ -8111,9 +8217,12 @@ M.kv = require('tarn_kv').new{
     point = function(sid, key, bucket)
         return tarn_select(sid, 0, key, 'EQ', 1, nil, nil, true, nil, false, nil, bucket)
     end,
-    guard = function(sid, ver)
+    -- between: a check between two points of one request, which leaves
+    -- the control spaces to the checks when the request begins and ends.
+    guard = function(sid, ver, between)
         writable()
-        M.fresh.clock_check(); M.fresh.controls()
+        M.fresh.clock_check()
+        if not between then M.fresh.controls() end
         if LK_STALE or FENCE_STALE or BK.stale then
             error(box.error.new{code = box.error.TRANSACTION_CONFLICT,
                                 reason = 'Strong KV metadata became stale during the read'})
