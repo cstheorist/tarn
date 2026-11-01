@@ -98,12 +98,17 @@ def continuation(control, bounded):
         q(b, "BEGIN")
         q(b, "UPDATE ledger SET v = v + 1 WHERE id = 1")
         q(b, "INSERT INTO ledger VALUES (1001, 7)")
-        # Keeps nearly every row of `wide`: refused once what it keeps no
-        # longer fits, after several pages of each shard.
-        message = refused(b, "SELECT id, s FROM wide WHERE id % 97 <> 5", "query memory budget")
-        after = status(b)
-        pages = after["Tarn_storage_reads"] - before["Tarn_storage_reads"]
-        assert pages > 4, f"refused before any continuation: {pages} storage reads"
+        # Keeps two rows in five of `wide`: refused at a later page (a
+        # continuation), once the rows it kept leave no room for the next
+        # one, and never at a first page. While a page of 4 MiB is decoded
+        # and its kept rows copied, it holds its reply twice over, its decoded
+        # rows and the copies, about 28 MiB of the query's 64 MiB: both
+        # shards' first pages fit at once. (A scan that keeps nearly every
+        # row can be refused there when the two are decoded together.)
+        reads = status(b)["Tarn_storage_reads"]
+        message = refused(b, "SELECT id, s FROM wide WHERE id % 5 < 2", "query memory budget")
+        pages = status(b)["Tarn_storage_reads"] - reads
+        assert pages > 2, f"refused at a first page: {pages} storage reads on 2 shards ({message})"
         assert q(c, "SELECT v FROM ledger WHERE id = 1") == ((0,),), "the refused transaction's update stayed"
         assert q(c, "SELECT COUNT(*) FROM ledger WHERE id = 1001") == ((0,),), "its insert stayed"
         drained(b, before)
