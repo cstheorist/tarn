@@ -210,7 +210,15 @@ On Linux, the owned fixture can prepare and audit a fresh measurement cohort:
 cargo build --release --workspace --all-targets --locked
 KV_STUDY_ENGINE=memtx tests/kv.sh
 KV_STUDY_ENGINE=vinyl tests/kv.sh
+python3 bench/strong_kv_summary.py /tmp/tarn-kv181-*/study/results/study.json
 ```
+
+`bench/strong_kv_summary.py` turns an accepted study into tables. For each
+batch/clients cell and path it reports the median and range of key
+throughput over the six trials, the median of the trials' operation p99,
+requests and bytes to storage per key, client protocol bytes per key and CPU
+per key. It then pairs strong KV with SQL in each trial and reports the
+median and range of their ratios: the comparison of equal contracts.
 
 The manual CI input `strong_kv_qualification` runs native and Lua fault
 histories, native and Lua terminal clock faults, and the two measurement
@@ -218,7 +226,11 @@ engines on six separate runners, with at most three running concurrently.
 A failed cohort remains failed while the other isolated cohorts finish and
 retain their evidence.
 The optional `strong_kv_scope: histories` selects just the two fault-history
-cohorts when investigating a history-fixture change.
+cohorts when investigating a history-fixture change, and `measurements` just
+the two measurement cohorts. A measurement cohort writes its tables to the job
+summary, and one notice per batch/clients cell holds that cell's summary JSON.
+The Tests job runs the native and Lua fault and clock histories on every
+change.
 Manual qualification keeps in-progress cohorts running; the two scopes use
 separate concurrency groups so a history rerun cannot cancel measurements.
 
@@ -231,7 +243,12 @@ Warmup and engine caches remain part of the recorded environment; a Vinyl
 cohort does not by itself establish cold-disk performance.
 
 Raw samples, errors, source/executable identities, discovery costs and
-timed RPC/protocol-byte counters are retained. CPU counters bracket each
+timed RPC/protocol-byte counters are retained. Strong KV and raw reads count
+the client's own requests and bytes to storage. An SQL phase also reads its
+gateway's storage counters (`Tarn_storage_rpc_enqueued`,
+`Tarn_storage_bytes_written` and `Tarn_storage_bytes_read` in `SHOW STATUS`)
+around the timed window; these include the gateway's background requests in
+the window. CPU counters bracket each
 phase and identify client, gateways, storage processes and TX threads.
 TX-thread CPU is already included in storage-process CPU; those scopes
 must not be added together. Protocol bytes exclude TCP headers. The SQL
