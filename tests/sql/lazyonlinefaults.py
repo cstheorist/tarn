@@ -11,6 +11,7 @@ compares with the table as it is.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import threading
 import time
@@ -65,6 +66,63 @@ def main():
             time.sleep(.05)
         raise AssertionError(f"no writable leader: group={group['id']} excluded={exclude}")
 
+    ELECTION = ("local e,q=box.info.election,box.info.synchro.queue;"
+                "return {ro=box.info.ro,state=e.state,term=e.term,leader=e.leader,owner=q.owner,len=q.len}")
+
+    def alive(node):
+        # Each replica's pid file sits in the cluster directory, named for
+        # its working directory (sI.J), whose port ends in IJ.
+        port = node.rsplit(":", 1)[1]
+        pid = work / f"s{port[-2]}.{port[-1]}.pid"
+        try:
+            os.kill(int(pid.read_text()), 0)
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def cohort():
+        """Each replica's process and election state, for a failure message."""
+        lines = []
+        for g in groups:
+            for node in g["replicas"]:
+                try:
+                    lines.append(f"{node} {json.dumps(ev(node, ELECTION), sort_keys=True)}")
+                except Exception as e:  # down or not answering
+                    lines.append(f"{node} alive={alive(node)} {type(e).__name__}: {str(e)[:120]}")
+        return lines
+
+    def fail(message, detail):
+        # Lines with FAIL reach the CI annotations (ci/annotate.sh).
+        for line in cohort():
+            print("FAIL lazy online cohort:", line, flush=True)
+        raise AssertionError((message, detail))
+
+    def settle(seconds=3, timeout=60):
+        """Every replica answers and agrees on its shard's leader and term,
+        for `seconds` in a row. A restarted former leader rejoins its shard
+        and can start an election, which the ALTER must not run into."""
+        deadline, since, last = time.monotonic() + timeout, None, None
+        while time.monotonic() < deadline:
+            view = []
+            for g in groups:
+                seen = set()
+                for node in g["replicas"]:
+                    try:
+                        e = ev(node, ELECTION)
+                        seen.add((e["leader"], e["term"]))
+                    except Exception:
+                        seen.add(None)
+                view.append(sorted(seen, key=repr))
+            agreed = all(len(v) == 1 and v[0] is not None and v[0][0] != 0 for v in view)
+            now = time.monotonic()
+            if not agreed or view != last:
+                since = now if agreed else None
+            elif now - since >= seconds:
+                return view
+            last = view
+            time.sleep(.2)
+        fail("the shards did not settle on their leaders", last)
+
     # Lazy DDL checks every replica's capabilities, so every replica must
     # answer, including a leader an earlier test crashed and restarted.
     deadline = time.monotonic() + 60
@@ -79,6 +137,7 @@ def main():
             if time.monotonic() >= deadline:
                 raise AssertionError(f"replica {node} did not answer: {reply}")
             time.sleep(.2)
+    record("settled", leaders=settle())
     # Shard 2: the policy fault test before this one crashed shard 1's leader.
     first, _ = wait_leader(groups[0])
     victim, state = wait_leader(groups[1])
@@ -136,7 +195,8 @@ def main():
         threads[1].start()
         deadline = time.monotonic() + 60
         while True:
-            assert time.monotonic() < deadline and "error" not in alter, ("the scan never reached the hook", alter)
+            if time.monotonic() >= deadline or "error" in alter:
+                fail("the scan never reached the hook", alter)
             try:
                 # (waits up to 5 s on the node, as long as the call may take)
                 if rpc(victim, "tarn_test_hook", ["lazy_bootstrap", "reached"])[1] > 0:
@@ -159,8 +219,10 @@ def main():
         replacement, _ = wait_leader(groups[1], exclude=crashed)
         record("replacement", leader=replacement)
         threads[1].join(timeout=150)
-        assert not threads[1].is_alive(), "the ALTER did not return"
-        assert alter.get("ok"), alter
+        if threads[1].is_alive():
+            fail("the ALTER did not return", alter)
+        if not alter.get("ok"):
+            fail("the ALTER failed", alter)
         after = writes[0]
         time.sleep(.3)
     finally:
