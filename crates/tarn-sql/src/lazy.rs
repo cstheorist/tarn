@@ -893,24 +893,28 @@ impl Cluster {
         }
         let work = async {
             for &s in shards {
-                loop {
-                    let d = self.call(s, "tarn_lazy_bootstrap", call).await?;
-                    let mut rd = ok_table(&d, 2)?;
-                    let done = boolean(&mut rd)?;
-                    end(&rd)?;
-                    if done {
-                        break;
-                    }
-                }
+                while !self
+                    .lazy_step(s, "tarn_lazy_bootstrap", call, |d| {
+                        let mut rd = ok_table(d, 2)?;
+                        let done = boolean(&mut rd)?;
+                        end(&rd)?;
+                        Ok(done)
+                    })
+                    .await?
+                {}
             }
             loop {
                 let mut complete = true;
                 for &s in shards {
-                    let d = self.call(s, "tarn_lazy_bootstrap_status", call).await?;
-                    let mut rd = ok_table(&d, 3)?;
-                    let done = boolean(&mut rd)?;
-                    let pending = unsigned(&mut rd, MAX_SEQ)?;
-                    end(&rd)?;
+                    let (done, pending) = self
+                        .lazy_step(s, "tarn_lazy_bootstrap_status", call, |d| {
+                            let mut rd = ok_table(d, 3)?;
+                            let done = boolean(&mut rd)?;
+                            let pending = unsigned(&mut rd, MAX_SEQ)?;
+                            end(&rd)?;
+                            Ok((done, pending))
+                        })
+                        .await?;
                     complete &= done && pending == 0;
                 }
                 if complete {
@@ -919,9 +923,8 @@ impl Cluster {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             for &s in shards {
-                let d = self.call(s, "tarn_lazy_ready", call).await?;
-                let rd = ok_table(&d, 1)?;
-                end(&rd)?;
+                self.lazy_step(s, "tarn_lazy_ready", call, |d| end(&ok_table(d, 1)?))
+                    .await?;
             }
             Ok::<(), SqlError>(())
         };
@@ -997,6 +1000,27 @@ impl Cluster {
         }
     }
 
+    /// One call of an idempotent lazy build step on shard `s`, whose reply
+    /// `parse` reads. A transient refusal (`online_transient`) sends it
+    /// again for up to a minute, so that a leader change during the build
+    /// does not fail the ALTER.
+    async fn lazy_step<T>(
+        &self,
+        s: usize,
+        func: &str,
+        call: &[u8],
+        parse: impl Fn(&[u8]) -> SqlResult<T>,
+    ) -> SqlResult<T> {
+        let mut retry = OnlineRetry::default();
+        loop {
+            match self.call(s, func, call).await.and_then(|d| parse(&d)) {
+                Ok(v) => return Ok(v),
+                Err(e) if online_transient(&e) => retry.wait(e).await?,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     /// The baseline scan of shard `s`, one bounded batch per call. Every
     /// batch may be sent again: one refused before it wrote anything (a
     /// conflict, the admission meter rebuilding, the outbox full, a leader
@@ -1021,13 +1045,16 @@ impl Cluster {
     }
 }
 
-/// A step of an online lazy build refused before it changed anything, or
-/// lost with its connection: a conflict or leader change (1213), no leader
-/// yet (2003), a lost connection (2013), storage admission (1205) or a full
-/// outbox (1041).
+/// A step of a lazy build refused before it changed anything, or lost with
+/// its connection: a conflict or leader change (1213), a transaction a new
+/// leader rolled back (Tarantool's ER_SYNC_ROLLBACK, 217, which reaches the
+/// gateway as "storage error 217" when a step raises it), no leader yet
+/// (2003), a lost connection (2013), storage admission or Vinyl memory
+/// quota (1205) or a full outbox (1041). Every step is idempotent.
 fn online_transient(e: &SqlError) -> bool {
     matches!(e.code, 1213 | 2003 | 2013)
-        || (e.code == 1205 && e.message.contains("admission refused"))
+        || (e.code == 1105 && e.message.starts_with("storage error 217:"))
+        || (e.code == 1205 && (e.message.contains("admission refused") || e.message.contains("Vinyl memory quota")))
         || (e.code == 1041 && e.message.contains("admission limit"))
 }
 
@@ -1531,6 +1558,36 @@ mod tests {
             "SELECT id FROM t WHERE k=7",
         );
         assert_eq!(c.strong_reason(&plain), Some("index_not_declared_lazy"));
+    }
+
+    #[test]
+    fn lazy_build_steps_retry_only_refusals_that_changed_nothing() {
+        let e = |code, message: &str| SqlError::new(code, "HY000", message);
+        // A commit a new leader rolled back reaches the coordinator as 1213.
+        assert!(online_transient(&e(
+            1213,
+            "shard leader changed during the commit, retry the transaction"
+        )));
+        assert!(online_transient(&e(
+            2003,
+            "shard 1 has no reachable leader (127.0.0.1:1 is read-only)"
+        )));
+        assert!(online_transient(&e(2013, "lost connection")));
+        assert!(online_transient(&e(
+            1205,
+            "Timed out waiting for Vinyl memory quota; transaction rolled back"
+        )));
+        assert!(online_transient(&e(1205, "storage admission refused")));
+        assert!(!online_transient(&e(
+            1205,
+            "Lock wait timeout exceeded; try restarting transaction"
+        )));
+        assert!(!online_transient(&e(1412, "Lazy bootstrap ownership changed")));
+        assert!(online_transient(&e(
+            1105,
+            "storage error 217: A rollback for a synchronous transaction is received"
+        )));
+        assert!(!online_transient(&e(1105, "storage error 32: Lua error")));
     }
 
     #[test]
