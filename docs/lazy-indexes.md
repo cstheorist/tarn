@@ -320,8 +320,10 @@ existing rows and waits for their baseline assignments to be durably
 acknowledged. The per-shard ALTER scan limit applies (1846). An
 instant-added column is first materialized using its committed fill and
 layout rules. A lazy index also has a local index on each shard, which
-serves strong reads. Vinyl builds that index in BUILD while writes go on;
-memtx builds it in PREPARE, behind the fence, as for any index.
+serves strong reads. On an unreplicated shard, vinyl builds that index in
+BUILD while writes go on. Memtx, and vinyl on a replicated shard, build it
+in PREPARE behind the fence, as for any index ([design](design.md),
+issue #263).
 
 A baseline assignment takes the counter of its row's bucket, read before
 the row, as its sequence. Any value up to the counter would do: every

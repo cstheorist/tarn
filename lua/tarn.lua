@@ -5445,12 +5445,15 @@ end
 -- version (`ver`): writes carry the version of the definition they were
 -- encoded with (FENCE above), and an ALTER TABLE to version V runs on every
 -- shard in three steps, driven by one SQL server:
---   BUILD    on a vinyl table, build the new indexes under temporary names
---            while writes go on (vinyl keeps an index current while it
---            builds it): no write waits for it, however large the table. A
---            memtx table builds in PREPARE: with memtx MVCC, a write
---            committed while an index build yields aborts the build, and
---            memtx builds at memory speed anyway;
+--   BUILD    on a vinyl table of an unreplicated shard, build the new
+--            indexes under temporary names while writes go on (vinyl keeps
+--            an index current while it builds it): no write waits for it,
+--            however large the table. A memtx table builds in PREPARE: with
+--            memtx MVCC, a write committed while an index build yields
+--            aborts the build, and memtx builds at memory speed anyway. So
+--            does a replicated shard's vinyl table: a write still waiting
+--            for its quorum when the build begins would be missed
+--            (tarn_alter_build);
 --   PREPARE  raise the fence to V (writes made with an older definition are
 --            refused from now on), wait for the local commits already past
 --            the check and for the prepared cross-shard transactions holding
@@ -5815,6 +5818,15 @@ function tarn_alter_build(name, a)
     local sp = alter_space(name, a)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     if catalog_ver(sp.name) >= a.ver or sp.engine ~= 'vinyl' then return {OK} end
+    -- On a replicated shard, vinyl's build while writes go on can miss a row
+    -- (issue #263). Tarantool's vinyl_space_build_index waits for the
+    -- transactions already in the WAL, not for their quorum: a write that
+    -- changed a row before the build began and still waits for its quorum is
+    -- neither in the build's read view nor caught by its trigger. A replica
+    -- applying the build's DDL can miss, the same way, a write ahead of the
+    -- DDL that still waits for its quorum. PREPARE builds behind the fence
+    -- instead, once the table's commits have drained.
+    if M.cfg.sync or sp.is_sync then return {OK} end
     -- An instant-ADD field may be missing in old tuples. Check it only after
     -- PREPARE fences and drains old-layout writes, then build behind that fence.
     if a.checks ~= nil and a.checks ~= box.NULL then

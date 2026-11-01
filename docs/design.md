@@ -1539,11 +1539,20 @@ changed. Outside schema changes these lines should not appear.
 **Protocol.** One SQL server drives a change to version V through four
 idempotent steps per shard (lua/tarn.lua "Schema changes"):
 
-1. On a vinyl table, BUILD builds the new indexes under temporary names
-   while writes go on: vinyl keeps an index current while it builds it, so
-   no write waits for the build, however long it takes. A memtx table
-   builds in PREPARE instead: with memtx MVCC, any write committed while an
-   index build yields aborts the build.
+1. On a vinyl table of an unreplicated shard, BUILD builds the new indexes
+   under temporary names while writes go on: vinyl keeps an index current
+   while it builds it, so no write waits for the build, however long it
+   takes. A memtx table builds in PREPARE instead: with memtx MVCC, any
+   write committed while an index build yields aborts the build. A
+   replicated shard's vinyl table builds in PREPARE too (issue #263).
+   Tarantool's vinyl build waits for the transactions already in the WAL,
+   not for their quorum. A synchronous write that changed a row before the
+   build began, and still waits for its quorum, is neither in the build's
+   read view nor caught by its trigger, so the new index never gets the
+   row's new key. A replica applying the build's DDL can miss, the same
+   way, a write ahead of the DDL that still waits for its quorum. Behind
+   PREPARE's fence the table's commits have drained, and writes wait for
+   the build.
    An index on an instant-added column with a non-NULL fill is deferred to
    PREPARE instead: its stored field (or collation weight field) must be
    physically present in every existing tuple. Otherwise the native index
