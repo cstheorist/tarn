@@ -4,7 +4,7 @@
 //! This accounts logical allocations, not allocator arenas or total RSS.
 
 use serde::Deserialize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tarn_common::{ResourceGuard, SqlError, SqlResult, Value};
 
@@ -127,6 +127,8 @@ impl Pool {
             reads: Arc::new(tokio::sync::Semaphore::new(
                 (self.limits.query_bytes / (WIRE_BYTES * 2)).clamp(1, 4) as usize,
             )),
+            reading: AtomicUsize::new(0),
+            returned: tokio::sync::Notify::new(),
         })
     }
 
@@ -157,23 +159,67 @@ pub struct Query {
     bytes: AtomicU64,
     work: AtomicU64,
     reads: Arc<tokio::sync::Semaphore>,
+    /// The storage reads that hold a reservation or are taking one
+    /// (`admit_read`), and the wake-up of reads waiting for them to return
+    /// some of it.
+    reading: AtomicUsize,
+    returned: tokio::sync::Notify,
 }
 
 impl Query {
     fn charge(&self, bytes: u64) -> SqlResult<()> {
+        if self.try_charge(bytes)? {
+            return Ok(());
+        }
+        self.pool.refusals.fetch_add(1, Ordering::Relaxed);
+        Err(exhausted(&format!(
+            "query memory budget ({} + {} > {})",
+            self.bytes.load(Ordering::Relaxed),
+            bytes,
+            self.pool.limits.query_bytes
+        )))
+    }
+
+    /// `charge`, but false rather than a refusal when the statement's own
+    /// budget is short.
+    fn try_charge(&self, bytes: u64) -> SqlResult<bool> {
         if !add(&self.bytes, bytes, self.pool.limits.query_bytes) {
-            self.pool.refusals.fetch_add(1, Ordering::Relaxed);
-            return Err(exhausted(&format!(
-                "query memory budget ({} + {} > {})",
-                self.bytes.load(Ordering::Relaxed),
-                bytes,
-                self.pool.limits.query_bytes
-            )));
+            return Ok(false);
         }
         if let Err(error) = self.pool.reserve(bytes) {
             self.bytes.fetch_sub(bytes, Ordering::AcqRel);
             return Err(error);
         }
+        Ok(true)
+    }
+
+    /// Charge the reservation of one of the statement's storage reads.
+    /// Concurrent reads (on different shards) each reserve a whole reply,
+    /// so whether one more fits used to depend on whether the others had
+    /// returned theirs yet (#238): while another read holds a reservation,
+    /// a reservation that does not fit waits for the others to return some
+    /// of theirs. With no other read, or once the read timeout has passed,
+    /// it is charged or refused at once like any other charge. On success
+    /// the caller's reservation takes over the read's place in `reading`.
+    async fn admit_read(&self, bytes: u64) -> SqlResult<()> {
+        self.reading.fetch_add(1, Ordering::AcqRel);
+        let taking = Reading(Some(self));
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(self.pool.limits.read_timeout_ms);
+        loop {
+            // (Registered before looking, so that no return is missed.)
+            let returned = self.returned.notified();
+            tokio::pin!(returned);
+            returned.as_mut().enable();
+            if self.reading.load(Ordering::Acquire) <= 1 || tokio::time::Instant::now() >= deadline {
+                self.charge(bytes)?;
+                break;
+            }
+            if self.try_charge(bytes)? {
+                break;
+            }
+            let _ = tokio::time::timeout_at(deadline, returned).await;
+        }
+        taking.keep();
         Ok(())
     }
 
@@ -300,7 +346,8 @@ pub fn retain(bytes: u64) -> SqlResult<Option<ResourceGuard>> {
     query.charge(bytes)?;
     Ok(Some(ResourceGuard::new(Arc::new(ReadReservation {
         query,
-        bytes,
+        bytes: AtomicU64::new(bytes),
+        read: false,
         _permit: None,
     }))))
 }
@@ -394,19 +441,7 @@ pub async fn call_read(
     let Some(query) = current() else {
         return Ok((client.call(stream, function, args).await, None));
     };
-    let bytes = WIRE_BYTES.saturating_add(args.len() as u64 * 2);
-    let permit = query
-        .reads
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| exhausted("read admission closed"))?;
-    query.charge(bytes)?;
-    let reservation = Arc::new(ReadReservation {
-        query: query.clone(),
-        bytes,
-        _permit: Some(permit),
-    });
+    let reservation = read_reservation(&query, WIRE_BYTES.saturating_add(args.len() as u64 * 2)).await?;
     let client = client.clone();
     let args = args.to_vec();
     let task = tokio::spawn(crate::observe::inherit(async move {
@@ -426,6 +461,9 @@ pub async fn call_read(
                 Err(tarn_iproto::Error::Closed)
             }
         };
+        if let Ok(r) = &response {
+            reservation.arrived(r.body.len());
+        }
         Ok((response, Some(ResourceGuard::new(reservation))))
     }));
     task.await
@@ -449,19 +487,7 @@ pub async fn select_read(
             None,
         ));
     };
-    let bytes = WIRE_BYTES.saturating_add(key.len() as u64 * 2);
-    let permit = query
-        .reads
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| exhausted("read admission closed"))?;
-    query.charge(bytes)?;
-    let reservation = Arc::new(ReadReservation {
-        query: query.clone(),
-        bytes,
-        _permit: Some(permit),
-    });
+    let reservation = read_reservation(&query, WIRE_BYTES.saturating_add(key.len() as u64 * 2)).await?;
     let client = client.clone();
     let key = key.to_vec();
     tokio::spawn(crate::observe::inherit(async move {
@@ -481,6 +507,9 @@ pub async fn select_read(
                 Err(tarn_iproto::Error::Closed)
             }
         };
+        if let Ok(r) = &result {
+            reservation.arrived(r.body.len());
+        }
         Ok((result, Some(ResourceGuard::new(reservation))))
     }))
     .await
@@ -496,19 +525,7 @@ pub async fn cluster_read(
     let Some(query) = current() else {
         return cluster.call(shard, function, args).await.map(|data| (data, None));
     };
-    let bytes = WIRE_BYTES.saturating_add(args.len() as u64 * 2);
-    let permit = query
-        .reads
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| exhausted("read admission closed"))?;
-    query.charge(bytes)?;
-    let reservation = Arc::new(ReadReservation {
-        query: query.clone(),
-        bytes,
-        _permit: Some(permit),
-    });
+    let reservation = read_reservation(&query, WIRE_BYTES.saturating_add(args.len() as u64 * 2)).await?;
     let cluster = cluster.clone();
     let args = args.to_vec();
     tokio::spawn(crate::observe::inherit(async move {
@@ -525,6 +542,7 @@ pub async fn cluster_read(
                 return Err(SqlError::conflict("Storage read deadline expired; connections retired"));
             }
         };
+        reservation.arrived(data.len());
         Ok((data, Some(ResourceGuard::new(reservation))))
     }))
     .await
@@ -534,8 +552,63 @@ pub async fn cluster_read(
 #[derive(Debug)]
 struct ReadReservation {
     query: Arc<Query>,
-    bytes: u64,
+    bytes: AtomicU64,
+    /// A storage read's (`read_reservation`), counted in `Query::reading`.
+    read: bool,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl ReadReservation {
+    /// The read's reply has arrived, `size` bytes: keep twice that (the
+    /// reply limit's margin) rather than twice the limit, so that a reply
+    /// decoded while another read is reserved needs room only for itself.
+    fn arrived(&self, size: usize) {
+        let keep = (size as u64).saturating_mul(2);
+        if let Ok(old) = self
+            .bytes
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| (b > keep).then_some(keep))
+        {
+            self.query.release(old - keep);
+            self.query.returned.notify_waiters();
+        }
+    }
+}
+
+/// A permit for one of the statement's storage reads, then its reservation
+/// (`Query::admit_read`).
+async fn read_reservation(query: &Arc<Query>, bytes: u64) -> SqlResult<Arc<ReadReservation>> {
+    let permit = query
+        .reads
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| exhausted("read admission closed"))?;
+    query.admit_read(bytes).await?;
+    Ok(Arc::new(ReadReservation {
+        query: query.clone(),
+        bytes: AtomicU64::new(bytes),
+        read: true,
+        _permit: Some(permit),
+    }))
+}
+
+/// A read taking a reservation (`Query::admit_read`), until its reservation
+/// takes over its place in `Query::reading` or it gives up.
+struct Reading<'a>(Option<&'a Query>);
+
+impl Reading<'_> {
+    fn keep(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        if let Some(query) = self.0 {
+            query.reading.fetch_sub(1, Ordering::AcqRel);
+            query.returned.notify_waiters();
+        }
+    }
 }
 
 /// Admit before mutation, then keep ownership through native handback and
@@ -604,13 +677,61 @@ impl tarn_common::ResourceMemory for Pool {
 }
 impl Drop for ReadReservation {
     fn drop(&mut self) {
-        self.query.release(self.bytes);
+        self.query.release(self.bytes.load(Ordering::Acquire));
+        if self.read {
+            self.query.reading.fetch_sub(1, Ordering::AcqRel);
+            self.query.returned.notify_waiters();
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mpw::{Mp, Rd};
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    /// A fake storage node's greeting.
+    async fn greet(socket: &mut TcpStream) {
+        let mut greeting = [b' '; 128];
+        let version = b"Tarantool 3.9.0 (Binary)";
+        greeting[..version.len()].copy_from_slice(version);
+        greeting[63] = b'\n';
+        greeting[64..108].copy_from_slice(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+        greeting[127] = b'\n';
+        socket.write_all(&greeting).await.unwrap();
+    }
+
+    /// The sync of the next request a fake storage node receives.
+    async fn request(socket: &mut TcpStream) -> u64 {
+        assert_eq!(socket.read_u8().await.unwrap(), 0xce);
+        let size = socket.read_u32().await.unwrap();
+        let mut packet = vec![0; size as usize];
+        socket.read_exact(&mut packet).await.unwrap();
+        let mut rd = Rd::new(&packet);
+        let mut sync = None;
+        for _ in 0..rd.map().unwrap() {
+            let key = rd.value().unwrap().as_i64().unwrap();
+            let value = rd.value().unwrap().as_i64().unwrap();
+            if key == 1 {
+                sync = Some(value as u64);
+            }
+        }
+        sync.unwrap()
+    }
+
+    /// A fake storage node's successful reply to request `sync`.
+    async fn reply(socket: &mut TcpStream, sync: u64, body: &[u8]) {
+        let mut packet = Mp::new();
+        packet.map(2).uint(0).uint(0).uint(1).uint(sync);
+        packet.0.extend_from_slice(body);
+        socket.write_u8(0xce).await.unwrap();
+        socket.write_u32(packet.0.len() as u32).await.unwrap();
+        socket.write_all(&packet.0).await.unwrap();
+    }
+
     #[tokio::test]
     async fn frames_refund_only_their_memory_and_results_keep_ownership() {
         let pool = Pool::new(Limits {
@@ -666,43 +787,14 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_read_keeps_its_reservation_until_socket_retirement() {
-        use crate::mpw::{Mp, Rd};
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::{TcpListener, TcpStream};
-        async fn request(socket: &mut TcpStream) -> u64 {
-            assert_eq!(socket.read_u8().await.unwrap(), 0xce);
-            let size = socket.read_u32().await.unwrap();
-            let mut packet = vec![0; size as usize];
-            socket.read_exact(&mut packet).await.unwrap();
-            let mut rd = Rd::new(&packet);
-            let mut sync = None;
-            for _ in 0..rd.map().unwrap() {
-                let key = rd.value().unwrap().as_i64().unwrap();
-                let value = rd.value().unwrap().as_i64().unwrap();
-                if key == 1 {
-                    sync = Some(value as u64);
-                }
-            }
-            sync.unwrap()
-        }
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (sent, received) = tokio::sync::oneshot::channel();
         let peer = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut greeting = [b' '; 128];
-            let version = b"Tarantool 3.9.0 (Binary)";
-            greeting[..version.len()].copy_from_slice(version);
-            greeting[63] = b'\n';
-            greeting[64..108].copy_from_slice(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
-            greeting[127] = b'\n';
-            socket.write_all(&greeting).await.unwrap();
+            greet(&mut socket).await;
             let sync = request(&mut socket).await;
-            let mut packet = Mp::new();
-            packet.map(2).uint(0).uint(0).uint(1).uint(sync).map(0);
-            socket.write_u8(0xce).await.unwrap();
-            socket.write_u32(packet.0.len() as u32).await.unwrap();
-            socket.write_all(&packet.0).await.unwrap();
+            reply(&mut socket, sync, &[0x80]).await;
             request(&mut socket).await;
             sent.send(()).unwrap();
             // An established peer that never returns the read's reply.
@@ -741,5 +833,101 @@ mod tests {
         assert_eq!(pool.stats()[0], 0);
         assert_eq!(pool.stats()[4], 0);
         assert_eq!(pool.stats()[6], 1);
+    }
+
+    /// #238: a statement that keeps two shards' decoded pages had room for
+    /// one more read's reservation but not two, so its second shard's next
+    /// read was refused whenever the first's was still reserved.
+    #[tokio::test]
+    async fn a_read_that_fits_only_after_another_waits_for_its_reply() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (first, got_first) = tokio::sync::oneshot::channel();
+        let (answer, answer_first) = tokio::sync::oneshot::channel::<()>();
+        let mut body = Mp::new();
+        body.map(1).uint(0x30).arr(1).str("a");
+        let size = body.0.len() as u64;
+        let peer = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            greet(&mut socket).await;
+            let sync = request(&mut socket).await;
+            reply(&mut socket, sync, &[0x80]).await;
+            let a = request(&mut socket).await;
+            first.send(()).unwrap();
+            answer_first.await.unwrap();
+            reply(&mut socket, a, &body.0).await;
+            let b = request(&mut socket).await;
+            reply(&mut socket, b, &body.0).await;
+        });
+        let client = tarn_iproto::Client::connect(&tarn_iproto::Opts::new(addr.to_string()))
+            .await
+            .unwrap();
+        // The default 64 MiB: two concurrent reads.
+        let pool = Pool::new(Limits::default()).unwrap();
+        let query = pool.query();
+        let kept = 2 * WIRE_BYTES + MIB;
+        scope(query.clone(), async {
+            charge(kept).unwrap();
+            let a = call_read(&client, 0, "a", &[0x90]);
+            let b = async {
+                got_first.await.unwrap();
+                let b = call_read(&client, 0, "b", &[0x90]);
+                tokio::pin!(b);
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(200), b.as_mut())
+                        .await
+                        .is_err(),
+                    "admitted, or refused, while the first read was reserved"
+                );
+                answer.send(()).unwrap();
+                b.await
+            };
+            let (a, b) = tokio::join!(a, b);
+            let (a, a_guard) = a.unwrap();
+            let (b, b_guard) = b.unwrap();
+            assert!(a.is_ok() && b.is_ok());
+            // A reply that arrived keeps twice its size reserved until dropped.
+            assert_eq!(pool.stats()[0], kept + 4 * size);
+            drop((a_guard, b_guard));
+            assert_eq!(pool.stats()[0], kept);
+        })
+        .await;
+        assert_eq!(pool.stats()[5], 0);
+        tokio::time::timeout(Duration::from_secs(2), peer)
+            .await
+            .unwrap()
+            .unwrap();
+        drop(query);
+        assert_eq!(pool.stats()[0], 0);
+    }
+
+    #[tokio::test]
+    async fn a_read_alone_or_past_the_read_timeout_is_refused_and_a_cancelled_one_leaves_no_count() {
+        let pool = Pool::new(Limits {
+            read_timeout_ms: 100,
+            ..Limits::default()
+        })
+        .unwrap();
+        let query = pool.query();
+        query.charge(3 * WIRE_BYTES + MIB).unwrap();
+        // Alone, a reservation that does not fit is refused at once.
+        let alone = tokio::time::timeout(Duration::from_millis(50), read_reservation(&query, WIRE_BYTES));
+        assert!(is_exhausted(&alone.await.unwrap().unwrap_err()));
+        assert_eq!(query.reading.load(Ordering::Acquire), 0);
+        query.release(WIRE_BYTES);
+        let first = read_reservation(&query, WIRE_BYTES).await.unwrap();
+        // Behind a read that never returns its reservation: refused at the
+        // read timeout.
+        let start = tokio::time::Instant::now();
+        assert!(is_exhausted(&read_reservation(&query, WIRE_BYTES).await.unwrap_err()));
+        assert!(start.elapsed() >= Duration::from_millis(100));
+        // A waiting read that is cancelled gives up its place.
+        let waiting = tokio::time::timeout(Duration::from_millis(20), read_reservation(&query, WIRE_BYTES));
+        assert!(waiting.await.is_err());
+        assert_eq!(query.reading.load(Ordering::Acquire), 1);
+        drop(first);
+        assert_eq!(query.reading.load(Ordering::Acquire), 0);
+        assert_eq!(pool.stats()[0], 2 * WIRE_BYTES + MIB);
+        assert_eq!(pool.stats()[5], 2);
     }
 }
