@@ -214,21 +214,24 @@ class T:
                  "PRIMARY KEY(tenant_id,id),KEY lk(k,n,id) COMMENT 'tarn:lazy') PARTITION BY KEY(tenant_id) "
                  f"ENGINE={self.args.engine}")
             # The real lazy result budget counts fetched base tuples even
-            # for a narrow projection. >16 MiB forces the actual strong
-            # restart; a clipped candidate prefix must never count as success.
-            payload = b'x' * (256 * 1024)
-            rows = [(i % 11, i, 7, i, payload) for i in range(1, 81)]
+            # for a narrow projection: 10 MiB of them, over the default 8 MiB
+            # (an eighth of the statement's 64 MiB memory budget), force the
+            # actual strong restart, which fits the budget; a clipped
+            # candidate prefix must never count as success. (One 64 KiB row
+            # per statement: a text statement is charged 128 bytes per byte.)
+            payload = b'x' * (64 * 1024)
             with c.cursor() as cur:
-                cur.executemany("INSERT INTO t_policy_budget VALUES (%s,%s,%s,%s,%s)", rows)
+                for i in range(1, 161):
+                    cur.execute("INSERT INTO t_policy_budget VALUES (%s,%s,%s,%s,%s)", (i % 11, i, 7, i, payload))
             self.caught_up(c)
             sql = "SELECT id FROM t_policy_budget WHERE k=7 ORDER BY n,id"
             self.consistency(c, sql, "eventual")
             reads, falls = stat(c, "Tarn_lazy_reads"), stat(c, "Tarn_lazy_fallbacks")
-            assert q(c, sql) == tuple((i,) for i in range(1, 81))
+            assert q(c, sql) == tuple((i,) for i in range(1, 161))
             assert stat(c, "Tarn_lazy_reads") == reads
             assert stat(c, "Tarn_lazy_fallbacks") == falls + 1
             q(c, "SET tarn_lazy_consistency='strong'")
-            assert q(c, sql) == tuple((i,) for i in range(1, 81))
+            assert q(c, sql) == tuple((i,) for i in range(1, 161))
 
     def test_bootstrap_and_next_writes(self):
         with self.table("t_boot", lazy=False) as c:

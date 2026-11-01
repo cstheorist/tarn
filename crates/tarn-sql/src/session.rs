@@ -1518,7 +1518,11 @@ impl Session {
                 ));
             }
             let cx = self.cx(params, &now);
-            if let Some(rows) = crate::lazy::select(&self.cluster, p, &cx).await? {
+            // The lazy attempt's memory is charged in its own frame, which
+            // a fallback refunds before the strong read.
+            let frame = crate::budget::Frame::new();
+            if let Some(rows) = frame.scope(crate::lazy::select(&self.cluster, p, &cx)).await? {
+                frame.retain_all();
                 self.cluster.stats.lazy_reads.fetch_add(1, Ordering::Relaxed);
                 self.found_rows = rows.len() as u64;
                 return Ok(Output::Rows {

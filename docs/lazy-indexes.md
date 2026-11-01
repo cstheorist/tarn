@@ -36,7 +36,8 @@ A query binding every routing column reads one index destination. A shorter
 nonempty equality prefix reads every live index shard, up to 16, and merges
 pages by normalized typed index columns and typed primary keys. Each shard
 retains one page (128 inspected entries, at most 1 MiB); the gateway caps
-buffered page bytes at 16 MiB, total candidates at 65,536 and page calls at
+buffered page and result bytes at 16 MiB (or an eighth of the statement's
+memory budget, if less), total candidates at 65,536 and page calls at
 1,024. Empty pages containing only obsolete ownership copies still advance
 the cursor. Larger reads use the complete strong fallback or fail explicitly
 under the statement resource budget. ORDER BY that does not follow the

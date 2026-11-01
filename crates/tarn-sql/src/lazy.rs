@@ -30,6 +30,16 @@ pub const MAX_READ_SHARDS: usize = 16;
 const MAX_PAGE_READS: usize = 1024;
 const RESULT_BYTES: usize = 16 * 1_048_576;
 
+/// The buffered page and result bytes after which a lazy read falls back to
+/// the strong path: 16 MiB, or an eighth of the statement's memory budget if
+/// that is less (decoded rows are charged about four times their encoded
+/// bytes), so that the fallback comes before the budget refuses the read.
+fn result_bytes() -> usize {
+    crate::budget::query_bytes_limit().map_or(RESULT_BYTES, |b| {
+        usize::try_from(b / 8).unwrap_or(RESULT_BYTES).min(RESULT_BYTES)
+    })
+}
+
 /// Eventual is permission to use an explicitly declared lazy index, never
 /// permission to weaken an ordinary index or an ineligible SQL context.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -550,6 +560,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
     if !eligible(p) {
         return Ok(None);
     }
+    let limit = result_bytes();
     let Source::Table(ta) = &p.source else { unreachable!() };
     let AccessPath::Range {
         index,
@@ -682,7 +693,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                     lane.rows = rows.into();
                 }
             }
-            if lanes.iter().map(|l| l.bytes).sum::<usize>() > RESULT_BYTES {
+            if lanes.iter().map(|l| l.bytes).sum::<usize>() > limit {
                 return Ok(None);
             }
             let Some(head) = next_lane(&lanes, *reverse) else { break };
@@ -732,7 +743,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                 continue;
             }
             bytes = bytes.saturating_add(key_bytes(r).len()).saturating_add(c.pkid.len());
-            if bytes > RESULT_BYTES {
+            if bytes > limit {
                 return Ok(None);
             }
             kept.push(by_pk.remove(&c.pkid).unwrap());

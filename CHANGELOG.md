@@ -51,6 +51,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A lazy-index read whose rows outgrow its limit falls back to the strong
+  path before the statement's memory budget refuses it, and the fallback
+  gets back the memory the lazy attempt used. The limit is 16 MiB, or an
+  eighth of the statement's memory budget if less (decoded rows are
+  charged about four times their bytes): with the default 64 MiB budget,
+  such reads used to fail with 1041 instead of falling back.
+
 - A SQL server's catalog poller no longer reloads a catalog that a
   statement already reloaded when it met the new version. Each such reload
   discarded every cached plan once more after a schema change made on
