@@ -28,8 +28,8 @@ pub mod cap {
     pub const DEPRECATE_EOF: u32 = 1 << 24;
 }
 
-/// What the server offers. No SSL, compression, session tracking or
-/// found-rows semantics.
+/// Base capabilities. The listener adds SSL only with a loaded identity.
+/// Compression and session tracking are not offered.
 pub const SERVER_CAPS: u32 = cap::LONG_PASSWORD
     | cap::FOUND_ROWS
     | cap::LONG_FLAG
@@ -123,16 +123,27 @@ impl<'a> Reader<'a> {
 
 /// Protocol::HandshakeV10, advertising mysql_native_password.
 pub fn handshake_v10(out: &mut Vec<u8>, server_version: &str, conn_id: u32, scramble: &[u8; 20], status: u16) {
+    handshake_v10_caps(out, server_version, conn_id, scramble, status, SERVER_CAPS)
+}
+
+pub fn handshake_v10_caps(
+    out: &mut Vec<u8>,
+    server_version: &str,
+    conn_id: u32,
+    scramble: &[u8; 20],
+    status: u16,
+    caps: u32,
+) {
     out.push(10);
     out.extend_from_slice(server_version.as_bytes());
     out.push(0);
     out.extend_from_slice(&conn_id.to_le_bytes());
     out.extend_from_slice(&scramble[..8]);
     out.push(0);
-    out.extend_from_slice(&(SERVER_CAPS as u16).to_le_bytes());
+    out.extend_from_slice(&(caps as u16).to_le_bytes());
     out.push(DEFAULT_COLLATION);
     out.extend_from_slice(&status.to_le_bytes());
-    out.extend_from_slice(&((SERVER_CAPS >> 16) as u16).to_le_bytes());
+    out.extend_from_slice(&((caps >> 16) as u16).to_le_bytes());
     out.push(21);
     out.extend_from_slice(&[0u8; 10]);
     out.extend_from_slice(&scramble[8..]);

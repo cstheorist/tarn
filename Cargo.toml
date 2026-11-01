@@ -8,6 +8,7 @@ members = [
     "crates/tarn-verified",
     "crates/tarn-server",
     "crates/tarn-storage",
+    "crates/tarn-transport",
 ]
 
 [workspace.package]
@@ -26,6 +27,7 @@ tarn-iproto = { path = "crates/tarn-iproto" }
 tarn-mysql = { path = "crates/tarn-mysql" }
 tarn-sql = { path = "crates/tarn-sql" }
 tarn-verified = { path = "crates/tarn-verified" }
+tarn-transport = { path = "crates/tarn-transport" }
 bytes = "1"
 tokio = { version = "1", features = ["full"] }
 thiserror = "2"

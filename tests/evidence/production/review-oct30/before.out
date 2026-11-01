@@ -1,0 +1,37 @@
+PASS RF3 fsync identity, majority quorum, strict fencing, clock readiness and resource preflight
+PASS raw plaintext MySQL handshake refused before password validation
+PASS SSLRequest and ClientHello coalesced in one TCP write preserve TLS bytes and authenticate
+PASS plaintext SQL refused
+PASS wrong SQL password refused over TLS
+PASS untrusted SQL CA refused
+PASS PyMySQL verified TLS query and native-password authentication
+Traceback (most recent call last):
+  File "/tmp/production-review/tests/production.py", line 1376, in <module>
+    main()
+  File "/tmp/production-review/tests/production.py", line 1359, in main
+    f.security()
+  File "/tmp/production-review/tests/production.py", line 532, in security
+    assert self.query(
+           ^^^^^^^^^^^
+  File "/tmp/production-review/tests/production.py", line 284, in query
+    q.execute(sql)
+  File "/usr/lib/python3/dist-packages/pymysql/cursors.py", line 148, in execute
+    result = self._query(query)
+             ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/pymysql/cursors.py", line 310, in _query
+    conn.query(q)
+  File "/usr/lib/python3/dist-packages/pymysql/connections.py", line 548, in query
+    self._affected_rows = self._read_query_result(unbuffered=unbuffered)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/pymysql/connections.py", line 775, in _read_query_result
+    result.read()
+  File "/usr/lib/python3/dist-packages/pymysql/connections.py", line 1156, in read
+    first_packet = self.connection._read_packet()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/pymysql/connections.py", line 725, in _read_packet
+    packet.raise_for_error()
+  File "/usr/lib/python3/dist-packages/pymysql/protocol.py", line 221, in raise_for_error
+    err.raise_mysql_exception(self._data)
+  File "/usr/lib/python3/dist-packages/pymysql/err.py", line 143, in raise_mysql_exception
+    raise errorclass(errno, errval)
+pymysql.err.OperationalError: (1105, "storage error 42: Execute access to function 'tarn_reduce' is denied for user 'tarn_service'")

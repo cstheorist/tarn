@@ -8,13 +8,14 @@ connection, so the SQL server cannot know whether the statement ran.
 
     proxy.py LISTEN_PORT UPSTREAM_PORT [MATCH...]
 """
+
 import socket
 import os
 import sys
 import threading
 import time
 
-LP, UP = int(sys.argv[1]), int(sys.argv[2])
+LP, UP = sys.argv[1], sys.argv[2]
 MATCH = [m.encode() for m in (sys.argv[3:] or ["tarn_autocommit", "update"])]
 REPLY = os.environ.get("TARN_FAULT_REPLY", "drop")
 if REPLY not in ("drop", "invalid-type", "oversized-frame", "stall"):
@@ -22,24 +23,26 @@ if REPLY not in ("drop", "invalid-type", "oversized-frame", "stall"):
 state = {"left": int(os.environ.get("TARN_FAULT_COUNT", "1"))}
 lock = threading.Lock()
 ARM_FILE = os.environ.get("TARN_PROXY_ARM_FILE")
+WITNESS_FILE = os.environ.get("TARN_FAULT_WITNESS_FILE")
 
 
-def matching_sync(data):
+def matching_sync(data, require_match=True):
     """Read the matched request's integer-only IPROTO header, without dependencies."""
+
     def uint(p, at):
         marker = p[at]
         if marker < 0x80:
             return marker, at + 1
-        width = {0xcc: 1, 0xcd: 2, 0xce: 4, 0xcf: 8}[marker]
+        width = {0xCC: 1, 0xCD: 2, 0xCE: 4, 0xCF: 8}[marker]
         end = at + 1 + width
-        return int.from_bytes(p[at + 1:end], "big"), end
+        return int.from_bytes(p[at + 1 : end], "big"), end
 
     at = 0
     while at < len(data):
         size, begin = uint(data, at)
         end = begin + size
         p = data[begin:end]
-        if end <= len(data) and all(m in p for m in MATCH):
+        if end <= len(data) and (not require_match or all(m in p for m in MATCH)):
             assert 0x80 <= p[0] < 0x90, "unexpected request header"
             pos, sync = 1, None
             for _ in range(p[0] & 15):
@@ -56,9 +59,9 @@ def matching_sync(data):
 def invalid_reply(sync):
     # A plausible retryable procedure error in an unsupported response type.
     # Accepting this as a terminal OK could replay the already committed UPDATE.
-    body = b'\x81\x30\x91\x93\xa5error\xcd\x04\xbd\xb1injected conflict'
-    payload = b'\x82\x00\x2a\x01\xcf' + sync.to_bytes(8, "big") + body
-    return b'\xce' + len(payload).to_bytes(4, "big") + payload
+    body = b"\x81\x30\x91\x93\xa5error\xcd\x04\xbd\xb1injected conflict"
+    payload = b"\x82\x00\x2a\x01\xcf" + sync.to_bytes(8, "big") + body
+    return b"\xce" + len(payload).to_bytes(4, "big") + payload
 
 
 def client_packet(src):
@@ -74,10 +77,11 @@ def client_packet(src):
                 raise OSError("truncated request")
             out.extend(chunk)
         return bytes(out)
+
     prefix = exact(5)
     if not prefix:
         return b""
-    if len(prefix) != 5 or prefix[0] != 0xce:
+    if len(prefix) != 5 or prefix[0] != 0xCE:
         raise OSError("unexpected request prefix")
     size = int.from_bytes(prefix[1:], "big")
     if size > 128 * 1024 * 1024:
@@ -87,23 +91,43 @@ def client_packet(src):
 
 def pump(src, dst, conn, c2s):
     try:
+        if not c2s and WITNESS_FILE:
+            greeting = bytearray()
+            while len(greeting) < 128:
+                part = src.recv(128 - len(greeting))
+                if not part:
+                    return
+                greeting.extend(part)
+            dst.sendall(greeting)
         while True:
-            data = client_packet(src) if c2s else src.recv(65536)
+            data = client_packet(src) if c2s or WITNESS_FILE else src.recv(65536)
             if not data:
                 break
             if c2s:
                 with lock:
-                    trig = (state["left"] > 0 and (not ARM_FILE or os.path.isfile(ARM_FILE))
-                            and all(m in data for m in MATCH))
+                    trig = (
+                        state["left"] > 0
+                        and (not ARM_FILE or os.path.isfile(ARM_FILE))
+                        and all(m in data for m in MATCH)
+                    )
                     if trig:
                         state["left"] -= 1
                         conn["drop"] = True
+                        if WITNESS_FILE:
+                            conn["drop_sync"] = matching_sync(data)
                 dst.sendall(data)
                 if trig and REPLY == "stall":
-                    print("proxy: withholding replies on an open connection", flush=True)
+                    print(
+                        "proxy: withholding replies on an open connection", flush=True
+                    )
                     continue
                 if trig:
-                    time.sleep(0.5)  # the storage node executes and commits meanwhile
+                    if WITNESS_FILE:
+                        conn["witness"].wait(10)
+                    else:
+                        time.sleep(
+                            0.5
+                        )  # the storage node executes and commits meanwhile
                     if REPLY == "invalid-type":
                         src.sendall(invalid_reply(matching_sync(data)))
                         print("proxy: injected invalid response type after execution", flush=True)
@@ -116,17 +140,30 @@ def pump(src, dst, conn, c2s):
                         time.sleep(2)
                     print("proxy: swallowed the reply, closing the connection", flush=True)
                     break
-            elif not conn.get("drop"):
+            elif WITNESS_FILE and conn.get("drop_sync") == matching_sync(data, False):
+                # The matched mutation's reply has arrived from storage.
+                # Retain the exact frame for the fixture to verify success;
+                # withhold it from the coordinator, then close without replay.
+                with open(WITNESS_FILE, "wb") as f:
+                    f.write(data)
+                conn["witness"].set()
+                break
+            elif WITNESS_FILE or not conn.get("drop"):
                 dst.sendall(data)
-    except OSError:
-        pass
+    except OSError as e:
+        if WITNESS_FILE:
+            print("proxy stream error:", e, flush=True)
     finally:
         conn["close"]()
 
 
 def handle(cs):
-    us = socket.create_connection(("127.0.0.1", UP))
-    conn = {}
+    if UP.startswith("unix/:"):
+        us = socket.socket(socket.AF_UNIX)
+        us.connect(UP[6:])
+    else:
+        us = socket.create_connection(("127.0.0.1", int(UP)))
+    conn = {"witness": threading.Event()}
 
     def close():
         for s in (cs, us):
@@ -144,9 +181,9 @@ def handle(cs):
     threading.Thread(target=pump, args=(us, cs, conn, False), daemon=True).start()
 
 
-ls = socket.socket()
+ls = socket.socket(socket.AF_UNIX if LP.startswith("unix/:") else socket.AF_INET)
 ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-ls.bind(("127.0.0.1", LP))
+ls.bind(LP[6:] if LP.startswith("unix/:") else ("127.0.0.1", int(LP)))
 ls.listen(64)
 while True:
     c, _ = ls.accept()

@@ -77,6 +77,8 @@ pub struct Prepared {
 }
 
 pub struct Session {
+    /// Physical TLS metadata survives logical session reset.
+    pub tls: Option<(String, String)>,
     retained: crate::budget::Account,
     pub cluster: Arc<Cluster>,
     pub db: Option<String>,
@@ -441,6 +443,7 @@ impl Session {
             (g.isolation, g.lock_wait_timeout)
         };
         Session {
+            tls: None,
             retained: cluster.resources.account(cluster.cfg.resources.query_bytes),
             db: None,
             user: "root".into(),
@@ -4110,6 +4113,14 @@ impl Session {
                 .filter(|(n, _)| like_ci(n, like))
                 .map(|(n, v)| vec![Value::str(&n), Value::str(&v)]),
         );
+        for (name, value) in [
+            ("Ssl_version", self.tls.as_ref().map(|v| v.0.as_str()).unwrap_or("")),
+            ("Ssl_cipher", self.tls.as_ref().map(|v| v.1.as_str()).unwrap_or("")),
+        ] {
+            if like_ci(name, like) {
+                rows.push(vec![Value::str(name), Value::str(value)]);
+            }
+        }
         Output::Rows {
             resource_guard: None,
             columns: cols(&[

@@ -1,0 +1,28 @@
+PASS RF3 fsync identity, majority quorum, strict fencing, clock readiness and resource preflight
+PASS raw plaintext MySQL handshake refused before password validation
+PASS SSLRequest and ClientHello coalesced in one TCP write preserve TLS bytes and authenticate
+PASS plaintext SQL refused
+PASS wrong SQL password refused over TLS
+PASS untrusted SQL CA refused
+PASS PyMySQL verified TLS query and native-password authentication
+PASS authenticated TLS DDL, native data reads and transactions on memtx and vinyl
+PASS typed reductions execute through the service ACL on memtx and vinyl
+PASS service denies EVAL, arbitrary CALL, test hooks, system reads and raw writes; guest denied; replication account cannot execute SQL RPCs
+PASS storage mTLS refuses a client without identity before IPROTO greeting
+PASS storage verified mTLS delivers IPROTO greeting
+PASS storage plaintext/downgrade refused
+PASS RF1 configuration rejected
+PASS plaintext storage configuration rejected
+PASS inline storage secret rejected
+PASS duplicate failure domains rejected
+PASS unachievable CPU requirement rejected
+PASS unachievable memory requirement rejected
+PASS unachievable disk requirement rejected
+PASS public secret permissions rejected
+PASS wrong storage server identity rejected
+PASS expired storage server identity rejected
+PASS client driver matrix
+PASS confirmed commit survives RF3 leader SIGKILL with TLS routing
+PASS killed replica recovers WAL, rejoins encrypted replication and passes deployment checks
+PASS rolling CA overlap, leaf renewal, and old-root retirement on MySQL and storage TLS
+PASS TLS lost mutation reply reports 1180/40003; successful storage reply witnessed; exact single increment, no replay

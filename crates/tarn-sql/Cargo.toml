@@ -11,6 +11,7 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+tarn-transport.workspace = true
 tarn-common.workspace = true
 tarn-iproto.workspace = true
 tarn-verified.workspace = true
