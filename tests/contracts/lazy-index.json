@@ -1,6 +1,6 @@
 {
   "format": "tarn-contract-fragment-v1",
-  "scope": "Lazy-index read policy (#182), for integration into #178's release manifest",
+  "scope": "Lazy-index read policy (#182)",
   "oracle_boundary": "CI currently retains MariaDB 10.11 comparisons; the pinned MySQL 8.4 matrix remains #178 work. This fragment does not certify full MySQL or cross-interface equivalence.",
   "documentation": "docs/lazy-indexes.md",
   "contracts": [
@@ -32,7 +32,13 @@
       "id": "lazy.causal_history",
       "classification": "intentional_extension",
       "behavior": "Own obligations accumulate while OFF and across policy switches. Confirmed APPLY precedes frontier sampling. Timeout retains obligations; overflow/uncertainty stays strong. Causal catch-up does not include other sessions' missing assignments.",
-      "tests": ["tests/sql/lazytest.py::T.test_variables_and_prepared_session_state", "tests/sql/lazytest.py::T.test_consistency_override_retains_history_and_prepared_plan", "tests/sql/lazyfaults.py::Test.test_canceled_apply_overlap", "tests/sql/lazyfaults.py::Test.test_committed_recovery", "tests/sql/lazyfaults.py::Test.test_silent_apply_deadline", "crates/tarn-sql/src/lazy.rs::cumulative_history_is_bounded_and_never_last_commit_only"]
+      "tests": ["tests/sql/lazytest.py::T.test_variables_and_prepared_session_state", "tests/sql/lazytest.py::T.test_consistency_override_retains_history_and_prepared_plan", "tests/sql/lazytest.py::T.test_catch_up_follows_a_moved_bucket", "tests/sql/lazyfaults.py::Test.test_canceled_apply_overlap", "tests/sql/lazyfaults.py::Test.test_committed_recovery", "tests/sql/lazyfaults.py::Test.test_silent_apply_deadline", "crates/tarn-sql/src/lazy.rs::cumulative_history_is_bounded_and_never_last_commit_only"]
+    },
+    {
+      "id": "lazy.move_drain",
+      "classification": "intentional_extension",
+      "behavior": "A bucket moves only after its pending lazy deliveries are acknowledged: while delivery to an index destination is stalled, TARN MOVE BUCKET fails with 1205 at the move timeout and the bucket stays with its owner. A session's catch-up follows a moved bucket to its new owner.",
+      "tests": ["tests/sql/lazytest.py::T.test_catch_up_follows_a_moved_bucket"]
     },
     {
       "id": "lazy.variable_refusals",
