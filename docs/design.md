@@ -1772,9 +1772,15 @@ would not do: a cross-shard transaction prepared and applied here during
 the scan may have been read by another transaction that this read also
 sees, while its write here is missing from the snapshot.
 
-**Schema changes.** `ALTER TABLE` builds a vinyl table's new indexes before
-it fences the table's writes (§2.10), so an `ADD INDEX` on a large table
-does not hold its writes for hours. Checking existing rows (a narrower
+**Schema changes.** On an unreplicated shard, `ALTER TABLE` builds a vinyl
+table's new indexes before it fences the table's writes (§2.10), so an
+`ADD INDEX` on a large table does not hold its writes for hours. A
+replicated shard builds them behind the fence instead, because Tarantool's
+vinyl build can miss a write still waiting for its quorum, and a replica
+applying the build can stop behind one for good (issues #263 and #254).
+There, writes to the table wait for the build however long it takes (it is
+not bounded by `tarn.cfg.alter_check_rows`), and the shard's other
+synchronous writes go one at a time. Checking existing rows (a narrower
 type, `NOT NULL`) still happens behind the fence, and is refused above
 `tarn.cfg.alter_check_rows` rows per shard.
 
@@ -2670,8 +2676,9 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   on a missing non-NULL fill appends the missing suffix with durable undo
   (§2.10). Conversions between type families and `DECIMAL` scale changes
   are refused. Dropped columns retain their fields (no space is reclaimed).
-  Writes wait during PREPARE and, on memtx, index building; other vinyl
-  indexes build before that wait. Checking or materializing existing rows
+  Writes wait during PREPARE and, on memtx or on a replicated shard's
+  vinyl table, index building, which no row limit bounds; an unreplicated
+  shard's vinyl indexes build before that wait. Checking or materializing existing rows
   (a narrower type, `NOT NULL`, indexed fills) is refused above
   `tarn.cfg.alter_check_rows` rows per shard. Engine changes use a separate
   full-table copy with a final write/read fence (§2.11), require capacity

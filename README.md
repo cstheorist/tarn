@@ -33,8 +33,11 @@ read them as **key/value**.
   wait for its own writes. Transactions retain the strong local index.
   See [the consistency and operational contract](docs/lazy-indexes.md).
 * **Schema changes.** Ordinary `ALTER TABLE` changes retain existing tuple layouts.
-  Vinyl index builds run online; indexed instant defaults and lazy-index
-  bootstrap use bounded write fences while reads remain available.
+  Vinyl index builds run online on unreplicated shards. On a replicated
+  shard they run behind the table's write fence, as memtx builds do, and
+  the shard's other synchronous writes go one at a time meanwhile (#263,
+  #254). Indexed instant defaults and lazy-index bootstrap use bounded
+  write fences while reads remain available.
   [Online engine changes](docs/operations.md#online-engine-changes) copy a
   table between memtx and vinyl while writes continue, then fence it for
   the final tail, index builds and publication.
