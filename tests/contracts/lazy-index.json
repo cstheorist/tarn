@@ -1,0 +1,50 @@
+{
+  "format": "tarn-contract-fragment-v1",
+  "scope": "Lazy-index read policy (#182), for integration into #178's release manifest",
+  "oracle_boundary": "CI currently retains MariaDB 10.11 comparisons; the pinned MySQL 8.4 matrix remains #178 work. This fragment does not certify full MySQL or cross-interface equivalence.",
+  "documentation": "docs/lazy-indexes.md",
+  "contracts": [
+    {
+      "id": "lazy.schema_opt_in",
+      "classification": "intentional_extension",
+      "behavior": "Only durable ready tarn:lazy metadata permits eventual execution. The same MySQL/MariaDB comment is inert; ordinary indexes retain the existing SQL contract.",
+      "tests": ["tests/sql/lazytest.py::T.test_metadata_refusals_and_drop_recreate", "tests/sql/lazytest.py::T.test_consistency_does_not_activate_ordinary_indexes"]
+    },
+    {
+      "id": "lazy.eventual_membership",
+      "classification": "intentional_extension",
+      "behavior": "Eligible nonlocking autocommit reads may omit new matches. Complete candidate-key and WHERE rechecks discard stale/deleted memberships. No current index-only or global snapshot guarantee.",
+      "tests": ["tests/sql/lazytest.py::T.test_changed_key_still_matches_where", "tests/sql/lazytest.py::T.test_consistency_override_retains_history_and_prepared_plan"]
+    },
+    {
+      "id": "lazy.limit_after_recheck",
+      "classification": "intentional_extension",
+      "behavior": "LIMIT/OFFSET apply after rechecks and deduplication. Resource exhaustion restarts strong execution or errors; no collected prefix is acknowledged as complete.",
+      "tests": ["tests/sql/lazytest.py::T.test_limit_offset_refills_more_than_two_pages", "tests/sql/lazytest.py::T.test_consistency_override_retains_history_and_prepared_plan", "tests/sql/lazytest.py::T.test_consistency_result_budget_restarts_complete_strong_read"]
+    },
+    {
+      "id": "lazy.strong_policy",
+      "classification": "intentional_extension",
+      "behavior": "Session strong bypasses the lazy copy under ordinary configured SQL isolation, including prepared execution. Eventual never weakens transactions, locking reads, DML or sticky history fallback. EXPLAIN reports the choice without executing a barrier.",
+      "tests": ["tests/sql/lazytest.py::T.test_consistency_override_retains_history_and_prepared_plan", "tests/sql/lazytest.py::T.test_lagged_insert_strong_contexts_and_unbound_prefix", "tests/sql/lazypolicyfaults.py::main", "crates/tarn-sql/src/lazy.rs::read_policy_cannot_override_strong_contexts_or_history_overflow"]
+    },
+    {
+      "id": "lazy.causal_history",
+      "classification": "intentional_extension",
+      "behavior": "Own obligations accumulate while OFF and across policy switches. Confirmed APPLY precedes frontier sampling. Timeout retains obligations; overflow/uncertainty stays strong. Causal catch-up does not include other sessions' missing assignments.",
+      "tests": ["tests/sql/lazytest.py::T.test_variables_and_prepared_session_state", "tests/sql/lazytest.py::T.test_consistency_override_retains_history_and_prepared_plan", "tests/sql/lazyfaults.py::Test.test_canceled_apply_overlap", "tests/sql/lazyfaults.py::Test.test_committed_recovery", "tests/sql/lazyfaults.py::Test.test_silent_apply_deadline", "crates/tarn-sql/src/lazy.rs::cumulative_history_is_bounded_and_never_last_commit_only"]
+    },
+    {
+      "id": "lazy.variable_refusals",
+      "classification": "rejected",
+      "behavior": "SET GLOBAL fails with 1228/HY000. Invalid tarn_lazy_consistency values fail with 1231/42000 before policy changes. DEFAULT restores eventual.",
+      "tests": ["tests/sql/lazytest.py::T.test_variables_and_prepared_session_state", "tests/sql/lazytest.py::T.test_consistency_does_not_activate_ordinary_indexes"]
+    },
+    {
+      "id": "lazy.identity_refusals",
+      "classification": "rejected",
+      "behavior": "Unsupported lazy key identities and unique/primary lazy declarations fail explicitly with 1235; no weaker routing guarantee is substituted.",
+      "tests": ["tests/sql/lazytest.py::T.test_metadata_refusals_and_drop_recreate"]
+    }
+  ]
+}

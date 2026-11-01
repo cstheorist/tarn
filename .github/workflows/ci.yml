@@ -155,6 +155,8 @@ jobs:
           cargo test --release -p tarn-sql --example strong_kv_bench
       - name: Native allocation instrumentation units
         run: cargo test -p tarn-storage --features alloc-metrics --lib
+      - name: Lazy contract manifest links
+        run: python3 tests/contracts/check.py
       - name: Bounded commit-cost observation controls
         run: python3 bench/test_commit_cost.py
       - name: Storage protocol tests
@@ -184,6 +186,8 @@ jobs:
           ci/annotate.sh decision bash tests/decision.sh
           TARN_NATIVE=0 ci/annotate.sh decision-lua bash tests/decision.sh
           ENGINE=vinyl ci/annotate.sh decision-vinyl bash tests/decision.sh
+      - name: Lazy read policy under RF3 fsync and leader loss
+        run: ci/annotate.sh lazy-policy bash tests/lazypolicy.sh
       - name: Bounded RF3 movement and durable recovery
         run: |
           export TARN_BIN="$PWD/target/release/tarn-server" TARN_SOURCE_REVISION="$GITHUB_SHA"
@@ -501,6 +505,20 @@ jobs:
             /tmp/tarn-upgrade-build.*/new-native/
             /tmp/tarn-upgrade-build.*/results/
           retention-days: 30
+
+      - name: Retain lazy policy evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lazy-policy-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          path: |
+            /tmp/tarn-lazy-policy.*/*.sha256
+            /tmp/tarn-lazy-policy.*/*.txt
+            /tmp/tarn-lazy-policy.*/*/*.log
+            /tmp/tarn-lazy-policy.*/*/*.json
+            /tmp/tarn-lazy-policy.*/*/*.jsonl
+            /tmp/tarn-lazy-policy.*/*/*.pid
 
   tla:
     if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification && !inputs.topology_only)

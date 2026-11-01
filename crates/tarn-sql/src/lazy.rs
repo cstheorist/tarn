@@ -30,6 +30,84 @@ pub const MAX_READ_SHARDS: usize = 16;
 const MAX_PAGE_READS: usize = 1024;
 const RESULT_BYTES: usize = 16 * 1_048_576;
 
+/// The buffered page and result bytes after which a lazy read falls back to
+/// the strong path: 16 MiB, or an eighth of the statement's memory budget if
+/// that is less (decoded rows are charged about four times their encoded
+/// bytes), so that the fallback comes before the budget refuses the read.
+fn result_bytes() -> usize {
+    crate::budget::query_bytes_limit().map_or(RESULT_BYTES, |b| {
+        usize::try_from(b / 8).unwrap_or(RESULT_BYTES).min(RESULT_BYTES)
+    })
+}
+
+/// Eventual is permission to use an explicitly declared lazy index, never
+/// permission to weaken an ordinary index or an ineligible SQL context.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Consistency {
+    #[default]
+    Eventual,
+    Strong,
+}
+
+impl Consistency {
+    pub fn parse(value: Option<&Value>) -> SqlResult<Self> {
+        match value {
+            None => Ok(Self::default()),
+            Some(Value::Str(s)) if s.eq_ignore_ascii_case(b"eventual") => Ok(Self::Eventual),
+            Some(Value::Str(s)) if s.eq_ignore_ascii_case(b"strong") => Ok(Self::Strong),
+            Some(v) => Err(crate::admin::bad_value("tarn_lazy_consistency", &v.to_string())),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Eventual => "eventual",
+            Self::Strong => "strong",
+        }
+    }
+}
+
+/// The same execution-time decision feeds SELECT and EXPLAIN. It is not
+/// cached in a prepared plan, and changing policy never clears History.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ReadContext {
+    pub consistency: Consistency,
+    pub transaction: bool,
+    pub history_strong: bool,
+    pub read_your_writes: bool,
+}
+
+impl ReadContext {
+    pub fn strong_reason(self, p: &SelectPlan) -> Option<&'static str> {
+        if p.lock.is_some() {
+            Some("locking_read")
+        } else if self.transaction {
+            Some("transaction")
+        } else if self.consistency == Consistency::Strong {
+            Some("session_strong_policy")
+        } else if self.history_strong {
+            Some("session_history_requires_strong")
+        } else {
+            ineligible_reason(p)
+        }
+    }
+
+    pub fn diagnostics(self, p: &SelectPlan) -> serde_json::Value {
+        let reason = self.strong_reason(p);
+        serde_json::json!({
+            "requested":self.consistency.name(),
+            "selected":if reason.is_some() { "strong" } else { "eventual" },
+            "reason":reason.unwrap_or("ready_lazy_index_and_eligible_autocommit"),
+            "session_catch_up":reason.is_none() && self.read_your_writes,
+            "snapshot":if reason.is_some() { "ordinary_SQL_isolation" } else { "rechecked_base_rows_without_global_snapshot" },
+            "runtime_strong_fallbacks":if reason.is_none() {
+                vec!["candidate_limit", "result_byte_limit", "bucket_map_changed"]
+            } else { vec![] },
+            "routing":"the enclosing plan describes strong routing; lazy routing uses the index prefix then returned base primary keys"
+        })
+    }
+}
+
 pub fn flag(value: Option<&Value>) -> SqlResult<bool> {
     match value {
         None => Ok(false),
@@ -389,29 +467,42 @@ fn stable(e: &Expr) -> bool {
 }
 
 pub fn eligible(p: &SelectPlan) -> bool {
-    let Source::Table(ta) = &p.source else { return false };
+    ineligible_reason(p).is_none()
+}
+
+fn ineligible_reason(p: &SelectPlan) -> Option<&'static str> {
+    let Source::Table(ta) = &p.source else {
+        return Some("not_single_table");
+    };
     let AccessPath::Range { index, eq, .. } = &ta.path else {
-        return false;
+        return Some("not_lazy_range_access");
     };
     let Some(ix) = ta.table.indexes.iter().find(|i| i.id == *index) else {
-        return false;
+        return Some("index_not_available");
     };
-    ix.lazy
-        .as_ref()
-        .is_some_and(|l| l.ready && l.space_id != 0 && !eq.is_empty())
-        && !ix.invisible
-        && ta.offset == 0
-        && !ta.table.is_virtual()
-        && p.lock.is_none()
-        && p.agg.is_none()
-        && p.having.is_none()
-        && !p.distinct
-        && eq.iter().all(|e| e.is_constant() && stable(e))
-        && p.filter.as_ref().is_none_or(stable)
-        && p.project.iter().all(stable)
-        && p.order.iter().all(|(e, _)| stable(e))
-        && p.limit.as_ref().is_none_or(stable)
-        && p.offset.as_ref().is_none_or(stable)
+    let Some(l) = &ix.lazy else {
+        return Some("index_not_declared_lazy");
+    };
+    // (A prefix shorter than the routing parts is merged from every owner:
+    // composite routing; an empty one is not lazy access.)
+    if !l.ready || l.space_id == 0 || ix.invisible {
+        Some("lazy_index_not_ready_or_visible")
+    } else if eq.is_empty() || !eq.iter().all(|e| e.is_constant() && stable(e)) {
+        Some("lazy_routing_prefix_not_bound")
+    } else if ta.offset != 0 || ta.table.is_virtual() {
+        Some("unsupported_table_context")
+    } else if p.lock.is_some() || p.agg.is_some() || p.having.is_some() || p.distinct {
+        Some("query_requires_strong_execution")
+    } else if !p.filter.as_ref().is_none_or(stable)
+        || !p.project.iter().all(stable)
+        || !p.order.iter().all(|(e, _)| stable(e))
+        || !p.limit.as_ref().is_none_or(stable)
+        || !p.offset.as_ref().is_none_or(stable)
+    {
+        Some("volatile_expression")
+    } else {
+        None
+    }
 }
 
 fn order_col(e: &Expr, t: &TableDef) -> Option<usize> {
@@ -469,6 +560,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
     if !eligible(p) {
         return Ok(None);
     }
+    let limit = result_bytes();
     let Source::Table(ta) = &p.source else { unreachable!() };
     let AccessPath::Range {
         index,
@@ -601,7 +693,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                     lane.rows = rows.into();
                 }
             }
-            if lanes.iter().map(|l| l.bytes).sum::<usize>() > RESULT_BYTES {
+            if lanes.iter().map(|l| l.bytes).sum::<usize>() > limit {
                 return Ok(None);
             }
             let Some(head) = next_lane(&lanes, *reverse) else { break };
@@ -651,7 +743,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                 continue;
             }
             bytes = bytes.saturating_add(key_bytes(r).len()).saturating_add(c.pkid.len());
-            if bytes > RESULT_BYTES {
+            if bytes > limit {
                 return Ok(None);
             }
             kept.push(by_pk.remove(&c.pkid).unwrap());
@@ -1213,6 +1305,18 @@ mod tests {
 
     #[test]
     fn session_variable_boundaries() {
+        assert_eq!(Consistency::parse(None).unwrap(), Consistency::Eventual);
+        assert_eq!(
+            Consistency::parse(Some(&Value::str("STRONG"))).unwrap(),
+            Consistency::Strong
+        );
+        assert_eq!(
+            Consistency::parse(Some(&Value::str("eventual"))).unwrap(),
+            Consistency::Eventual
+        );
+        for v in [Value::Null, Value::Int(1), Value::str("causal"), Value::str("strong ")] {
+            assert_eq!(Consistency::parse(Some(&v)).unwrap_err().code, 1231);
+        }
         assert!(!flag(None).unwrap());
         assert!(flag(Some(&Value::str("ON"))).unwrap());
         assert!(!flag(Some(&Value::UInt(0))).unwrap());
@@ -1235,6 +1339,32 @@ mod tests {
         ] {
             assert_eq!(wait_seconds(Some(&v)).unwrap_err().code, 1232);
         }
+    }
+
+    #[test]
+    fn read_policy_cannot_override_strong_contexts_or_history_overflow() {
+        let p = select_plan(fixture(), "SELECT id FROM t WHERE k=7 ORDER BY n,id");
+        let mut c = ReadContext::default();
+        assert_eq!(c.strong_reason(&p), None);
+        c.consistency = Consistency::Strong;
+        assert_eq!(c.strong_reason(&p), Some("session_strong_policy"));
+        c.consistency = Consistency::Eventual;
+        c.read_your_writes = true;
+        assert_eq!(c.diagnostics(&p)["selected"], "eventual");
+        assert_eq!(c.diagnostics(&p)["session_catch_up"], true);
+        // Causal catch-up is not an exact result for other sessions' writes.
+        c.history_strong = true;
+        assert_eq!(c.strong_reason(&p), Some("session_history_requires_strong"));
+        c.transaction = true;
+        assert_eq!(c.strong_reason(&p), Some("transaction"));
+        let lock = select_plan(fixture(), "SELECT id FROM t WHERE k=7 FOR UPDATE");
+        assert_eq!(c.strong_reason(&lock), Some("locking_read"));
+        c = ReadContext::default();
+        let plain = select_plan(
+            table("CREATE TABLE t (id INT PRIMARY KEY,k INT,KEY lk(k))"),
+            "SELECT id FROM t WHERE k=7",
+        );
+        assert_eq!(c.strong_reason(&plain), Some("index_not_declared_lazy"));
     }
 
     #[test]
