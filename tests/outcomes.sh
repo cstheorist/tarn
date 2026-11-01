@@ -13,6 +13,20 @@ mkdir -p "$W"
 cleanup() {
   rc=$?
   rm -f "$W/plan.json"
+  if [ "$rc" -ne 0 ]; then
+    # Name each storage node that is no longer running, with its log's last
+    # fatal lines, as annotations: the logs themselves are in the artifact.
+    for pidfile in "$W"/s*.*.pid; do
+      [ -f "$pidfile" ] || continue
+      node=$(basename "$pidfile" .pid)
+      kill -0 "$(cat "$pidfile")" 2>/dev/null && continue
+      echo "::error title=outcomes $node::storage node $node had exited before cleanup"
+      { grep -E ' F> |SIGSEGV|SEGV_|Segmentation|Aborted|out of memory|panic|#[0-9]+ +0x' "$W/$node.log" 2>/dev/null || true; } |
+        tail -n 8 | while IFS= read -r line; do
+          printf '::error title=outcomes %s::%s\n' "$node" "$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-500)"
+        done
+    done
+  fi
   KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$W" > "$W/stop.log" 2>&1 || true
   echo "outcome evidence: $W (exit $rc)"
 }
