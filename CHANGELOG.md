@@ -83,6 +83,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   refused when what it keeps leaves no room for one read
   ([#238](https://github.com/cstheorist/tarn/issues/238)).
 
+- A storage node's restart no longer keeps a memtx MVCC transaction story,
+  300 to 400 bytes, per recovered row of a memtx table with a secondary
+  index that precedes another memtx table with rows: about 380 MiB for a
+  million rows. With MVCC on, Tarantool built such a table's secondary keys
+  inside the next table's first recovered transaction, tracking a read of
+  every row. Storage nodes now write sort data with each checkpoint
+  (`memtx_use_sort_data`) and build secondary keys from it, which also
+  restarts faster; the file backup accepts the `.sortdata` files
+  ([#218](https://github.com/cstheorist/tarn/issues/218)).
+
 - A lazy-index read whose rows outgrow its limit falls back to the strong
   path before the statement's memory budget refuses it, and the fallback
   gets back the memory the lazy attempt used. The limit is 16 MiB, or an

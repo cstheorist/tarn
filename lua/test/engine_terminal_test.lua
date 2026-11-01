@@ -14,8 +14,8 @@ box.ctl.promote()
 local tarn = require('tarn').init{shard_id = 1, peers = {}, sync = true,
     native = native and native ~= '0' and native or false,
     test_hooks = true, check_yields = true, recovery_after = 1000000}
-local function wait(label, fn)
-    local deadline = fiber.clock() + 5
+local function wait(label, fn, seconds)
+    local deadline = fiber.clock() + (seconds or 5)
     repeat if fn() then return end; fiber.sleep(.005) until fiber.clock() >= deadline
     error(label .. ' timed out')
 end
@@ -81,7 +81,12 @@ for n, source_engine in ipairs({'memtx', 'vinyl'}) do
     check(source_engine .. ': actual shadow chunk owns a ticket during quorum wait',
         box.space[first_target] ~= nil and tarn.engine.tickets.outstanding == 1)
     builder:cancel()
-    wait('detached caller return', function() return result ~= nil end)
+    -- The queue holds the commit's entry before its WAL write. A cancel that
+    -- comes during the write wakes the fiber there, and Tarantool's quorum
+    -- wait then sleeps without looking at the cancel: the caller detaches
+    -- at replication_synchro_timeout (5 s), with "timed out" rather than
+    -- "fiber is cancelled". Either way it returns with the effect pending.
+    wait('detached caller return', function() return result ~= nil end, 15)
     check(source_engine .. ': caller returns while the detached native effect remains pending',
         result[1] ~= 'ok' and box.info.synchro.queue.len > 0 and tarn.engine.tickets.outstanding == 1, result)
     tarn.engine.invalidate(true)
