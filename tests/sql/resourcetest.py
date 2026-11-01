@@ -200,6 +200,21 @@ def run(a):
         q(bounded, "DEALLOCATE PREPARE p")
         refuse(bounded, "SET @huge=REPEAT('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',1000000)")
         record("bounded_status", status=status(bounded))
+    # A filtered scan's budget follows the rows it keeps, not the pages it
+    # reads (#134): WHERE, evaluated by the SQL server, keeps 1 row in 97 of
+    # pages that decode to several times this gateway's query budget, and is
+    # refused when what it keeps does not fit.
+    wide = 30000
+    with connect(a.tarn) as control, control.cursor() as cursor:
+        q(control, "CREATE TABLE wide (id INT PRIMARY KEY, s VARCHAR(2000) NOT NULL)")
+        for start in range(1, wide + 1, 200):
+            cursor.executemany("INSERT INTO wide VALUES (%s,%s)",
+                               [(i, "w" * 1990 + str(i)) for i in range(start, min(start + 200, wide + 1))])
+    with connect(a.bounded) as bounded:
+        rows = q(bounded, "SELECT id FROM wide WHERE id % 97 = 5")
+        assert sorted(r[0] for r in rows) == [i for i in range(1, wide + 1) if i % 97 == 5], len(rows)
+        refuse(bounded, "SELECT id FROM wide WHERE id % 97 <> 5")
+        record("filtered_scan", rows=wide, payload_chars=1995, kept=len(rows), status=status(bounded))
     # Resource errors end the complete explicit transaction, freeing row locks.
     with connect(a.transaction) as txn, connect(a.tarn) as control:
         for kind in ("reads", "writes", "savepoints"):
