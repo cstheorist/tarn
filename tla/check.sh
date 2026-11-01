@@ -103,6 +103,8 @@ Bug_LazyRoutingLexical Bug_LazyRoutingEarlyLimit Bug_LazyRoutingEpoch"
 
 DEFAULT="$DEFAULT ExternalStrongKV Bug_KVOwnerFence Bug_KVIncarnation Bug_KVSchemaAsOwner
 Bug_KVClippedComplete Bug_KVMissingClaim Bug_KVFalseAtomic"
+
+DEFAULT="$DEFAULT ReplicatedVinylBuild Bug_VinylBuildBesidePending Bug_VinylBuildDDLAheadOfConfirm"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

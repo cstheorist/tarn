@@ -2539,6 +2539,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| Bug_VinylBuildBesidePending | violates IndexComplete | 290 | 376 | 6 | 00s | 6 |
+| Bug_VinylBuildDDLAheadOfConfirm | violates ReplicaApplies | 146 | 183 | 5 | 00s | 5 |
 | ClockBootstrap | no errors | 23 | 65 | 9 | 00s |  |
 | ClusterBackup | no errors | 52164 | 255561 | 30 | 00s |  |
 | CompletionRetention | no errors | 672 | 720 | 25 | 00s |  |
@@ -2611,6 +2613,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | RecovReaders | no errors | 28258 | 135451 | 17 | 06s |  |
 | Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 14s |  |
 | Recov_GC | no errors | 1136892 | 8123071 | 23 | 02min 26s |  |
+| ReplicatedVinylBuild | no errors | 18694 | 28734 | 20 | 01s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
 | SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 11min 32s |  |

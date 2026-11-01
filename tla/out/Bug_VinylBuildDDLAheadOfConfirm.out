@@ -1,0 +1,71 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=37295 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 50 and seed 7833894525355498593 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 2222] (Linux 6.18.44-fc-v185 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/ReplicatedVinylBuild.tla
+Parsing file /tmp/tlc-150282423754517975/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-150282423754517975/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-150282423754517975/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-150282423754517975/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-150282423754517975/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-150282423754517975/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-150282423754517975/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module ReplicatedVinylBuild
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module ReplicatedVinylBuild
+Starting... (2026-11-01 14:04:27)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-01 14:04:28.
+Error: Invariant ReplicaApplies is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ wst = <<"idle", "idle", "idle", "idle">>
+/\ pending = {}
+/\ index = -1
+/\ applied = 0
+/\ build = "none"
+/\ log = <<>>
+
+State 2: <Write(3) line 68, col 5 to line 75, col 44 of module ReplicatedVinylBuild>
+/\ wst = <<"idle", "idle", "logged", "idle">>
+/\ pending = {}
+/\ index = -1
+/\ applied = 0
+/\ build = "none"
+/\ log = <<[t |-> "write", w |-> 3]>>
+
+State 3: <StartBuild line 89, col 5 to line 93, col 47 of module ReplicatedVinylBuild>
+/\ wst = <<"idle", "idle", "logged", "idle">>
+/\ pending = {}
+/\ index = 0
+/\ applied = 0
+/\ build = "building"
+/\ log = <<[t |-> "write", w |-> 3]>>
+
+State 4: <LogDDL line 97, col 5 to line 101, col 49 of module ReplicatedVinylBuild>
+/\ wst = <<"idle", "idle", "logged", "idle">>
+/\ pending = {}
+/\ index = 0
+/\ applied = 0
+/\ build = "built"
+/\ log = <<[t |-> "write", w |-> 3], [t |-> "ddl"]>>
+
+State 5: <Apply line 105, col 5 to line 112, col 43 of module ReplicatedVinylBuild>
+/\ wst = <<"idle", "idle", "logged", "idle">>
+/\ pending = {3}
+/\ index = 0
+/\ applied = 1
+/\ build = "built"
+/\ log = <<[t |-> "write", w |-> 3], [t |-> "ddl"]>>
+
+183 states generated, 146 distinct states found, 89 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 00s at (2026-11-01 14:04:28)
+Trace exploration spec path: ./ReplicatedVinylBuild_TTrace_1793559867.tla
