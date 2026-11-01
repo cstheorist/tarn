@@ -6,6 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      strong_kv_qualification:
+        description: Run strong KV RF3 histories and matched SQL/KV/raw measurements only
+        type: boolean
+        default: false
+      strong_kv_scope:
+        description: Qualification cohorts to run
+        type: choice
+        options: [all, histories]
+        default: all
       file_backup_scale:
         description: Include the file-backup scale study
         type: boolean
@@ -30,8 +39,8 @@ permissions:
 # main runs to completion in its own group, so main's result (and the README
 # badge) is never a cancellation.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ inputs.topology_only && 'topology' || (github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || 'ci') }}
-  cancel-in-progress: ${{ github.event_name != 'push' && !(github.event_name == 'workflow_dispatch' && inputs.strong_read_cost) }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ inputs.topology_only && 'topology' || (github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || github.event_name == 'workflow_dispatch' && inputs.strong_kv_qualification && format('kv-{0}', inputs.strong_kv_scope || 'all') || 'ci') }}
+  cancel-in-progress: ${{ github.event_name != 'push' && !(github.event_name == 'workflow_dispatch' && (inputs.strong_read_cost || inputs.strong_kv_qualification)) }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -46,7 +55,7 @@ defaults:
 
 jobs:
   lint:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification && !inputs.topology_only)
     name: Format and clippy
     runs-on: ubuntu-24.04
     steps:
@@ -62,10 +71,12 @@ jobs:
         run: cargo clippy -p tarn-storage --features alloc-metrics --all-targets -- -D warnings
 
   test:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification && !inputs.topology_only)
     name: Tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # (Passing runs take 50 to 56 minutes: the timeout is for a hung step,
+    # not for a slow runner.)
+    timeout-minutes: 80
     env:
       TARN_QUERY_PUSHDOWN: 'true'
     services:
@@ -100,6 +111,10 @@ jobs:
         run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0
       - name: Vinyl pressure scheduling and readback controls
         run: python3 tests/sql/vinylpressure_phase_test.py
+      - name: Strong KV administrative transport privacy controls
+        run: python3 tests/sql/kv_transport_test.py
+      - name: Strong KV read-only route controls
+        run: python3 tests/sql/kv_route_test.py
       # Restore and save separately, so that the (slow) Tarantool build is
       # cached even when a later step fails.
       - name: Restore Tarantool
@@ -140,6 +155,8 @@ jobs:
           cargo test --release -p tarn-sql --example strong_kv_bench
       - name: Native allocation instrumentation units
         run: cargo test -p tarn-storage --features alloc-metrics --lib
+      - name: Bounded commit-cost observation controls
+        run: python3 bench/test_commit_cost.py
       - name: Storage protocol tests
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
@@ -277,22 +294,72 @@ jobs:
         env:
           TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: SECS=45 ci/annotate.sh growshrink tests/growshrink.sh
+      - name: Bind failover inputs and enable cores on this isolated runner
+        id: failover-evidence
+        run: |
+          python3 tests/test_retain_failover.py
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/failover-core-probe/core.%e.%p.%t"
+          python3 ci/probe_core.py --runtime "$(command -v tarantool)" \
+            --output "$RUNNER_TEMP/failover-core-probe"
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/failover-cores/core.%e.%p.%t"
+          python3 ci/retain_failover.py begin --output "$RUNNER_TEMP/failover-evidence" \
+            --cores "$RUNNER_TEMP/failover-cores"
+          tarantool --version > "$RUNNER_TEMP/failover-evidence/tarantool-version.txt"
+          rustc -Vv > "$RUNNER_TEMP/failover-evidence/rustc.txt"
+          cp "$RUNNER_TEMP/failover-core-probe/probe.json" "$RUNNER_TEMP/failover-evidence/core-probe.json"
       - name: Failover (2 shards x 3 replicas)
         env:
           TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
-        run: SECS=45 TARN_CHECK_LOCKS=1 ci/annotate.sh failover tests/failover.sh
+        run: |
+          ulimit -c unlimited
+          SECS=45 TARN_CHECK_LOCKS=1 ci/annotate.sh failover tests/failover.sh
       - name: Fault injection and failover with vinyl tables
         env:
           TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: |
+          ulimit -c unlimited
           ENGINE=vinyl TARN_CHECK_LOCKS=1 ci/annotate.sh vinyl-faults tests/faults.sh
           ENGINE=vinyl TARN_CHECK_LOCKS=1 TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh
           ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
+      - name: Preserve failover state and crash cores
+        if: always() && steps.failover-evidence.outcome == 'success'
+        env:
+          CAPTURE_JOB_STATUS: ${{ job.status }}
+        run: |
+          # Only these two fixtures belong to the failover steps above.
+          # A startup failure can leave replicas alive; stop before archiving.
+          for fixture in /tmp/tarn-failover /tmp/tarn-failover-vinyl; do
+            if [ -d "$fixture" ]; then
+              KEEP=1 scripts/cluster.sh stop -d "$fixture"
+            fi
+          done
+          python3 ci/retain_failover.py finish --output "$RUNNER_TEMP/failover-evidence" \
+            --cores "$RUNNER_TEMP/failover-cores" --job-status "$CAPTURE_JOB_STATUS" \
+            --fixture /tmp/tarn-failover --fixture /tmp/tarn-failover-vinyl
+          # A clean run (no failure, no core) keeps the receipts, whose hashes
+          # identify the binaries, but not the binaries themselves (~170 MB).
+          if [ "$CAPTURE_JOB_STATUS" = success ] && [ -z "$(ls -A "$RUNNER_TEMP/failover-cores")" ]; then
+            rm -rf "$RUNNER_TEMP/failover-evidence/binaries"
+          fi
+      - name: Retain failover inputs and crash evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: failover-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/failover-evidence
+            ${{ runner.temp }}/failover-core-probe/probe.json
+            ${{ runner.temp }}/failover-core-probe/crash.txt
+          retention-days: 30
+          compression-level: 1
+          if-no-files-found: ignore
       - name: Strong KV paired SQL histories and RF3 faults
         run: |
           python3 tests/test_kv_control.py
           ci/annotate.sh strong-kv tests/kv.sh
           TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
+          KV_CLOCK_FAULT=1 ci/annotate.sh strong-kv-clock tests/kv.sh
+          KV_CLOCK_FAULT=1 TARN_NATIVE=0 ci/annotate.sh strong-kv-clock-lua tests/kv.sh
       - name: Retain strong KV histories and fixture evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -304,11 +371,15 @@ jobs:
             /tmp/tarn-kv181-*/manifest.json
             /tmp/tarn-kv181-*/processes.jsonl
             /tmp/tarn-kv181-*/lifecycle.json
+            /tmp/tarn-kv181-*/cleanup-identities.json
             /tmp/tarn-kv181-*/preflight.json
+            /tmp/tarn-kv181-*/preflight.stderr
             /tmp/tarn-kv181-*/broker-preflight.json
             /tmp/tarn-kv181-*/*.log
             /tmp/tarn-kv181-*/functional/*
             /tmp/tarn-kv181-*/faults/*
+            /tmp/tarn-kv181-*/clock-fault/*
+            !/tmp/tarn-kv181-credentials-*/**
           if-no-files-found: ignore
           retention-days: 30
       - name: Retain integrity outcomes
@@ -382,7 +453,7 @@ jobs:
             /tmp/tarn-lua-test.*/native-freshness-*/s*/status-events.jsonl
 
   upgrade:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification && !inputs.topology_only)
     name: Rolling upgrade (${{ matrix.engine }})
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -432,7 +503,7 @@ jobs:
           retention-days: 30
 
   tla:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification && !inputs.topology_only)
     name: TLA+ model checking
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -448,7 +519,7 @@ jobs:
         run: WORKERS=auto tla/check.sh
 
   verus:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification && !inputs.topology_only)
     name: Verus proofs
     runs-on: ubuntu-24.04
     steps:
@@ -464,6 +535,86 @@ jobs:
         run: |
           "$HOME/verus/verus-x86-linux/verus" --crate-type=lib src/lib.rs 2>&1 | tee verus.log
           grep -qE "verification results:: [0-9]+ verified, 0 errors" verus.log
+
+  strong-kv-qualification:
+    if: github.event_name == 'workflow_dispatch' && inputs.strong_kv_qualification
+    name: Strong KV / ${{ matrix.cohort }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        cohort: ${{ fromJSON(inputs.strong_kv_scope == 'histories' && '["native-history","lua-history"]' || '["native-history","lua-history","native-clock","lua-clock","memtx","vinyl"]') }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install Python packages
+        run: pip install PyMySQL
+      - name: Strong KV read-only route controls
+        run: python3 tests/sql/kv_route_test.py
+      - name: Restore Tarantool
+        id: tarantool-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install Tarantool
+        run: |
+          ci/install-tarantool.sh "$TARANTOOL_VERSION" "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          cache-workspace-crates: true
+      - name: Build the actual gateway, native module and KV clients
+        run: cargo build --release --workspace --all-targets --locked
+      - name: Retain checkout and executable identities
+        run: |
+          mkdir -p /tmp/tarn-kv-study-build
+          git rev-parse HEAD HEAD^{tree} > /tmp/tarn-kv-study-build/checkout.txt
+          rustc -Vv > /tmp/tarn-kv-study-build/rustc.txt
+          tarantool --version > /tmp/tarn-kv-study-build/tarantool.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so target/release/examples/strong_kv target/release/examples/strong_kv_bench > /tmp/tarn-kv-study-build/binaries.sha256
+      # Separate runners keep faulted fixtures out of measurements and retain
+      # every cohort's result even when a different cohort fails.
+      - name: Run the isolated qualification cohort
+        env:
+          KV_COHORT: ${{ matrix.cohort }}
+        run: |
+          printf '%s\n' "$KV_COHORT" > /tmp/tarn-kv-study-build/cohort.txt
+          export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"
+          case "$KV_COHORT" in
+            native-history) ;;
+            lua-history) export TARN_NATIVE=0 ;;
+            native-clock) export KV_CLOCK_FAULT=1 ;;
+            lua-clock) export KV_CLOCK_FAULT=1 TARN_NATIVE=0 ;;
+            memtx|vinyl) export KV_STUDY_ENGINE="$KV_COHORT" ;;
+            *) exit 2 ;;
+          esac
+          ci/annotate.sh "strong-kv-$KV_COHORT" tests/kv.sh
+      - name: Retain histories, measurements, failures and source identities
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: strong-kv-qualification-${{ matrix.cohort }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/tarn-kv-study-build/*
+            /tmp/tarn-kv181-*/*.json
+            /tmp/tarn-kv181-*/*.jsonl
+            /tmp/tarn-kv181-*/*.log
+            /tmp/tarn-kv181-*/preflight.stderr
+            /tmp/tarn-kv181-*/functional/*
+            /tmp/tarn-kv181-*/faults/*
+            /tmp/tarn-kv181-*/clock-fault/*
+            /tmp/tarn-kv181-*/study/**
+            !/tmp/tarn-kv181-credentials-*/**
+          if-no-files-found: ignore
+          retention-days: 30
 
   strong-read-cost:
     if: github.event_name == 'workflow_dispatch' && inputs.strong_read_cost

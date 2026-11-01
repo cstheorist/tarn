@@ -632,7 +632,17 @@ fn metadata(data: &[u8], db: &str, name: &str) -> KvResult<Metadata> {
         let (bucket, state) = (u32_value(e[0])?, text(e[1])?);
         if bucket == 0
             || bucket > owner.count
-            || !["sending", "fenced", "sent", "receiving", "held"].contains(&state.as_str())
+            || ![
+                "sending",
+                "fenced",
+                "sent",
+                "receiving",
+                "held",
+                "installing",
+                "reclaiming",
+                "aborting",
+            ]
+            .contains(&state.as_str())
         {
             return Err(protocol("invalid move state"));
         }
@@ -785,6 +795,10 @@ impl StrongKvClient {
             .connect_timeout
             .min(deadline.saturating_duration_since(Instant::now()));
         options.request_timeout = self.options.read_timeout;
+        // Refuse an oversized advertised frame before reserving its body.
+        // The V1 envelope is bounded to 1 MiB; allow 4 KiB for the IPROTO
+        // header/body wrapper and authentication/capability replies.
+        options.max_response_bytes = MAX_WIRE_RESPONSE_BYTES;
         options.request_limits = self.options.request_limits;
         options.admission = vec![self.budget.clone()];
         let client = timeout_at(deadline, Client::connect(&options))
@@ -1159,6 +1173,7 @@ pub struct KvPoint {
 }
 
 const MAX_SCHEMA_BYTES: usize = 1 << 20;
+const MAX_WIRE_RESPONSE_BYTES: usize = MAX_SCHEMA_BYTES + 4096;
 const MAX_COLUMNS: usize = 1024;
 const MAX_FIELDS: usize = 8192;
 
@@ -1439,6 +1454,51 @@ mod tests {
         m.bytes()
     }
 
+    fn move_meta_reply(h: &TableHandle, owned: &[(u32, u32)], others: &[u8]) -> Bytes {
+        let original = meta_reply(h, "127.0.0.1:3301", 2);
+        let mut rd = Rd::new(&original);
+        let mut m = Mp::new();
+        m.arr(rd.array().unwrap());
+        let n = rd.map().unwrap();
+        m.map(n);
+        for _ in 0..n {
+            let key = rd.string().unwrap();
+            let value = rd.raw_value().unwrap();
+            m.str(&key);
+            if key == "buckets" {
+                m.map(5)
+                    .str("count")
+                    .uint(4)
+                    .str("epoch")
+                    .uint(2)
+                    .str("owned")
+                    .arr(owned.len());
+                for &(lo, hi) in owned {
+                    m.arr(2).uint(lo as u64).uint(hi as u64);
+                }
+                m.str("others").raw(others).str("membership_version").uint(7);
+            } else {
+                m.raw(value);
+            }
+        }
+        assert!(rd.buf.is_empty());
+        m.bytes()
+    }
+
+    fn move_rows(state: &str, peer: Option<u32>, generation: Option<&str>) -> Bytes {
+        let mut m = Mp::new();
+        m.arr(1).arr(4).uint(1).str(state);
+        match peer {
+            Some(id) => m.uint(id as u64),
+            None => m.nil(),
+        };
+        match generation {
+            Some(id) => m.str(id),
+            None => m.nil(),
+        };
+        m.bytes()
+    }
+
     fn point_reply(h: &TableHandle, keys: &[Vec<Value>], payloads: &[Option<&str>]) -> Bytes {
         let mut m = Mp::new();
         m.arr(1)
@@ -1536,6 +1596,133 @@ mod tests {
         assert_eq!(metadata(&d, "d", "t").unwrap().schema.token.definition_version, 900);
         for n in 0..d.len() {
             assert!(metadata(&d.slice(..n), "d", "t").is_err());
+        }
+    }
+
+    #[test]
+    fn metadata_accepts_public_move_states_without_inventing_peer_constraints() {
+        let h = handle(descriptor());
+        for state in [
+            "sending",
+            "fenced",
+            "sent",
+            "receiving",
+            "held",
+            "installing",
+            "reclaiming",
+            "aborting",
+        ] {
+            // The public bucket procedures permit a local capability roundtrip.
+            // Reports also retain optional peer/move fields; the data RPC's
+            // authoritative bucket guard still decides whether it can serve.
+            for (peer, generation) in [(Some(1), Some("move-1")), (None, None), (Some(9), Some("old-move"))] {
+                let data = move_meta_reply(&h, &[(2, 4)], &move_rows(state, peer, generation));
+                let parsed = metadata(&data, "d", "t").unwrap();
+                assert_eq!(parsed.schema.token, h.schema.token);
+                assert_eq!(parsed.owner.shard, 1);
+                assert_eq!(parsed.owner.epoch, 2);
+                assert_eq!(parsed.owner.membership, 7);
+                assert_eq!(
+                    parsed.report.others,
+                    vec![(1, state.into(), peer, generation.map(str::to_owned))]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_move_metadata_uses_existing_bucket_map_visibility_rules() {
+        let h = handle(descriptor());
+        let positions = HashMap::from([(1, 0), (2, 1)]);
+        let decoded = |state, owned: &[(u32, u32)]| {
+            metadata(
+                &move_meta_reply(&h, owned, &move_rows(state, Some(2), Some("move-1"))),
+                "d",
+                "t",
+            )
+            .unwrap()
+            .report
+        };
+        let peer = |state: Option<&str>, owned| crate::buckets::Report {
+            count: 4,
+            epoch: 3,
+            mver: 7,
+            owned,
+            others: state
+                .map(|s| vec![(1, s.into(), Some(1), Some("move-1".into()))])
+                .unwrap_or_default(),
+            ..Default::default()
+        };
+        for (state, other, expected, moving) in [
+            ("installing", peer(Some("reclaiming"), vec![]), 0, vec![1]),
+            ("reclaiming", peer(Some("installing"), vec![]), 1, vec![1]),
+            ("reclaiming", peer(None, vec![]), 1, vec![1]),
+            ("aborting", peer(None, vec![(1, 1)]), 1, vec![]),
+        ] {
+            let map =
+                crate::buckets::BucketMap::from_reports(vec![decoded(state, &[(2, 4)]), other], &positions).unwrap();
+            assert_eq!(map.shard(1), expected, "{state}");
+            assert_eq!(map.moving, moving, "{state}");
+            assert_eq!(map.epochs, vec![2, 3]);
+        }
+        // A tentative installing receiver does not displace a still-owned source.
+        let map = crate::buckets::BucketMap::from_reports(
+            vec![decoded("fenced", &[(1, 4)]), peer(Some("installing"), vec![])],
+            &positions,
+        )
+        .unwrap();
+        assert_eq!(map.shard(1), 0);
+        assert!(map.settled());
+    }
+
+    #[test]
+    fn bounded_move_metadata_rejects_malformed_records_as_a_whole() {
+        let h = handle(descriptor());
+        let malformed = [
+            vec![Value::UInt(1), Value::str("installing"), Value::UInt(2)],
+            vec![
+                Value::UInt(1),
+                Value::str("reclaiming"),
+                Value::str("2"),
+                Value::str("move-1"),
+            ],
+            vec![Value::UInt(1), Value::str("aborting"), Value::UInt(2), Value::UInt(3)],
+            vec![
+                Value::UInt(0),
+                Value::str("installing"),
+                Value::UInt(2),
+                Value::str("move-1"),
+            ],
+            vec![
+                Value::UInt(5),
+                Value::str("installing"),
+                Value::UInt(2),
+                Value::str("move-1"),
+            ],
+            vec![
+                Value::UInt(1),
+                Value::str("unrecognized"),
+                Value::UInt(2),
+                Value::str("move-1"),
+            ],
+        ];
+        for row in malformed {
+            let mut others = Mp::new();
+            // A valid earlier entry must not turn a malformed later one into
+            // usable partial metadata or a successful read result.
+            others
+                .arr(2)
+                .arr(4)
+                .uint(2)
+                .str("held")
+                .uint(2)
+                .str("move-2")
+                .vals(&row);
+            let data = move_meta_reply(&h, &[(3, 4)], &others.bytes());
+            assert!(
+                metadata(&data, "d", "t").is_err(),
+                "accepted malformed move record: {row:?}"
+            );
         }
     }
 
@@ -1699,6 +1886,58 @@ mod tests {
             seen
         });
         (endpoint, actor)
+    }
+
+    #[tokio::test]
+    async fn public_discovery_retires_an_oversized_advertised_frame_without_waiting_for_the_body() {
+        use crate::cluster::wire_test::{accept, reply};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap().to_string();
+        let actor = tokio::spawn(async move {
+            let mut sock = accept(&listener).await;
+            let (kind, sync, stream, _) = mock_request(&mut sock).await;
+            assert_eq!((kind, stream), (7, 0));
+            reply(&mut sock, sync, 0, &[0x80]).await;
+            let (kind, _, stream, _) = mock_request(&mut sock).await;
+            assert_eq!((kind, stream), (10, 0));
+            let mut prefix = vec![0xce];
+            prefix.extend_from_slice(&((MAX_WIRE_RESPONSE_BYTES + 1) as u32).to_be_bytes());
+            sock.write_all(&prefix).await.unwrap();
+            // No advertised payload is sent. The client must close from
+            // this prefix rather than wait for its request deadline.
+            let mut byte = [0];
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(2), sock.read(&mut byte))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                0
+            );
+        });
+        let mut options = KvOptions::new(
+            vec![ShardConfig {
+                id: 1,
+                replicas: vec![endpoint],
+            }],
+            Credentials {
+                user: "reader".into(),
+                password: "p".into(),
+            },
+        );
+        // Isolate one physical retirement from permitted read-only
+        // rediscovery. The transport reports retired waiters as Closed.
+        options.max_read_attempts = 1;
+        let client = StrongKvClient::connect(options).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), client.table("d", "t"))
+            .await
+            .unwrap();
+        assert!(
+            matches!(&result, Err(KvError::Transport(tarn_iproto::Error::Closed))),
+            "{result:?}"
+        );
+        actor.await.unwrap();
+        assert!(client.connection_stats().is_empty());
     }
 
     #[tokio::test]
