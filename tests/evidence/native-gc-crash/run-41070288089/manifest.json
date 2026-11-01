@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "issue": 160,
+  "run": 41070288089,
+  "job": 124112263428,
+  "source_commit": "a1eb5dd890e8ac363c097ed60852e639ef330366",
+  "pr": 202,
+  "original_decoded_log_sha256": "8d22e8af3d5aa88596ecfe958b8e2caa4a990912a60407dffd672db0291d3820",
+  "observed": {
+    "replica": "s2.1",
+    "pid": 41966,
+    "engine": "vinyl",
+    "native_enabled": true,
+    "signal": "SEGV_MAPERR",
+    "address": "0x401c64cc",
+    "function": "gc_traverse_trace.part.0+199",
+    "rax": "0x5c07",
+    "rdx": "0x401af4b0",
+    "rip": "0x560159513407"
+  },
+  "fault_site": {
+    "elf_function_address": "0x27e340",
+    "elf_fault_address": "0x27e407",
+    "instruction": "movl (%rdx,%rax,4), %eax",
+    "computed_address": "0x401c64cc",
+    "scope": "Disassembly and register arithmetic identify the faulting table lookup, not the cause of the invalid lookup."
+  },
+  "same_job_hash_receipts": {
+    "artifact": 12990540255,
+    "artifact_sha256": "1ddf8f07fbb863698c273ca2925299740eec6a4eeef69ed9139774af6abd0707",
+    "native_sha256": "1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae",
+    "tarantool_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f"
+  },
+  "matching_retained_binaries": {
+    "run": 41070288021,
+    "native_build_artifact": 12983214561,
+    "native_build_artifact_sha256": "434a7aafc47e04a708a2d19363478ee41ec158f4604e7b21eaa2c361466d26b3",
+    "runtime_artifact_name": "rc-memtx-enabled-41070288021",
+    "scope": "Actual retained binaries match pre-crash hash receipts from the failing CI job. No crash-time hash, core, or failed runtime/WAL archive was uploaded; this is not an identity claim about the original 40753059987 crash."
+  },
+  "outcome": "Failover failed; neither crash cause nor exact recovered effects established.",
+  "files": {
+    "gc-traverse-trace.disassembly.txt": {
+      "bytes": 6556,
+      "sha256": "5dcc21ab10fc75e76c824055aa18765e542d91b5685054ed8b3916cda0679771"
+    },
+    "same-job-native.sha256": {
+      "bytes": 85,
+      "sha256": "6add3e5c869a219c3a5c2782c32b6d9254475fc4099acb56510e059f66dd5289"
+    },
+    "same-job-tarantool.sha256": {
+      "bytes": 76,
+      "sha256": "d9d155df06ce83f6fab3292b07190c7d1ec5cb5345e9f906c97ac677b4e629ba"
+    },
+    "crash-excerpt.txt": {
+      "bytes": 2979,
+      "sha256": "43e6cc2d5564649f737cbf4dbd7f21b580c34eed46e84e70b3c1fa2fd7c70e6e"
+    }
+  },
+  "full_log_retention": "Full decoded log and original same-job artifact retained locally, excluded from the published package. The log hash and original artifact identity remain recorded.",
+  "excerpt_processing": "Only native-load observation, signal, registers and backtrace; CI timestamps preserved. Hash receipts retain hash and basename only, excluding runner paths."
+}
