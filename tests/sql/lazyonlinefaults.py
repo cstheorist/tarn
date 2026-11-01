@@ -18,7 +18,7 @@ import time
 
 import pymysql
 
-from lazytest import ev, q, rpc, stat, wait_empty
+from lazytest import ev, q, rpc, stat
 
 
 def connect(endpoint, db=None, read_timeout=120):
@@ -137,6 +137,47 @@ def main():
             if time.monotonic() >= deadline:
                 raise AssertionError(f"replica {node} did not answer: {reply}")
             time.sleep(.2)
+    # A shard whose election finds no leader for 8 s has its most advanced
+    # replica promoted, as an operator would: a replica that refuses the
+    # others' votes because its vclock is ahead of theirs does not stand
+    # itself while their elections keep bumping the term (#254). The
+    # online build is what this test checks, not that election.
+    crashed, healed, healer_stop = None, [], threading.Event()
+
+    def healer():
+        leaderless = {}
+        while not healer_stop.wait(.5):
+            for g in groups:
+                states = {}
+                for node in g["replicas"]:
+                    if node == crashed:
+                        continue
+                    try:
+                        states[node] = ev(node, "return {leader=box.info.election.leader,vclock=box.info.vclock}")
+                    except Exception:  # down or not answering
+                        pass
+                if not states or any(st["leader"] != 0 for st in states.values()):
+                    leaderless.pop(g["id"], None)
+                    continue
+                since = leaderless.setdefault(g["id"], time.monotonic())
+                if time.monotonic() - since < 8:
+                    continue
+                clocks = {n: {int(k): v for k, v in st["vclock"].items()} for n, st in states.items()}
+
+                def ahead(n):
+                    return all(clocks[n].get(i, 0) >= lsn for m in clocks for i, lsn in clocks[m].items())
+                best = max(clocks, key=lambda n: (ahead(n), sum(clocks[n].values())))
+                try:
+                    ev(best, "require('fiber').create(function() pcall(box.ctl.promote) end)")
+                except Exception as e:  # it may have gone down meanwhile
+                    record("heal_failed", shard=g["id"], replica=best, error=repr(e))
+                    continue
+                healed.append({"shard": g["id"], "replica": best, "after": round(time.monotonic() - since, 1)})
+                record("healed", **healed[-1], vclocks=clocks)
+                print(f"WARN shard {g['id']} found no leader for 8 s; promoted {best}", flush=True)
+                leaderless.pop(g["id"], None)
+
+    threading.Thread(target=healer, daemon=True).start()
     record("settled", leaders=settle())
     # Shard 2: the policy fault test before this one crashed shard 1's leader.
     first, _ = wait_leader(groups[0])
@@ -153,7 +194,14 @@ def main():
     rows = [(i % 17, i, i % 7, i) for i in range(1, 3001)]
     with c.cursor() as cur:
         for start in range(0, len(rows), 250):
-            cur.executemany("INSERT INTO t VALUES (%s,%s,%s,%s)", rows[start:start + 250])
+            for attempt in range(40):
+                try:
+                    cur.executemany("INSERT INTO t VALUES (%s,%s,%s,%s)", rows[start:start + 250])
+                    break
+                except pymysql.MySQLError as e:  # vinyl admission, before any effect
+                    if e.args[0] != 1205 or "Vinyl" not in str(e.args[1]) or attempt == 39:
+                        raise
+                    time.sleep(min(0.5, 0.05 * (attempt + 1)))
 
     stop, writes, errors = threading.Event(), [0], []
 
@@ -185,25 +233,55 @@ def main():
         except pymysql.MySQLError as e:
             alter["error"] = list(e.args)
 
-    crashed = None
-    threads = [threading.Thread(target=writer), threading.Thread(target=run_alter)]
+    # A leader change in another step of the ALTER (BUILD, PREPARE) fails
+    # it with 2003 or 1213 for the client to retry, as documented; its job
+    # aborts, which retires the incarnation. Such an attempt before the
+    # scan reached the hook is retried, with the hook on shard 2's leader
+    # of the time.
+    TRANSIENT = (1213, 2003, 2013)
+    threads = [threading.Thread(target=writer)]
+    retried = []
     try:
-        r = rpc(victim, "tarn_test_hook", ["lazy_bootstrap", "hold"])
-        assert r[0] == "ok", r
         threads[0].start()
         time.sleep(.3)
-        threads[1].start()
-        deadline = time.monotonic() + 60
-        while True:
-            if time.monotonic() >= deadline or "error" in alter:
-                fail("the scan never reached the hook", alter)
+        for attempt in range(4):
+            if attempt:
+                settle()
+                victim, state = wait_leader(groups[1])
+                assert Path(state["cwd"]).parent.name == work.name
+                owned_pid = int((work / (Path(state["cwd"]).name + ".pid")).read_text())
+                assert owned_pid == state["pid"]
+            r = rpc(victim, "tarn_test_hook", ["lazy_bootstrap", "hold"])
+            assert r[0] == "ok", r
+            alter.clear()
+            threads.append(threading.Thread(target=run_alter))
+            threads[-1].start()
+            deadline = time.monotonic() + 60
+            reached = False
+            while time.monotonic() < deadline and "error" not in alter:
+                try:
+                    # (waits up to 5 s on the node, as long as the call may take)
+                    if rpc(victim, "tarn_test_hook", ["lazy_bootstrap", "reached"])[1] > 0:
+                        reached = True
+                        break
+                except RuntimeError as e:
+                    if "timed out" not in str(e):
+                        raise
+            if reached:
+                break
+            # (1105 "storage error 217": a step a new leader rolled back.)
+            transient = "error" in alter and (alter["error"][0] in TRANSIENT or alter["error"][0] == 1105
+                                              and str(alter["error"][1]).startswith("storage error 217:"))
+            if not transient or attempt == 3:
+                fail("the scan never reached the hook", {"alter": alter, "retried": retried})
+            retried.append(alter["error"])
+            record("alter_retried", error=alter["error"])
             try:
-                # (waits up to 5 s on the node, as long as the call may take)
-                if rpc(victim, "tarn_test_hook", ["lazy_bootstrap", "reached"])[1] > 0:
-                    break
-            except RuntimeError as e:
-                if "timed out" not in str(e):
-                    raise
+                rpc(victim, "tarn_test_hook", ["lazy_bootstrap", "release"])
+            except Exception:  # the old leader may be down
+                pass
+            threads[-1].join(timeout=30)
+        threads[1:] = [threads[-1]]
         before = writes[0]
         building = ev(victim, "return tarn.lazy.building()")
         assert building, "the scan is held, yet no online build is recorded"
@@ -230,24 +308,77 @@ def main():
         for t in threads:
             if t.is_alive():
                 t.join(timeout=30)
+    if any(t.is_alive() for t in threads):
+        fail("the writer or the ALTER did not stop", {"alter": alter, "writes": writes[0]})
     assert writes[0] > before, "no write succeeded after the crash"
-    survivors = [first, replacement]
-    wait_empty(survivors, timeout=30)
-    q(c, "SET tarn_lazy_read_your_writes=ON")
-    mismatches = []
-    for k in range(9):
+
+    def drained():
+        """The shards' current leaders, once their outboxes are empty: found
+        again on each try, since a leader may have changed during the build,
+        and a follower's copy of an outbox can be empty while its leader
+        still ships."""
+        deadline = time.monotonic() + 30
+        while True:
+            leaders = [wait_leader(g, exclude=crashed)[0] for g in groups]
+            samples = [rpc(n, "tarn_lazy_stats", []) for n in leaders]
+            if all(r[0] == "ok" and r[1]["depth"] == 0 and r[1]["inflight"] == 0 and r[1]["reserved_entries"] == 0
+                   for r in samples) and [wait_leader(g, exclude=crashed)[0] for g in groups] == leaders:
+                return leaders
+            if time.monotonic() >= deadline:
+                fail("the leaders' outboxes did not drain", samples)
+            time.sleep(.05)
+
+    def compare(k):
+        """A strong read on each side of the lazy one: None when the two
+        strong reads differ, a write the crash left in flight still landing."""
         sql = f"SELECT tenant_id,id,n FROM t WHERE k={k} ORDER BY n,id"
         q(c, "SET tarn_lazy_consistency='strong'")
-        strong = q(c, sql)
+        first = q(c, sql)
         q(c, "SET tarn_lazy_consistency='eventual'")
         lazy_reads = stat(c, "Tarn_lazy_reads")
         got = q(c, sql)
         assert stat(c, "Tarn_lazy_reads") == lazy_reads + 1, "the read did not use the lazy index"
-        if got != strong:
-            mismatches.append({"k": k, "strong": len(strong), "lazy": len(got)})
+        q(c, "SET tarn_lazy_consistency='strong'")
+        if q(c, sql) != first:
+            return None
+        if got == first:
+            return {}
+        return {"k": k, "strong": len(first), "lazy": len(got), "extra": sorted(set(got) - set(first))[:3],
+                "missing": sorted(set(first) - set(got))[:3],
+                "duplicated": sorted(r for r in set(got) if got.count(r) > 1)[:3]}
+
+    q(c, "SET tarn_lazy_read_your_writes=ON")
+    # A mismatch must hold with the table still and the outboxes empty, on
+    # three tries in a row: a write left in flight can land after the
+    # writer stops, and its delivery after the outboxes were seen empty.
+    unstable, mismatches, tries = 0, [], 0
+    while tries < 3:
+        leaders = drained()
+        results = [compare(k) for k in range(9)]
+        if any(r is None for r in results):
+            unstable += 1
+            if unstable > 20:
+                fail("the table kept changing after the writer stopped", unstable)
+            time.sleep(.5)
+            continue
+        mismatches = [r for r in results if r]
+        if not mismatches:
+            break
+        tries += 1
+        time.sleep(.5)
+    live = [n for g in groups for n in g["replicas"] if n != crashed and alive(n)]
+    healer_stop.set()
     record("checked", writes=writes[0], during_alter=after - before, write_errors=len(errors),
-           error_codes=sorted({e[0] for e in errors}), mismatches=mismatches)
-    assert not mismatches, mismatches
+           error_codes=sorted({e[0] for e in errors}), mismatches=mismatches, unstable_reads=unstable,
+           mismatched_tries=tries, healed=healed, alter_retried=retried)
+    if mismatches:
+        for node in live:
+            try:
+                stats = json.dumps(rpc(node, "tarn_lazy_stats", []))
+            except Exception as e:  # not answering
+                stats = repr(e)
+            print("FAIL lazy online outbox:", node, "leader" if node in leaders else "follower", stats, flush=True)
+        fail("the lazy index differs from the table", mismatches)
     c.close()
     print("RF3/fsync online lazy build survives an owned leader crash mid-scan; lazy equals strong", flush=True)
 

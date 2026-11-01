@@ -94,6 +94,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An online lazy-index build no longer fails its ALTER when a shard's leader
+  changes during it. A start, scan batch or publication that the new leader
+  rolled back took no effect, and now returns 1213, which the gateway sends
+  again (it returned "storage error 217"). The waits for the scan's
+  deliveries and the publication are also sent again on a transient refusal
+  (1213, 2003, 2013, storage admission), and so is a step refused for the
+  Vinyl memory quota, for up to a minute each
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
 - A lazy read of many rows no longer exhausts the statement's memory
   budget (1041) where the strong read succeeds. Each candidate page and
   each recheck stayed charged until the statement ended. Now each is

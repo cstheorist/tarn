@@ -228,7 +228,15 @@ class T:
             payload = b'x' * (64 * 1024)
             with c.cursor() as cur:
                 for i in range(1, 161):
-                    cur.execute("INSERT INTO t_policy_budget VALUES (%s,%s,%s,%s,%s)", (i % 11, i, 7, i, payload))
+                    for attempt in range(40):
+                        try:
+                            cur.execute("INSERT INTO t_policy_budget VALUES (%s,%s,%s,%s,%s)",
+                                        (i % 11, i, 7, i, payload))
+                            break
+                        except pymysql.MySQLError as e:  # vinyl admission, before any effect
+                            if e.args[0] != 1205 or "Vinyl" not in str(e.args[1]) or attempt == 39:
+                                raise
+                            time.sleep(min(0.5, 0.05 * (attempt + 1)))
             self.caught_up(c)
             sql = "SELECT id FROM t_policy_budget WHERE k=7 ORDER BY n,id"
             self.consistency(c, sql, "eventual")
