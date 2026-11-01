@@ -8,16 +8,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `bench/strong_kv_summary.py` summarizes a matched SQL / strong KV / raw
-  native read study: per batch/clients cell and path, key throughput,
-  operation p99, requests and bytes to storage, client protocol bytes and CPU
-  per key, and strong KV against SQL paired by trial. The SQL phase now reads
-  its gateway's storage counters, so SQL's requests to storage are counted
-  like the KV clients' own. `docs/strong-kv.md` publishes the measured tables
-  for memtx and vinyl, and the qualification's new `measurements` scope runs
-  just the two measurement cohorts
-  ([#181](https://github.com/cstheorist/tarn/issues/181)).
-
 - `ALTER TABLE ... ADD INDEX ... COMMENT 'tarn:lazy'` builds the new lazy
   index while the table's writes go on, when the change leaves the columns
   the index reads as they are. A short drain turns on capture of the
@@ -39,6 +29,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the bucket stays, and a session's read-your-writes catch-up follows
   the bucket once it has moved
   ([#182](https://github.com/cstheorist/tarn/issues/182)).
+
+- `bench/strong_kv_summary.py` summarizes a matched SQL / strong KV / raw
+  native read study: per batch/clients cell and path, key throughput,
+  operation p99, requests and bytes to storage, client protocol bytes and CPU
+  per key, and strong KV against SQL paired by trial. The SQL phase now reads
+  its gateway's storage counters, so SQL's requests to storage are counted
+  like the KV clients' own. `docs/strong-kv.md` publishes the measured tables
+  for memtx and vinyl, and the qualification's new `measurements` scope runs
+  just the two measurement cohorts
+  ([#181](https://github.com/cstheorist/tarn/issues/181)).
 
 - Every 1412 ("Table definition has changed") that does not come from a
   schema change's own steps is logged at info level with its origin: a
