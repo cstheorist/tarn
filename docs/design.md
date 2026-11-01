@@ -1920,8 +1920,11 @@ gone, and the bucket is copied again), the job's phase `flip`, then
 `tarn_bucket_send` and `tarn_bucket_recv`. Every step can be repeated, and
 the steps that change a bucket's state run one at a time on a shard. A
 server that finds the job abandoned finishes it (`ddl_job_stale`): forward
-from `flip`, else back -- S first, which refuses to give the bucket back
-once it has sent it (then R takes it over); only then R. A driver gives a
+from `flip`; back from `abort`; else forward from the copy's durable
+cursor, and back if a step fails (a replica of either shard down, the
+receiving shard short of disk), as a driver gives a move up whose step
+failed. Back is S first, which refuses to give the bucket back once it has
+sent it (then R takes it over); only then R. A driver gives a
 move up only when it knows the job is not at `flip`: when the reply to its
 write of the phase is lost it reads the job again, and leaves it to a
 takeover if it cannot. The job is kept alive through whichever node leads
@@ -1950,6 +1953,12 @@ of the last copy), and a driver that gave a move up when the reply to its
 write of `flip` was lost left a job that no takeover could finish. The
 storage tests hold each step's commit at a quorum through a map read, and
 `movefaults.sh` has a takeover find the move given up on S after `flip`.
+Since takeovers resume the copy (bounded movement), one whose step failed
+before the send left the move half done, and took it over again every
+`ddl_job_stale` until the step could succeed: a move of the failover test
+that met a killed replica stayed so for good (#221). Such a takeover now
+gives the move up; `movefaults.sh` has the receiving shard refuse every
+step after the driver died.
 
 ### 2.13 Adding and removing shards
 
@@ -2200,7 +2209,7 @@ throughput measurements:
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks (also between transactions on two SQL servers, and a cycle of three), no deadlock-detector calls without lock waits, locks of a failed lock request released with its transaction, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), a UNION ALL of SKIP LOCKED reservations (every unit free or held once while carts reserve and release), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, primary-key point writes locked and read in one step, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 28/28 |
 | `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back); tables created through one server used at once through the other while schema changes reload the catalog; writes going on while `ADD INDEX` builds on a vinyl table of 300,000 rows | 8/8 |
 | `tests/sql/movetest.py` | bucket moves under load: two SQL servers run serializable transfers with a ledger, READ COMMITTED read-modify-writes and autocommit increments of counters, serializable audits and READ COMMITTED reads of every shard, while one of them moves the buckets of those rows back and forth: no transfer lost or applied twice, no increment lost, audits exact, every READ COMMITTED scan sees each row once | about 190 moves in 30 s, every check holds; also on vinyl tables read from disk |
-| `tests/movefaults.sh` | the SQL server driving a move killed while it copies, while its fence drains, after its flip before the send, and after the send before the receive, and after its flip with the move given up on the sending shard (test hooks hold the steps; the server is started again after each); another server finishes the job (`ddl_job_stale` = 2 s) | 41/41: given up in the first two cases and the last, finished in the third and fourth, each within 3 s; rows checked through SQL and on the shards |
+| `tests/movefaults.sh` | the SQL server driving a move killed while it copies, while its fence drains, after its flip before the send, and after the send before the receive, after its flip with the move given up on the sending shard, and while it copies with the receiving shard then refusing every step (test hooks hold the steps; the server is started again after each); another server finishes the job (`ddl_job_stale` = 2 s) | 49/49: resumed and finished in the first two cases, finished in the third and fourth, given up in the last two, each within 3 s; rows checked through SQL and on the shards |
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload, READ COMMITTED transfers and `movetest.py` (buckets moving through the leader changes): leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
 | `tests/bucketcount.sh` | the number of buckets a SQL server gives the map it makes: the configured `bucket_count`; 3,000 on shards that have tables but no map (a cluster made before bucket moves, simulated by removing the map and restarting the nodes); 30,000 on a new cluster; each time the shards' ranges and, with rows, their bucket ids, reads by key and writes | 20/20 |
 | `tests/ddlfaults.sh` | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with shard 2 down, and with shard 2 killed while a test hook holds its APPLY; the abandoned jobs are finished by the SQL server (`ddl_job_stale` = 2 s) | 6/6: rolled back with the shard down (the table on no shard, or unchanged), rolled forward when killed while applying; checked on each shard directly |

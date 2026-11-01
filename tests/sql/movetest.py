@@ -77,6 +77,8 @@ class Test:
                       "err": [], "audits": 0, "rc_reads": 0, "bad": [], "moves": 0, "move_errs": [],
                       "rc_ok": 0, "rc_conflict": 0, "inc_ok": [], "inc_amb": []}
         self.seqs = {}   # the last ledger id of each transfer thread, across workload windows
+        self.t0 = time.time()
+        self.history = {}   # bucket -> [(seconds into the test, seconds taken, target shard, outcome)]
 
     def check(self, cond, what):
         print(f"  {'ok  ' if cond else 'FAIL'} {what}")
@@ -258,13 +260,17 @@ class Test:
         while time.time() < stop:
             b = rnd.choice(self.buckets)
             to = rnd.choice(self.shard_ids)
+            t = time.time() - self.t0
             try:
                 r = q(c, f"TARN MOVE BUCKET {b} TO SHARD {to}")
                 with self.lock:
                     self.stats["moves"] += r
+                    self.history.setdefault(b, []).append((t, time.time() - self.t0 - t, to,
+                                                           "moved" if r else "there already"))
             except pymysql.MySQLError as e:
                 with self.lock:
                     self.stats["move_errs"].append(str(e))
+                    self.history.setdefault(b, []).append((t, time.time() - self.t0 - t, to, str(e)))
                 try:
                     c.ping()
                 except pymysql.MySQLError:
@@ -371,6 +377,17 @@ class Test:
         self.check(not bad, f"no increment lost or applied twice (id, n, ok, unknown): {bad[:5]}")
         self.check(st["commit"] > 0 and st["rc_ok"] > 0, "transfers and increments committed")
         self.check(not moving, f"no move left half done: {moving}")
+        if moving:
+            # How those moves were left: what each shard has of the buckets,
+            # and the last moves of them the test made.
+            stuck = sorted({int(m.split()[0]) for m in moving})
+            print(f"  at {time.time() - self.t0:.1f} s:")
+            for r in rows:
+                mine = [m for m in filter(None, r[4].split(", ")) if int(m.split()[0]) in stuck]
+                print(f"    shard {r[0]}: {', '.join(mine) or 'none of them in a move'}")
+            for b in stuck:
+                for t, took, to, outcome in self.history.get(b, [])[-4:]:
+                    print(f"    bucket {b} at {t:.1f} s, to shard {to} ({took:.1f} s): {outcome[:300]}")
         return self.failures
 
 

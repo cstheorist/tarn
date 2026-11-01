@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """A bucket move whose SQL server dies (issue #24) is finished by another
-server from its durable page cursor, including before the flip. Run by
-tests/movefaults.sh, which starts a 2-shard cluster with three SQL servers,
-test hooks and ddl_job_stale = 2 s.
+server from its durable page cursor, including before the flip, or given up
+when it cannot go on before the send. Run by tests/movefaults.sh, which
+starts a 2-shard cluster with three SQL servers, test hooks and
+ddl_job_stale = 2 s.
 
 The server driving a move is killed while a test hook holds one of its
 steps, and started again after each case:
@@ -17,7 +18,11 @@ steps, and started again after each case:
 5. after the flip, before the send, and the sending shard has given the
    move up (as a server does that gives a move up when the reply to its
    write of the flip is lost): another server gives it up on the receiving
-   shard too, and ends the job.
+   shard too, and ends the job;
+6. while the move copies the bucket, and the receiving shard then refuses
+   every step (as when its disk is short, or a replica of a shard is down
+   and the shards refuse to begin a move): another server gives the move
+   up, and the bucket stays where it was.
 
 Each case checks the rows (through SQL and on the shards, none left aside on
 the receiving shard), that the bucket takes writes where it ends up, and
@@ -153,8 +158,10 @@ class Test:
 
     def common_checks(self, label, want_shard):
         owners = self.wait_settled(self.b)
-        self.check(owners == [want_shard], f"{label}: bucket {self.b} is on shard {want_shard} alone, no move or job left",
-                   (owners, self.where(self.b), self.jobs()))
+        moving, jobs = self.where(self.b)[1], self.jobs()
+        self.check(owners == [want_shard] and not moving and jobs == 0,
+                   f"{label}: bucket {self.b} is on shard {want_shard} alone, no move or job left",
+                   (owners, moving, jobs))
         n = self.sql(0, "SELECT COUNT(*), SUM(v) FROM t WHERE k = 1")[0]
         self.check(n[0] == 200 and int(n[1]) == sum(range(200)), f"{label}: its 200 rows, through SQL", n)
         on = [self.rows_on(0), self.rows_on(1)]
@@ -221,6 +228,18 @@ class Test:
             r = self.lua(si, f"return tarn_bucket_send_abort({self.b}, '{mid}')")
             self.check(mid != "null" and '"ok"' in r, "the sending shard gives the move up", (mid, r))
         self.killed_at("given up after the flip", si, "bucket_send", other, s, give_up_on_s)
+        print("6. ... while it copies, and the receiving shard refuses to go on")
+        reserve = []
+
+        def refuse_on_receiver():
+            # (the largest reserve the limits take: no disk has room for it)
+            reserve.append(self.lua(other - 1, "local old = tarn.cfg.move_disk_reserve_bytes "
+                                               "tarn.cfg.move_disk_reserve_bytes = 9007199254740991 return old"))
+        try:
+            self.killed_at("given up when it cannot go on", si, "bucket_rows", other, s, refuse_on_receiver)
+        finally:
+            if reserve:
+                self.lua(other - 1, f"tarn.cfg.move_disk_reserve_bytes = {reserve[0]} return true")
         return self.failures
 
 
