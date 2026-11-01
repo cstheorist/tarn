@@ -81,6 +81,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A statement reading two or more shards is no longer refused by its memory
+  budget (1041) just because its shards' reads overlapped. Each concurrent
+  read reserves a whole reply (16 MiB) before it is sent; with a full page
+  decoded from each of two shards, the second shard's next read was refused
+  whenever the first shard's was still reserved, and went through when it
+  was not. Such a reservation now waits while another read of the statement
+  holds one (for at most `read_timeout_ms`), and a read whose reply has
+  arrived keeps only twice the reply's size reserved. A statement is
+  refused when what it keeps leaves no room for one read
+  ([#238](https://github.com/cstheorist/tarn/issues/238)).
+
 - A storage node's restart no longer keeps a memtx MVCC transaction story,
   300 to 400 bytes, per recovered row of a memtx table with a secondary
   index that precedes another memtx table with rows: about 380 MiB for a
