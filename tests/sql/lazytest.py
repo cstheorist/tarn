@@ -434,11 +434,16 @@ class T:
         # flip while the bucket's lazy delivery is pending, and the session
         # keeps waiting for the obligation meanwhile; once delivery resumes
         # the move goes through, and catch-up then follows the bucket to its
-        # new owner for the session's next write too.
+        # new owner for the session's next write too. (Tenant 90001, so
+        # that the bucket that moves holds this test's rows alone: tenant
+        # 1's bucket holds the first row of every table the other suites
+        # made, which a move of it reads from disk on vinyl, and later
+        # tests' writes would wait for a move slowed down by that.)
+        tenant = 90001
         with self.table("t_move") as c, self.c() as admin:
             sql = "SELECT id FROM t_move WHERE k=7 ORDER BY id"
             count = ev(self.nodes[0], "return box.space._tarn_meta:get{'buckets'}.value.count")
-            bucket = bucket_of(1, count)
+            bucket = bucket_of(tenant, count)
             shard = {n: ev(n, "return box.space._tarn_meta:get{'shard_id'}.value") for n in self.nodes}
 
             def owner():
@@ -456,14 +461,14 @@ class T:
                 else:
                     raise AssertionError("catch-up returned before the session's obligation was delivered")
 
-            q(c, "INSERT INTO t_move VALUES (1,1,7,1,'a')")
+            q(c, "INSERT INTO t_move VALUES (%s,1,7,1,'a')", (tenant,))
             self.caught_up(c)
             assert self.lazy(c, sql) == ((1,),)
             source = owner()
             target = next(s for s in shard.values() if s != source)
             pause(self.nodes)
             try:
-                q(c, "INSERT INTO t_move VALUES (1,2,7,2,'b')")
+                q(c, "INSERT INTO t_move VALUES (%s,2,7,2,'b')", (tenant,))
                 q(c, "SET SESSION tarn_lazy_wait_timeout=0")
                 catch_up_refused()
                 # The source drains the bucket's delivery before it flips.
@@ -483,7 +488,7 @@ class T:
             assert self.lazy(c, sql) == ((1,), (2,))
             pause(self.nodes)
             try:
-                q(c, "INSERT INTO t_move VALUES (1,3,7,3,'c')")
+                q(c, "INSERT INTO t_move VALUES (%s,3,7,3,'c')", (tenant,))
                 q(c, "SET SESSION tarn_lazy_wait_timeout=0")
                 catch_up_refused()
             finally:
