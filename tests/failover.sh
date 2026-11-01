@@ -42,16 +42,25 @@ check_alive() {
   [ -n "$dead" ] && echo "$(date +%T) NOT RUNNING:$dead"
 }
 
-# Instances that stopped although the test did not kill them, with the end
-# of their logs: why they stopped.
+# Instances that stopped although the test did not kill them, with why. A
+# crash shows its signal and first frames: the end of a crash log holds only
+# the outer frames, below the ones that say where it crashed (issue #160).
+# Otherwise the end of the log.
+CRASH_SIGNAL='^(Segmentation fault|Aborted|Bus error|Illegal instruction|Floating point exception)'
 stopped_on_their_own() {
-  local f n
+  local f n at
   for f in "$DIR"/s*.pid; do
     n=$(basename "$f" .pid)
     kill -0 "$(cat "$f")" 2>/dev/null && continue
     [ -e "$DIR/$n.killed" ] && continue
-    echo "--- $n stopped on its own; the end of $n.log:"
-    tail -12 "$DIR/$n.log"
+    at=$(grep -n -E "$CRASH_SIGNAL" "$DIR/$n.log" | tail -1 | cut -d: -f1)
+    if [ -n "$at" ]; then
+      echo "--- $n crashed; its signal and first frames:"
+      tail -n "+$at" "$DIR/$n.log" | grep -E "$CRASH_SIGNAL|^  (code|addr): |^#[0-9]+ " | head -n 16
+    else
+      echo "--- $n stopped on its own; the end of $n.log:"
+      tail -12 "$DIR/$n.log"
+    fi
   done
 }
 
