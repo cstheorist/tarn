@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `bench/resource_overhead.py` compares one workload's goodput, tail
+  latency and memory with the SQL resource budgets in force and out of
+  reach, under identical admission. On a two-shard cluster, with every
+  result checked:
+  - p99 is the same within noise;
+  - goodput is about 2% lower with the budgets on memtx, and not
+    measurably on vinyl.
+
+  The SQL server's idle RSS, about 30 MiB, is outside the managed budget
+  ([#134](https://github.com/cstheorist/tarn/issues/134)).
+
 - `ALTER TABLE ... ADD INDEX ... COMMENT 'tarn:lazy'` builds the new lazy
   index while the table's writes go on, when the change leaves the columns
   the index reads as they are. A short drain turns on capture of the
