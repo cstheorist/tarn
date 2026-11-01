@@ -66,6 +66,10 @@ is never blindly replayed. A safe read/validation conflict remains
 Storage frames for gateway connections are capped at **8 MiB**, checked from
 the length prefix before payload reservation. This allows the normal 4 MiB
 pager target and a boundary row; a larger single row is refused on reads.
+A transaction's later reads of a shard (plain IPROTO SELECT, which counts
+rows, not bytes) ask for no more rows than the table's widest rows fit in
+4 MiB; reads of rows that nothing bounds use the storage procedures, which
+cut pages by size.
 Each active read reserves 16 MiB plus its encoded arguments before dispatch,
 covering buffer growth. A query has one to four concurrent read slots,
 derived from its byte limit, so small batched joins wait for their own wire
@@ -135,6 +139,23 @@ does not return, at several times their stored size. Raise `query_bytes`
 (and `server_bytes` for concurrent sessions) for larger statements. The
 tables are in [bench/resources](../bench/resources/README.md#scale-study).
 
+
+## The cost of the limits
+
+`bench/resource_overhead.py` runs one workload of point reads, short
+ranges, counts and single-row updates with the defaults in force and with
+limits no statement reaches, under identical admission. On a two-shard
+cluster:
+
+- p99 latency is the same within noise;
+- goodput is lower by about 2% on memtx and not measurably on vinyl;
+- nothing is refused.
+
+The accounting runs in both, so this measures the limits, not the
+accounting. The SQL server's idle RSS (about 30 MiB) is outside the managed
+budget. Under the load, RSS grew by about 20 MiB while the meter admitted
+over 200 MiB. See [bench/resources](../bench/resources/README.md#goodput-and-tail-latency-budgets-in-force-and-out-of-reach).
+
 ## Monitoring and verification boundaries
 
 `SHOW STATUS` reports `Tarn_resource_bytes`, `Tarn_resource_peak_bytes`,
@@ -158,9 +179,9 @@ output, with three failing mutation controls. It does not prove concrete
 allocation sizes or scheduling. The Verus crate is unchanged. Runtime tests
 cover accounting/refunds, stable heap selection, an abandoned established
 read, exact MariaDB comparisons, oversized scans/joins/groups/offsets,
-filtered scans of more pages than the budget holds, no partial DML,
-explicit-transaction cleanup, slow consumers, binary long data, work caps
-and concurrent overload.
+filtered scans of more pages than the budget holds (also repeated in a
+transaction), no partial DML, explicit-transaction cleanup, slow consumers,
+binary long data, work caps and concurrent overload.
 
 `tests/sql/resourcefaults.py` reads back what each failure left, with the
 native procedures and with the Lua ones:

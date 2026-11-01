@@ -275,6 +275,14 @@ column, of the same type and collation, before and after the change
    scan done. The remaining deliveries must arrive within the bootstrap
    timeout (at most 60 s). READY and APPLY then publish the index.
 
+A leader change during the build does not fail the ALTER. A start, batch or
+READY whose commit the new leader rolled back took no effect and returns
+1213. The gateway sends a step again, for up to a minute, when it is refused
+with 1213 or for storage admission or the Vinyl memory quota, or when its
+shard has no reachable leader or its connection was lost. Every step is
+idempotent: a repeated start finds capture on, and a repeated batch is
+refused unless the cursor is still the one it read.
+
 Bucket moves on the source or destination shard wait (1205) while an
 online build runs there: a bucket that moved before the scan reached its
 rows would leave them out. A move already in progress delays the start.
@@ -312,8 +320,10 @@ existing rows and waits for their baseline assignments to be durably
 acknowledged. The per-shard ALTER scan limit applies (1846). An
 instant-added column is first materialized using its committed fill and
 layout rules. A lazy index also has a local index on each shard, which
-serves strong reads. Vinyl builds that index in BUILD while writes go on;
-memtx builds it in PREPARE, behind the fence, as for any index.
+serves strong reads. On an unreplicated shard, vinyl builds that index in
+BUILD while writes go on. Memtx, and vinyl on a replicated shard, build it
+in PREPARE behind the fence, as for any index ([design](design.md),
+issue #263).
 
 A baseline assignment takes the counter of its row's bucket, read before
 the row, as its sequence. Any value up to the counter would do: every

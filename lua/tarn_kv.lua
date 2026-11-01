@@ -11,6 +11,7 @@ local uri = require('uri')
 
 local M = {}
 local MAX_KEYS, KEY_BYTES, REPLY_BYTES = 128, 64 * 1024, 1024 * 1024
+local DESCRIBED = 1024 -- tables whose descriptions are kept (#249)
 local CONSISTENCY = 'independent_points'
 local FUNCTIONS = {'tarn_kv_v1.meta', 'tarn_kv_v1.get', 'tarn_kv_v1.get_many'}
 
@@ -153,20 +154,33 @@ function M.new(c)
         end)
         if box.is_in_txn() then fail('read_error', 'ACL probe left an unexpected transaction') end
     end
-    local function definition(name)
+    local function catalog_row(name)
         box.begin{txn_isolation = 'read-confirmed'}
         local ok, row = pcall(function() return box.space._tarn_catalog:get{name} end)
         box.rollback()
         if not ok then error(row) end
-        if row == nil then schema_changed() end
-        return row.def
+        return row
     end
-    local function describe(db, name, uid)
-        local canonical = db .. '.' .. name
-        local def = definition(canonical)
-        local sp = box.space[def.id]
-        if sp == nil or sp.name ~= canonical or def.name ~= canonical then schema_changed() end
-        acl(sp.id, uid) -- Do not disclose a definition merely because CALL was granted.
+    -- Descriptions by table name (#249). One stays valid while the
+    -- confirmed catalog row is the same tuple (a definition change writes a
+    -- new one; holding it keeps its address from being reused), the schema
+    -- version is unchanged (space and index changes bump it) and box.space
+    -- holds the same space object. The caller's ACL, the space's
+    -- synchronous mode and the definition fence are checked on every use.
+    -- At most DESCRIBED tables are kept: past that the cache starts over.
+    local described, described_n = {}, 0
+    local function forget(canonical)
+        if described[canonical] ~= nil then
+            described[canonical], described_n = nil, described_n - 1
+        end
+    end
+    local function remember(canonical, d)
+        forget(canonical)
+        if described_n >= DESCRIBED then described, described_n = {}, 0 end
+        described[canonical], described_n = d, described_n + 1
+    end
+    local function build(db, name, canonical, row, sp)
+        local def = row.def
         if type(def.json) ~= 'string' or #def.json == 0 then
             fail('unsupported', 'KV v1 requires a SQL table definition')
         end
@@ -227,7 +241,39 @@ function M.new(c)
                        definition = digest.sha256_hex(def.json),
                        layout = digest.sha256_hex(msgpack.encode({sp.engine, format, primary}))}
         return {token = token, json = def.json, format = format, primary = primary,
-                route = route, space = sp, generation = c.guard(sp.id, ver)}
+                route = route, space = sp, row = row, canonical = canonical}
+    end
+    local function describe(db, name, uid)
+        local canonical = db .. '.' .. name
+        local version = box.info.schema_version
+        local row = catalog_row(canonical)
+        local d, sp = described[canonical], nil
+        if row == nil then
+            forget(canonical)
+            schema_changed()
+        end
+        if d ~= nil and d.row == row and d.version == version and box.space[d.token.sid] == d.space then
+            sp = d.space
+        else
+            d = nil
+            local def = row.def
+            sp = box.space[def.id]
+            if sp == nil or sp.name ~= canonical or def.name ~= canonical then schema_changed() end
+        end
+        acl(sp.id, uid) -- Do not disclose a definition merely because CALL was granted.
+        if d == nil then
+            forget(canonical)
+            d = build(db, name, canonical, row, sp)
+            d.version = version
+            remember(canonical, d)
+        else
+            c.fresh.space(sp)
+        end
+        -- A request's own copy: it records the generation it began with.
+        local t = {}
+        for k, v in pairs(d) do t[k] = v end
+        t.generation = c.guard(sp.id, d.token.ver)
+        return t
     end
     local function owner()
         local s = c.topology()
@@ -249,6 +295,23 @@ function M.new(c)
             schema_changed()
         end
         return current
+    end
+    -- After a point's read, the check before the next one: nothing between
+    -- the two yields. The caller's ACL, the definition fence, DDL holds and
+    -- stale metadata are checked as in check_table. A changed catalog row,
+    -- schema version or space object takes the full check; the control
+    -- spaces and the space's synchronous mode, which the point's own read
+    -- checks, are left to the checks when the request begins and ends.
+    local function recheck(t, uid, deadline)
+        checkpoint(deadline)
+        if t.version ~= box.info.schema_version or box.space[t.token.sid] ~= t.space
+           or catalog_row(t.canonical) ~= t.row then
+            local current = check_table(t, uid, deadline)
+            t.row, t.version = current.row, current.version
+            return
+        end
+        acl(t.token.sid, uid)
+        if c.guard(t.token.sid, t.token.ver, true) ~= t.generation then schema_changed() end
     end
     local function key(value, t)
         if array(value, KEY_BYTES) ~= #t.primary then fail('bad_request', 'A complete primary key is required') end
@@ -346,10 +409,14 @@ function M.new(c)
         if #msgpack.encode(keys) > KEY_BYTES then fail('limit_exceeded', 'KV v1 encoded keys exceed 64 KiB') end
         local result = success(t)
         result.slots = {}
+        -- The reply's exact encoded size so far: the slots array's header
+        -- grows from one byte to three at 16 slots (at most 128 here).
+        local size = #msgpack.encode(result) - 1
+        -- Each point's read is checked after it, and that check is the next
+        -- point's check before (nothing between them yields). The first
+        -- point follows the table's description and ownership check above.
         for i, value in ipairs(keys) do
             checkpoint(deadline)
-            check_table(t, uid, deadline)
-            check_owner(req.ownership)
             local b = bucket(value, t, req.ownership.bucket_count)
             -- Numeric bucket routing checks actual ownership. An epoch
             -- route alone would skip BK.bad even if it contained a list.
@@ -361,14 +428,17 @@ function M.new(c)
             if type(r[2]) ~= 'table' or #r[2] > 1 or r[3] ~= nil and r[3] ~= box.NULL then
                 fail('read_error', 'Incomplete guarded point response')
             end
-            check_table(t, uid, deadline)
+            recheck(t, uid, deadline)
             check_owner(req.ownership)
             local tuple = r[2][1]
             if tuple ~= nil and tuple:bsize() > REPLY_BYTES then
                 fail('limit_exceeded', 'KV v1 stored tuple exceeds 1 MiB')
             end
-            result.slots[i] = {position = i, key = value, status = tuple ~= nil and 'present' or 'missing', tuple = tuple}
-            bounded(result) -- Includes key echoes, framing and the final tuple.
+            local slot = {position = i, key = value, status = tuple ~= nil and 'present' or 'missing', tuple = tuple}
+            result.slots[i] = slot
+            -- Includes key echoes, framing and the final tuple.
+            size = size + #msgpack.encode(slot)
+            if size + (i < 16 and 1 or 3) > REPLY_BYTES then fail('limit_exceeded', 'KV v1 reply exceeds 1 MiB') end
         end
         check_table(t, uid, deadline)
         check_owner(req.ownership)

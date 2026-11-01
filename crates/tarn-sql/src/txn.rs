@@ -1698,6 +1698,24 @@ pub async fn resolve(
 /// the page ended (issue #77).
 pub const PAGE_ROWS: u32 = 4096;
 
+/// The bytes a page of a storage read aims at (`scan_page_bytes` of
+/// lua/tarn.lua): half the SQL server's storage frame cap.
+pub const PAGE_BYTES: u64 = crate::budget::STORAGE_REPLY_BYTES as u64 / 2;
+
+/// How many rows a plain IPROTO SELECT of `t` asks for, for a read of at
+/// most `limit` rows: no more than surely fit in `PAGE_BYTES`, since such a
+/// select cuts its page by count alone (`TableDef::max_tuple_bytes`). None
+/// when no count serves: a read of more than one row whose size nothing
+/// bounds, which goes to the procedures that cut pages by size.
+pub fn plain_rows(t: &TableDef, limit: Option<u32>) -> Option<u32> {
+    let want = limit.unwrap_or(u32::MAX).min(PAGE_ROWS);
+    match t.max_tuple_bytes().map(|m| PAGE_BYTES / m.max(1)) {
+        Some(fit) if fit > 0 => Some(want.min(fit.min(u64::from(PAGE_ROWS)) as u32)),
+        _ if want <= 1 => Some(want),
+        _ => None,
+    }
+}
+
 /// One page of a storage read: its rows and, when the read goes on, where
 /// the next page starts (an opaque MessagePack value, passed back as is).
 pub type Page = (Vec<Row>, Option<Vec<u8>>);
@@ -2126,13 +2144,17 @@ pub async fn select_rows(
     crate::observe::read(route);
     // Unbounded point/prefix lookups inside a running stream transaction use
     // plain IPROTO SELECT; a full page goes on after its last tuple (which
-    // tarn_select takes as a position too). (Nothing checks their bucket
-    // here: the transaction's validation does, as they are in its read set.)
+    // tarn_select takes as a position too). Such a select cuts its page by
+    // count alone, so it asks for no more rows than surely fit in a page
+    // (`plain_rows`), and a read of rows that nothing bounds goes to the
+    // procedures below, which cut pages by size (#259). (Nothing checks
+    // their bucket here: the transaction's validation does, as they are in
+    // its read set.)
     let mut raw_space_missing = false;
-    if end.is_none() && !lock_check && !begin && after.is_none() {
+    let plain = plain_rows(t, limit).filter(|_| end.is_none() && !lock_check && !begin && after.is_none());
+    if let Some(n) = plain {
         let mut k = Mp::new();
         k.vals(key);
-        let n = limit.unwrap_or(u32::MAX).min(PAGE_ROWS);
         let (reply, _wire) = crate::budget::select_read(client, stream, t.space_id, index, iter, 0, n, &k.0).await?;
         match reply {
             Ok(r) => {
@@ -3015,6 +3037,71 @@ mod tests {
         };
         def.space_id = 512;
         *def
+    }
+
+    fn table_of(sql: &str) -> TableDef {
+        use crate::catalog::Catalog;
+        use crate::plan::Stmt;
+        use crate::planner::{plan, PlanCtx};
+
+        let catalog = Catalog::default();
+        let cx = PlanCtx {
+            statistics: None,
+            catalog: &catalog,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { def, .. } = plan(sql, &cx).unwrap() else {
+            panic!()
+        };
+        *def
+    }
+
+    /// A plain SELECT cuts its page by count alone: it asks for no more
+    /// rows than the table's widest rows fit in a page (#259).
+    #[test]
+    fn a_plain_select_asks_for_no_more_rows_than_fit_in_a_page() {
+        // Rows of at most 1 KiB keep pages of 4096 rows.
+        let small = table_of(
+            "CREATE TABLE t (id INT PRIMARY KEY, k INT NOT NULL, c CHAR(120) NOT NULL, pad CHAR(60) NOT NULL)",
+        );
+        assert_eq!(small.max_tuple_bytes(), Some(5 + 9 + 9 + 9 + 485 + 245));
+        assert_eq!(plain_rows(&small, None), Some(PAGE_ROWS));
+        assert_eq!(plain_rows(&small, Some(10)), Some(10));
+        assert_eq!(plain_rows(&small, Some(0)), Some(0));
+        // Rows of up to 8 KiB: as many as fit in 4 MiB.
+        let wide = table_of("CREATE TABLE t (id INT PRIMARY KEY, s VARCHAR(2000) NOT NULL)");
+        let max = wide.max_tuple_bytes().unwrap();
+        assert_eq!(max, 5 + 9 + 9 + 8005);
+        let n = plain_rows(&wide, None).unwrap();
+        assert_eq!(u64::from(n), PAGE_BYTES / max);
+        assert!(u64::from(n) * max <= PAGE_BYTES && u64::from(n + 1) * max > PAGE_BYTES);
+        assert_eq!(plain_rows(&wide, Some(100)), Some(100));
+        // An indexed case-insensitive column has a weight field as well.
+        let ci = table_of(
+            "CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(100) COLLATE utf8mb4_unicode_ci NOT NULL, KEY (name))",
+        );
+        assert!(ci.columns[1].weight.is_some());
+        assert_eq!(ci.max_tuple_bytes(), Some(5 + 9 + 9 + 405 + 16 * 100 + 5));
+        // Rows that nothing bounds: plain for one row only.
+        for sql in [
+            "CREATE TABLE t (id INT PRIMARY KEY, body TEXT)",
+            "CREATE TABLE t (id INT PRIMARY KEY, b BLOB)",
+            "CREATE TABLE t (id INT PRIMARY KEY, j JSON)",
+        ] {
+            let t = table_of(sql);
+            assert_eq!(t.max_tuple_bytes(), None, "{sql}");
+            assert_eq!(plain_rows(&t, Some(1)), Some(1), "{sql}");
+            assert_eq!(plain_rows(&t, Some(2)), None, "{sql}");
+            assert_eq!(plain_rows(&t, None), None, "{sql}");
+        }
+        // A dropped column's field keeps the old rows' values.
+        let mut dropped = small.clone();
+        dropped.dropped.push(5);
+        assert_eq!(dropped.max_tuple_bytes(), None);
+        assert_eq!(plain_rows(&dropped, None), None);
     }
 
     fn join_reply(slot: bool, complete: bool) -> Bytes {

@@ -137,6 +137,26 @@ impl SqlType {
         matches!(self.base, BaseType::Char | BaseType::VarChar | BaseType::Text)
     }
 
+    /// The most bytes a stored value of this type takes in a tuple
+    /// (MessagePack, header included), or None when the type bounds
+    /// nothing (TEXT, BLOB, JSON, ENUM, SET). CHAR and VARCHAR count four
+    /// bytes a character (utf8mb4); a length the definition leaves out
+    /// counts as 255.
+    pub fn max_stored_bytes(&self) -> Option<u64> {
+        use BaseType::*;
+        let len = u64::from(self.len.unwrap_or(255));
+        Some(match self.base {
+            TinyInt | SmallInt | MediumInt | Int | BigInt | Bool | Year | Float | Double => 9,
+            // MP_EXT decimal: its header, scale and up to 65 digits of BCD.
+            Decimal => 48,
+            // Their text: at most 26 characters (a DATETIME's microseconds).
+            Date | DateTime | Timestamp | Time => 32,
+            Char | VarChar => 4 * len + 5,
+            Binary | VarBinary => len + 5,
+            Text | Blob | Json => return None,
+        })
+    }
+
     /// Tarantool field type used in the space format.
     pub fn tarantool_type(&self) -> &'static str {
         use BaseType::*;

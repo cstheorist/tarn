@@ -32,6 +32,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   million rows per shard with a writer
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
+- `bench/resource_overhead.py` compares one workload's goodput, tail
+  latency and memory with the SQL resource budgets in force and out of
+  reach, under identical admission. On a two-shard cluster, with every
+  result checked:
+  - p99 is the same within noise;
+  - goodput is about 2% lower with the budgets on memtx, and not
+    measurably on vinyl.
+
+  The SQL server's idle RSS, about 30 MiB, is outside the managed budget
+  ([#134](https://github.com/cstheorist/tarn/issues/134)).
+
 - The generated MySQL contracts page (`docs/mysql-contracts.md`) lists the
   lazy-index contracts with the release manifest, each with its regression
   tests, from `tests/contracts/lazy-index.json`. A new entry,
@@ -40,6 +51,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the bucket stays, and a session's read-your-writes catch-up follows
   the bucket once it has moved
   ([#182](https://github.com/cstheorist/tarn/issues/182)).
+
+- `bench/strong_kv_summary.py` summarizes a matched SQL / strong KV / raw
+  native read study: per batch/clients cell and path, key throughput,
+  operation p99, requests and bytes to storage, client protocol bytes and CPU
+  per key, and strong KV against SQL paired by trial. The SQL phase now reads
+  its gateway's storage counters, so SQL's requests to storage are counted
+  like the KV clients' own. `docs/strong-kv.md` publishes the measured tables
+  for memtx and vinyl, and the qualification's new `measurements` scope runs
+  just the two measurement cohorts
+  ([#181](https://github.com/cstheorist/tarn/issues/181)).
 
 - Every 1412 ("Table definition has changed") that does not come from a
   schema change's own steps is logged at info level with its origin: a
@@ -105,6 +126,61 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Inside a transaction, a read of a shard it had already read no longer
+  asks for 4096 rows in one page whatever their size. Such a read (a scan,
+  or a non-unique prefix) used plain IPROTO SELECT, which cuts pages by
+  count alone. 4096 rows of over 2 KiB exceeded the 8 MiB storage frame, so
+  the statement failed with 1041 ("storage reply exceeds 8 MiB") whatever
+  the budgets. Narrower wide rows made pages of up to 8 MiB, twice the pager
+  target, which the default 64 MiB budget refused for a filtered scan. Such a
+  read now asks for no more rows than the table's widest rows fit in 4 MiB.
+  Reads of rows that TEXT, BLOB, JSON or dropped columns leave unbounded go
+  to the procedures that cut pages by size
+  ([#259](https://github.com/cstheorist/tarn/issues/259)).
+
+- An online lazy-index build no longer fails its ALTER when a shard's leader
+  changes during it. A start, scan batch or publication that the new leader
+  rolled back took no effect, and now returns 1213, which the gateway sends
+  again (it returned "storage error 217"). The waits for the scan's
+  deliveries and the publication are also sent again on a transient refusal
+  (1213, 2003, 2013, storage admission), and so is a step refused for the
+  Vinyl memory quota, for up to a minute each
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
+- An online lazy-index build also rides out a leader change in the middle
+  of its start, a scan batch or its publication. Such a step found its
+  replica read-only at its write, which changed nothing, but returned the
+  refusal as an error status, so the ALTER failed with 1105 ("storage error
+  7"). It now raises ER_READONLY, as every other storage procedure does,
+  and the SQL server sends it to the new leader
+  ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
+- A secondary index that ALTER TABLE adds to a vinyl table of a replicated
+  shard no longer misses rows. Tarantool's vinyl index build waits for the
+  transactions already in the WAL, not for their quorum. A synchronous write
+  that changed a row before the build began, and still waited for its
+  quorum, was neither in the build's read view nor caught by its trigger.
+  So the new index lacked the row's new key, and reads through it missed
+  the row: a strong read of a lazy index's columns, for one. Replicated
+  shards now build such indexes in PREPARE, behind the fence, once the
+  table's commits have drained; writes to the table wait for the build.
+  Unreplicated shards still build while writes go on
+  ([#263](https://github.com/cstheorist/tarn/issues/263)).
+
+- ALTER TABLE no longer stops a replicated shard's replicas when it builds
+  an index on a vinyl table while the shard takes writes. A replica applies
+  the build, which ends with a vinyl dump that waits for every synchronous
+  transaction the replica holds prepared until its CONFIRM arrives. The
+  leader wrote the build's DDL row behind any write still waiting for its
+  quorum, of any table, so the replica waited for a CONFIRM queued behind
+  the row it was applying and never applied another row. With both
+  followers stopped, the leader lost its quorum and resigned, and the shard
+  could stay without a leader. While it builds a vinyl index, a replicated
+  shard's leader now lets one synchronous transaction at a time reach the
+  WAL, each once the ones before it are confirmed; writes to the shard go
+  on, slower, until the build ends. Engine changes build their shadow's
+  indexes the same way ([#254](https://github.com/cstheorist/tarn/issues/254)).
+
 - A scan whose WHERE the SQL server evaluates (one it cannot push to the
   shards) is now charged for the rows it keeps, not for every page it reads.
   Each page stayed charged until the statement ended, so a scan of 50,000
@@ -117,12 +193,40 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completes with the exact result or is refused with 1041: none returns a
   clipped result ([#134](https://github.com/cstheorist/tarn/issues/134)).
 
+- A replicated shard no longer stays without a leader while the only
+  replicas that could win its election do not stand. This happened when a
+  leader resigned under strict fencing holding a transaction its followers
+  never received. It refused their votes, and each of their failed
+  elections restarted its election timer, so it never stood. Every
+  candidate now stands itself after `TARN_ELECTION_WATCHDOG` seconds
+  without a leader (default three election timeouts, 15 s), if it receives
+  from a quorum of its replica set. `tarn_info().stats.election_stands`
+  counts these. `lua/test/election_watchdog_test.lua` covers when a
+  replica stands. `tests/election.sh` checks on a shard of three replicas
+  that none stands while the shard has a leader, nor without its quorum
+  ([#254](https://github.com/cstheorist/tarn/issues/254)).
+
 - A lazy read of many rows no longer exhausts the statement's memory
   budget (1041) where the strong read succeeds. Each candidate page and
   each recheck stayed charged until the statement ended. Now each is
   refunded once its candidates are rechecked, and the lazy limit counts
   kept rows at the memory they are charged, so a large result falls back
   to the strong read ([#247](https://github.com/cstheorist/tarn/issues/247)).
+
+- A strong KV read (`tarn_kv_v1.get`, `get_many`) no longer describes its
+  table again before and after every key: decoding the catalog row and its
+  JSON, comparing format and key, and computing two SHA-256 digests each
+  time. A request describes the table once, reusing a description while the
+  catalog row, schema version and space are unchanged, and between points
+  rechecks the caller's READ access, the definition fence, DDL holds and
+  ownership. The reply's size is counted as slots are added instead of
+  encoding the whole reply after each one. On one RF1 node with nothing
+  else running, a 32-key `get_many` fell from about 210 to 70 µs per key,
+  and a single-key request from about 650 to 310 µs (medians of three). In
+  CI's matched study (RF3, 16 clients, batches of 32), strong KV now reads
+  18,300 keys/s on memtx and 9,020 on vinyl, 1.9 and 2.0 times SQL's rate,
+  where it read 3,910 and 3,980 before (`docs/strong-kv.md`)
+  ([#249](https://github.com/cstheorist/tarn/issues/249)).
 
 - A statement reading two or more shards is no longer refused by its memory
   budget (1041) just because its shards' reads overlapped. Each concurrent
