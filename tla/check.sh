@@ -117,6 +117,7 @@ DEFAULT="$DEFAULT ReplicatedVinylBuild Bug_VinylBuildBesidePending Bug_VinylBuil
 DEFAULT="$DEFAULT ReplicatedBuildFence Bug_BuildFenceNoQuorumWait Bug_BuildFenceNoCommitCheck Tradeoff_BuildFenceRowCutOff"
 DEFAULT="$DEFAULT ShadowUnique Bug_ShadowUniqueFailOnDirtyHolder Bug_ShadowUniqueEvictClean Bug_ShadowUniqueTailInPlace"
 DEFAULT="$DEFAULT Bug_ShadowUniquePassHolderOldSet Bug_ShadowUniquePassInPlace"
+DEFAULT="$DEFAULT PlanGuardScalar PlanGuardBatch Bug_PlanGuardSkipSpace Bug_PlanGuardYield"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

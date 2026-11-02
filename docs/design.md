@@ -1762,6 +1762,14 @@ step is now split (lua/tarn.lua "Yields"):
    -- the lock-index updates and the start of `box.commit()`, which
    prepares the transaction before it waits for the WAL.
 
+The final planned-write guard obtains the current replication mode while
+checking the control spaces, then checks every planned space with that mode.
+This value belongs only to that nonyielding invocation: it is never retained
+through a data access, quorum wait or later request. Independent space guards
+still inspect the current mode themselves. Clock, writable and per-space
+checks keep their order; this removes repeated metadata inspection, not a
+freshness barrier or a commit round trip (#186).
+
 The step's atomic action in the model is at the second part: the checks see
 the state the commit is prepared in, and the reads are still current then
 (else MVCC aborts it). Local commits also register as in flight before the
