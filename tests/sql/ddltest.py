@@ -1236,7 +1236,9 @@ function tarn_alter_build(name,a,gen)
  local r=h.old(name,a,gen)
  if name=='ddltest.bigt' and r[1]=='ok' and #(a.builds or {})>0 then
   local sp=assert(box.space[name]); h.built=true
-  for _,b in ipairs(a.builds) do h.built=h.built and sp.index[b[1]]~=nil end
+  -- (A copy, index_build=copy, builds them on the new space instead.)
+  local target=type(a.engine_change)=='table' and assert(box.space[a.def.id]) or sp
+  for _,b in ipairs(a.builds) do h.built=h.built and target.index[b[1]]~=nil end
   h.no_drop_hold=box.space._tarn_meta:get{'hold:'..sp.id}==nil
   h.key=require('key_def').new(sp.index[0].parts):extract_key(sp.index[0]:min())[1]
   h.reached=true

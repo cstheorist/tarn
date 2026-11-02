@@ -320,9 +320,11 @@ in memory.
 second session inserting 100 rows a second into another table, ran on 2
 shards × 3 replicas with `wal_mode = 'fsync'`. All six storage nodes, the
 SQL server and the client shared one 2-CPU host. Results are in
-`bench/results_build_wait_rf3_*.json`. A replicated shard builds the index
-behind the fence on either engine. Each follower then builds it again in
-its applier, which acknowledges nothing until it finishes (issue #267).
+`bench/results_build_wait_rf3_*.json`. These runs built the index in place:
+a replicated shard builds it behind the fence on either engine, and each
+follower then builds it again in its applier, which acknowledges nothing
+until it finishes (issue #267). A cluster with replicated shards now
+copies the table for such a change instead (below).
 
 | Engine | Rows per shard | ALTER | Longest write to the table | Longest write to the other table | Leader changes |
 |---|---:|---:|---:|---:|---|
@@ -342,6 +344,26 @@ ALTER itself returned 1180 and completed in the background twice of two on
 vinyl and once of two on memtx; its APPLY is now sent again for up to a
 minute instead. In every run, each shard's new index held exactly its
 rows.
+
+The same runs at 200,000 rows per shard, with the copy that now builds such
+an index (`index_build = auto`) and, for comparison on the same code, in
+place (`in_place`); results in `bench/results_build_copy_rf3_*.json` and
+`bench/results_build_in_place_rf3_*.json`:
+
+| Engine | Build | ALTER | Writes to the table during it (longest) | Writes to the other table during it (longest) | Leader changes |
+|---|---|---:|---|---|---|
+| vinyl | in place | 7.5 s | 22, 28 refused (0.21 s) | 63, 16 refused (0.18 s) | both shards |
+| vinyl | copy | 22.7 s | 1,137 (0.30 s) | 1,149 (0.06 s) | none |
+| memtx | in place | 3.8 s | 5 (3.84 s) | 39, 4 refused (0.15 s) | both shards |
+| memtx | copy | 18.6 s | 661 (0.37 s) | 1,068 (0.08 s) | none |
+
+The copy takes longer, since every row goes through the WAL and
+replication in batches of 128, but writes to both tables went on
+throughout, none was refused, and no write waited longer than 0.37 s: the
+table's writes wait only behind the final fence, which rereads the keys
+written during the copy and publishes the new space. Each shard's WAL grew
+by about 4 MB during the copy, and by about 0.25 MB in place. Each shard's
+new index held exactly its rows.
 
 Other changes build the index behind PREPARE's fence: an index on a column
 the ALTER adds or retypes, a backfill, an engine change, and any change on

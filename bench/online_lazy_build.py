@@ -338,6 +338,9 @@ def wait_published(c, timeout):
 
 # Each shard's new plain index holds as many entries as the table has rows.
 PLAIN_COUNT = """
+-- A vinyl count scans; rows a copy just wrote are all in memory, where the
+-- scan does not yield: allow it longer than a fiber slice.
+require('fiber').set_slice({warn = 60, err = 600})
 local sp = box.space[...]
 local idx = sp.index.lk
 return {rows = sp.index[0]:count(), entries = idx and idx:count() or box.NULL}

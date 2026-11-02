@@ -1566,8 +1566,12 @@ idempotent steps per shard (lua/tarn.lua "Schema changes"):
    synchronous transaction at a time (`replication_synchro_queue_max_size`
    = 1). Each, the DDL included, reaches the WAL only once the ones before
    it are confirmed. Writes to the shard's other tables go on, one in
-   flight at a time, until the build ends. Engine changes build their
-   shadow's indexes the same way.
+   flight at a time, until the build ends. Engine changes create their
+   shadow's indexes the same way, while the shadow is still empty.
+   On a cluster with replicated shards, a change whose storage work is new
+   secondary indexes copies the table instead of building them in place
+   (§2.11, issue #267): no replica then builds an index on a populated
+   space, and the fence covers only the copy's last pass.
    An index on an instant-added column with a non-NULL fill is deferred to
    PREPARE instead: its stored field (or collation weight field) must be
    physically present in every existing tuple. Otherwise the native index
@@ -1781,18 +1785,35 @@ sees, while its write here is missing from the snapshot.
 
 **Schema changes.** On an unreplicated shard, `ALTER TABLE` builds a vinyl
 table's new indexes before it fences the table's writes (§2.10), so an
-`ADD INDEX` on a large table does not hold its writes for hours. A
-replicated shard builds them behind the fence instead, because Tarantool's
-vinyl build can miss a write still waiting for its quorum, and a replica
-applying the build can stop behind one for good (issues #263 and #254).
-There, writes to the table wait for the build however long it takes (it is
-not bounded by `tarn.cfg.alter_check_rows`), and the shard's other
-synchronous writes go one at a time. Each follower then builds the index
-again in its applier, which acknowledges nothing until it finishes, so
-the shard's synchronous writes wait for the first follower to finish. A
+`ADD INDEX` on a large table does not hold its writes for hours. On a
+replicated shard an index built in place costs twice. The leader builds it
+behind the fence, because Tarantool's vinyl build can miss a write still
+waiting for its quorum, and a replica applying the build can stop behind
+one for good (issues #263 and #254). And each follower builds the index
+again in its applier, which acknowledges nothing until it finishes: the
+shard's synchronous writes wait for the first follower to finish, and a
 build that takes the followers more than twice `replication_timeout`
-makes the leader resign under strict fencing (issue #267). A build the
-leader had started would still commit on it after it resigned, since
+makes the leader resign under strict fencing (issue #267).
+
+So on a cluster with replicated shards, a change whose storage work is new
+secondary indexes -- with drops and renames of others, but no change of
+columns, checks or the table's name, and no global or lazy index --
+copies the table instead, through the engine change's copy below, in the
+table's own engine. The new space gets every index while it is empty, and
+the rows reach it in ordinary batches, which followers apply and
+acknowledge at once. The final fence rereads only the keys written during
+the copy. The copy needs room for a second copy of the table until the
+change is published, and writes every row once more through the WAL and
+replication. `index_build` in `cluster.json` decides: `auto` (the default)
+copies on a cluster with replicated shards, `copy` always does, and
+`in_place` never does; a replica that does not answer, or predates the
+copy, makes the change build in place.
+
+Built in place on a replicated shard, writes to the table wait for the
+build however long it takes (it is not bounded by
+`tarn.cfg.alter_check_rows`), the shard's other synchronous writes go one
+at a time, and the followers' builds hold them longer, as above. A
+build the leader had started would still commit on it after it resigned, since
 Tarantool checks that a node is writable only as a statement starts: an
 asynchronous DDL row the replica set never gets, which splits the old
 leader from it (issue #271). So before each further build the leader
@@ -1820,14 +1841,25 @@ payload is replayed. Capture is installed before a prefix drain. Capture
 loss or a term change before PREPARED discards the incomplete baseline and
 starts a new copy generation.
 
-The shadow has only its primary index during the online copy. A final
-persistent hold/fence drains old work, including decided APPLY, then
-rereads dirty keys as confirmed values or deletes. Only afterward are the
-actual secondary indexes, including their sparse native IDs, built and
-fresh global/lazy copies filled. This avoids a false uniqueness failure
-when an unfinished shadow still holds a unique key its source row gave
-up. The final fence can include long index builds. PREPARED certifies that
-complete image; APPLY and restart retain it rather than recopying it.
+The shadow gets its secondary indexes, including their sparse native IDs,
+while it is empty, before the first page (issue #267): no replica builds an
+index on a populated space, and the final fence builds none. A unique
+index on the shadow can meet a stale copy during the copy: a row whose key
+a write has touched since it was copied may still hold, in the shadow, a
+value another row has taken. When a page's row has a unique value that the
+copy of such a row holds, that copy leaves the shadow and the page's row
+goes in; the dirty row comes back in the final pass. When the holder is the
+copy of an untouched row, the change fails with 1062, since both rows held
+the value in the confirmed source the page came from (only a unique index
+the change adds can meet that). So the copy adds no key to the final pass:
+only writes do, within the capture's limits. A final persistent hold/fence
+drains old work, including decided APPLY. Then every dirty key
+leaves the shadow before the dirty keys' confirmed rows go back in, so a
+conflict there is a duplicate in the fenced source (1062); putting the
+dirty rows back one at a time would meet stale copies, as when two rows
+swap values (`tla/ShadowUnique.tla`). Fresh global/lazy copies are filled
+behind the fence. PREPARED certifies that complete image; APPLY and
+restart retain it rather than recopying it.
 
 The global job's confirmed APPLY decision precedes native renames and
 catalog publication. Recovery uses the explicit old/new IDs even if a
@@ -2271,7 +2303,7 @@ throughput measurements:
 
 | Suite | Engine-change boundary | Recorded result |
 |---|---|---|
-| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup | 75 checks with actual native ABI 8; 74 with native disabled; both engine directions |
+| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup; same-engine rebuilds (issue #267): indexes before the first row, stale copies evicted for a page's row, swapped unique values, shared values behind one stale copy, NULL in a unique key's last part, duplicates found by the copy and at the fence (1062), copies and final passes past their call's deadline, drops and renames | 118 checks with the native module; 116 with native disabled; both engine directions |
 | `lua/test/engine_terminal_test.lua` | a detached shadow commit remains tracked after its caller ends; cleanup waits for the terminal/native queue cut; capture allocation failure cannot certify a lost tail | focused native-terminal fault gate, separate from process loss |
 | `lua/test/engine_replication.sh` | quorum-2/fsync replica sets: leader loss during copy forces recopy; a later leader loss preserves PREPARED and completes publication/cleanup | passes in both engine directions, with native enabled and disabled; eight owned leader terminations across four cohorts |
 
@@ -2290,6 +2322,7 @@ throughput measurements:
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload, READ COMMITTED transfers and `movetest.py` (buckets moving through the leader changes): leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
 | `tests/election.sh` | one shard of 3 replicas with an election watchdog period of 1 s: a leader for 4 s, then both followers stopped and resumed | no replica stands while there is a leader; the leader resigns without its quorum and does not stand without it; a leader again within 10 s of the followers' return |
 | `tests/vinylbuild.sh` | one shard of 3 replicas with fsync: ALTER TABLE adds three indexes to a vinyl table of 20,000 rows while 16 writers insert into another vinyl table | every replica applies the builds and the rows after them within 15 s; writes go on during the builds and after them; each index holds every row on every replica |
+| `tests/indexcopy.sh` | 2 shards of 3 replicas with fsync, through SQL: ALTER TABLE adds an index and a unique index to a memtx and to a vinyl table of 30,000 rows, which it copies (§2.11), while one session updates the table and another inserts into a second table; a duplicate fails ADD UNIQUE INDEX; an engine change follows | no election term changes; writes go on and none fails; every replica holds the same rows and indexes, each index every row; the new unique index refuses a duplicate; the failed change leaves its table as it was and no copy behind |
 | `tests/bucketcount.sh` | the number of buckets a SQL server gives the map it makes: the configured `bucket_count`; 3,000 on shards that have tables but no map (a cluster made before bucket moves, simulated by removing the map and restarting the nodes); 30,000 on a new cluster; each time the shards' ranges and, with rows, their bucket ids, reads by key and writes | 20/20 |
 | `tests/ddlfaults.sh` | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with shard 2 down, and with shard 2 killed while a test hook holds its APPLY; the abandoned jobs are finished by the SQL server (`ddl_job_stale` = 2 s) | 6/6: rolled back with the shard down (the table on no shard, or unchanged), rolled forward when killed while applying; checked on each shard directly |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection; on a memtx table through the native procedure and through `tarn_autocommit`, and on a vinyl table | the client gets 1180 (outcome unknown), the row is incremented exactly once |
@@ -2376,17 +2409,17 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineBuildCallerOnlyCut | violates PreparedImage | 2058 | 4782 | 13 | 00s | 13 |
 | Bug_EngineBuildKeepPrefix | violates PreparedImage | 764 | 1673 | 9 | 00s | 9 |
 | Bug_EngineBuildReusePage | violates PreparedImage | 747 | 1651 | 10 | 00s | 10 |
-| Bug_EngineCopyBeforeCapture | violates PreparedImage | 6274 | 18783 | 11 | 00s | 11 |
-| Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 3122 | 8315 | 12 | 00s | 12 |
-| Bug_EngineCopyLosePersistentFence | violates PreparedImage | 2534 | 6856 | 11 | 00s | 11 |
-| Bug_EngineCopyLostCaptureContinues | violates PreparedImage | 6447 | 18399 | 15 | 00s | 15 |
-| Bug_EngineCopyPrepareWithoutIndexes | violates PreparedImage | 1354 | 3342 | 9 | 00s | 9 |
-| Bug_EngineCopyRebuildPrepared | violates PreparedImage | 2534 | 6856 | 11 | 00s | 11 |
-| Bug_EngineCopySkipFinalDrain | violates PreparedImage | 4006 | 11372 | 13 | 00s | 13 |
-| Bug_EngineCopySkipPrefixDrain | violates PreparedImage | 4048 | 11203 | 12 | 00s | 12 |
-| Bug_EngineCopyStaleBatch | violates PreparedImage | 6254 | 18563 | 17 | 00s | 17 |
-| Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 3881 | 10918 | 13 | 00s | 13 |
-| Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 269 | 542 | 6 | 00s | 6 |
+| Bug_EngineCopyBeforeCapture | violates PreparedImage | 10177 | 33660 | 11 | 01s | 11 |
+| Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 4880 | 14545 | 12 | 01s | 12 |
+| Bug_EngineCopyLosePersistentFence | violates PreparedImage | 3809 | 11417 | 11 | 01s | 11 |
+| Bug_EngineCopyLostCaptureContinues | violates PreparedImage | 12108 | 37911 | 15 | 01s | 15 |
+| Bug_EngineCopyPrepareWithoutIndexes | violates PreparedImage | 1840 | 5023 | 9 | 01s | 9 |
+| Bug_EngineCopyRebuildPrepared | violates PreparedImage | 3809 | 11417 | 11 | 01s | 11 |
+| Bug_EngineCopySkipFinalDrain | violates PreparedImage | 6539 | 20493 | 13 | 01s | 13 |
+| Bug_EngineCopySkipPrefixDrain | violates PreparedImage | 6382 | 19406 | 12 | 01s | 12 |
+| Bug_EngineCopyStaleBatch | violates PreparedImage | 11291 | 38236 | 17 | 01s | 17 |
+| Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 6372 | 19884 | 13 | 01s | 13 |
+| Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 288 | 568 | 6 | 00s | 6 |
 | Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 235 | 742 | 10 | 00s | 10 |
 | Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 322 | 977 | 11 | 00s | 11 |
 | Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 214 | 703 | 10 | 00s | 10 |
@@ -2539,6 +2572,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_RecordPolicyIgnoreHealth | violates NoUnsafeAdmission | 104 | 217 | 7 | 00s | 4 |
 | Bug_RecordPolicyMutablePolicy | violates NoUnsafeAdmission | 407 | 997 | 11 | 00s | 10 |
 | Bug_RecordPolicyNoWatermark | violates NoUnsafeAdmission | 393 | 977 | 12 | 00s | 10 |
+| Bug_ShadowUniqueEvictClean | violates PreparedImage | 83024 | 231635 | 9 | 03s | 9 |
+| Bug_ShadowUniqueFailOnDirtyHolder | violates NoFalseDuplicate | 71776 | 200692 | 9 | 02s | 9 |
+| Bug_ShadowUniqueTailInPlace | violates NoFalseDuplicate | 177216 | 603131 | 13 | 04s | 13 |
 | Bug_StreamCompletionDropReadset | violates NoFracturedCommit | 2798 | 6345 | 14 | 00s | 14 |
 | Bug_StreamCompletionSkipFinalPrefix | violates NoFracturedCommit | 196 | 372 | 8 | 00s | 8 |
 | Bug_StreamMarksCommitInNewTxn | violates CommittedReadsCurrent | 11392 | 22752 | 8 | 01s | 8 |
@@ -2588,7 +2624,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineAlias | no errors | 12 | 13 | 7 | 00s |  |
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
 | EngineBuildReentry | no errors | 1500 | 2946 | 14 | 00s |  |
-| EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
+| EngineCopy | no errors | 9667 | 34257 | 20 | 01s |  |
 | EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |
@@ -2654,6 +2690,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Recov_GC | no errors | 1136892 | 8123071 | 23 | 02min 26s |  |
 | ReplicatedBuildFence | no errors | 135018 | 406180 | 29 | 26s |  |
 | ReplicatedVinylBuild | no errors | 18694 | 28734 | 20 | 01s |  |
+| ShadowUnique | no errors | 183878 | 630707 | 21 | 05s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
 | SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 11min 32s |  |
@@ -2709,7 +2746,10 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   are refused. Dropped columns retain their fields (no space is reclaimed).
   Writes wait during PREPARE and, on memtx or on a replicated shard's
   vinyl table, index building, which no row limit bounds; an unreplicated
-  shard's vinyl indexes build before that wait. On a replicated shard the
+  shard's vinyl indexes build before that wait. On a cluster with
+  replicated shards, a change to secondary indexes alone copies the table
+  instead (§2.11), and needs room for a second copy of it. Other changes
+  that build indexes on a replicated shard still build in place, where the
   followers' builds also hold the shard's other writes, and a build that
   takes them more than about a second makes the leader resign (#267).
   Checking or materializing existing rows

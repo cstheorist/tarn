@@ -1,5 +1,10 @@
 -- Online physical-engine replacement. EngineCopy/EngineCutover model the
 -- protocol; the source remains authoritative until a confirmed job decision.
+-- The same copy rebuilds a table in its own engine when an ALTER changes
+-- its secondary indexes on a replicated cluster (issue #267): the
+-- replacement gets every index while it is empty, so that followers apply
+-- only DDL on an empty space and ordinary batches of rows, never a long
+-- index build (tla/ShadowUnique.tla for its unique indexes).
 local fiber, clock, mp, uuid = require('fiber'), require('clock'), require('msgpack'), require('uuid')
 local M = {}
 local RC = {txn_isolation = 'read-confirmed'}
@@ -35,12 +40,13 @@ function M.new(c)
     end
     local function bound(a)
         local x = type(a) == 'table' and a.engine_change
+        -- A rebuild keeps the engine; an engine change changes it.
         if type(x) ~= 'table' or type(a.def) ~= 'table'
            or type(x.old_id) ~= 'number' or type(a.def.id) ~= 'number'
            or x.old_id == a.def.id or type(x.old_name) ~= 'string'
            or (x.old_engine ~= 'memtx' and x.old_engine ~= 'vinyl')
            or (a.def.engine ~= 'memtx' and a.def.engine ~= 'vinyl')
-           or x.old_engine == a.def.engine or a.def.name ~= x.old_name then
+           or (x.old_engine == a.def.engine) ~= (x.rebuild == true) or a.def.name ~= x.old_name then
             fail(1210, 'Malformed engine-change descriptor')
         end
         return x
@@ -93,6 +99,12 @@ function M.new(c)
     local function ready(deadline)
         if not q.ready() then cut(deadline) end
     end
+    -- A wait's deadline: the ALTER's lock wait timeout from now. The copy
+    -- and the final tail take as long as the table needs, a page or a batch
+    -- per transaction, so a cut or drain after them gets a deadline of its
+    -- own rather than what is left of the call's: past that, a cut that
+    -- meets one commit in flight on the node fails at once (1205).
+    local function within(a) return clock.monotonic() + (a.timeout or 50) end
     local function snapshot(sp)
         local indexes = {}
         for id, ix in pairs(sp.index) do
@@ -110,6 +122,62 @@ function M.new(c)
         table.sort(indexes, function(a, b) return a.id < b.id end)
         if #indexes == 0 or indexes[1].id ~= 0 then fail(1412, 'Engine source has no primary index') end
         return {format = sp:format(), indexes = indexes}
+    end
+    -- A rebuild's native schema: the source's indexes, less the ones the
+    -- ALTER drops and under the names it gives, plus the ones it adds. The
+    -- primary index stays, so captured keys and copied rows share one key.
+    local function rebuilt(sp, a)
+        local s, drop, names, ids, out = snapshot(sp), {}, {}, {}, {}
+        for _, id in ipairs(a.drop or {}) do drop[id] = true end
+        for _, rn in ipairs(a.renames or {}) do names[rn[1]] = rn[2] end
+        if drop[0] or type(a.builds) ~= 'table' or #a.builds == 0 then
+            fail(1210, 'Malformed engine-rebuild descriptor')
+        end
+        for _, ix in ipairs(s.indexes) do
+            if not drop[ix.id] then
+                ix.name = names[ix.id] or ix.name
+                out[#out + 1], ids[ix.id] = ix, true
+            end
+        end
+        for _, b in ipairs(a.builds) do
+            if type(b) ~= 'table' or type(b[1]) ~= 'number' or b[1] < 1 or ids[b[1]]
+               or type(b[2]) ~= 'string' or type(b[4]) ~= 'table' then
+                fail(1210, 'Malformed engine-rebuild index')
+            end
+            out[#out + 1] = {id = b[1], name = b[2], type = 'tree', unique = b[3] == true, parts = b[4]}
+            ids[b[1]] = true
+        end
+        table.sort(out, function(p, q) return p.id < q.id end)
+        s.indexes = out
+        return s
+    end
+    -- Unique secondary indexes of the replacement, by id.
+    local function uniques(sp)
+        local out = {}
+        for id, ix in pairs(sp.index) do
+            if type(id) == 'number' and id ~= 0 and ix.unique then out[#out + 1] = id end
+        end
+        table.sort(out)
+        return out
+    end
+    -- The replacement's row, other than tuple's own, that holds one of its
+    -- unique secondary keys, and that index. A key with a NULL part is no
+    -- one's: Tarantool's nullable unique indexes take any number of them.
+    local function holder(sp, unique, tuple)
+        for _, id in ipairs(unique) do
+            local key = c.key_def(sp.id, id):extract_key(tuple)
+            local null = false
+            for n = 1, #key do if nilish(key[n]) then null = true; break end end
+            if not null then
+                local other = sp.index[id]:get(key)
+                if other ~= nil and c.key_def(sp.id, 0):compare(other, tuple) ~= 0 then
+                    return other, sp.index[id]
+                end
+            end
+        end
+    end
+    local function duplicate(ix)
+        fail(1062, "Duplicate entry for key '" .. ix.name .. "'")
     end
     local function capture_valid(t)
         return t ~= nil and t.valid and t.epoch == E.capture_epoch
@@ -139,6 +207,11 @@ function M.new(c)
         -- no later writer may trust that partially updated volatile set.
         local ok, err = pcall(capture_body, t, sid, old, new)
         if not ok then t.valid = false; error(err) end
+    end
+    -- Whether a write to row's key began since capture t started: else the
+    -- row is the source's still.
+    local function captured(t, sid, row)
+        return t.keys[mp.encode(c.key_def(sid, 0):extract_key(row):totable())] ~= nil
     end
     local function attach(sid)
         local sp = box.space[sid]
@@ -253,6 +326,11 @@ function M.new(c)
             c.create_index(sp, ix.name, {id = ix.id, type = ix.type, unique = ix.unique, parts = ix.parts})
         end
     end
+    -- The replacement gets every index while it is empty (issue #267). A
+    -- follower then applies DDL on an empty space only, and the rows as
+    -- ordinary batches: it never builds an index in its applier, which would
+    -- acknowledge nothing meanwhile and make a leader with strict fencing
+    -- resign. The final fence builds nothing either.
     local function new_shadow(r)
         local sp = box.space[r.new_id]
         if sp ~= nil and (sp.name ~= r.shadow_name or sp.engine ~= r.engine) then
@@ -263,7 +341,7 @@ function M.new(c)
                 is_sync = c.cfg.sync, format = r.schema.format})
         end
         require('tarn_production').readable(sp)
-        schema_index(sp, r.schema.indexes[1])
+        for _, ix in ipairs(r.schema.indexes) do c.writable(); schema_index(sp, ix) end
         return sp
     end
     local function update(a, gen, phases, fn)
@@ -334,7 +412,8 @@ function M.new(c)
             new_id = a.def.id, engine = a.def.engine, ver = a.ver, gen = gen, phase = 'resetting',
             shadow_name = '_tarn_engine_' .. x.old_id .. '_' .. a.def.id,
             retired_name = '_tarn_engine_old_' .. x.old_id .. '_' .. a.def.id,
-            schema = snapshot(sp), cursor = box.NULL, copied = 0, capture = '',
+            schema = x.rebuild and rebuilt(sp, a) or snapshot(sp), rebuild = x.rebuild == true,
+            cursor = box.NULL, copied = 0, capture = '',
             old_aux = old_aux, new_aux = new_aux, old_uix = old_uix}
         transaction(function() replace_record(r) end)
         refresh(); attach(x.old_id)
@@ -379,7 +458,10 @@ function M.new(c)
         repeat
             -- A cut may be lost between successful stages. Nothing sampled
             -- below survives this wait: reread ownership, phase and capture
-            -- only after the terminal-ticket/native prefix is current.
+            -- only after the terminal-ticket/native prefix is current. The
+            -- copy may have run past the call's deadline: another job's cut
+            -- or a capture lost to writes needs a wait of its own here.
+            deadline = within(a)
             ready(deadline)
             r = read(function() return owned(a, gen) end)
             if certified(r) then return {'ok', 'applied'} end
@@ -422,7 +504,23 @@ function M.new(c)
                         local v = owned(a, gen, {copying = true})
                         if not capture_valid(t) or E.tracks[x.old_id] ~= t then fail(1213, 'Engine capture was lost') end
                         local shadow = box.space[v.new_id]
-                        for _, tuple in ipairs(rows) do shadow:replace(tuple) end
+                        local unique, pk = uniques(shadow), c.key_def(shadow.id, 0)
+                        for _, tuple in ipairs(rows) do
+                            -- A copied row that holds one of this row's
+                            -- unique keys: if a write to it began since
+                            -- capture did, its copy may be stale and leaves
+                            -- the replacement (the row's key is captured, so
+                            -- the final pass puts it back). Otherwise both
+                            -- rows held the key in the confirmed source this
+                            -- page was read from.
+                            local other, ix = holder(shadow, unique, tuple)
+                            while other ~= nil do
+                                if not captured(t, x.old_id, other) then duplicate(ix) end
+                                shadow:delete(pk:extract_key(other))
+                                other, ix = holder(shadow, unique, tuple)
+                            end
+                            shadow:replace(tuple)
+                        end
                         v.cursor, v.copied = cursor, v.copied + #rows
                         if #rows == 0 then v.phase = 'copied' end
                         replace_record(v)
@@ -442,7 +540,7 @@ function M.new(c)
         end
         if r.phase == 'preparing' and E.tracks[r.old_id] then E.tracks[r.old_id].valid = false end
         E.build(name, a, gen, deadline)
-        deadline = clock.monotonic() + (a.timeout or 50)
+        deadline = within(a)
         update(a, gen, {copied = true}, function(v)
             v.phase = 'preparing'
             for _, old in ipairs({true, false}) do
@@ -460,26 +558,45 @@ function M.new(c)
         cut(deadline)
         local t = E.tracks[r.old_id]
         if not capture_valid(t) then fail(1213, 'Engine capture was lost before the final tail') end
+        local function held() if not capture_valid(t) then fail(1213, 'Engine capture was lost') end end
+        -- First every captured key leaves the replacement. The rows left
+        -- are ones no write touched since they were copied, so they are the
+        -- source's rows. Then the captured keys' confirmed rows go in: one
+        -- whose unique key another row holds now is a duplicate in the
+        -- fenced source itself (1062). Replacing the captured rows one by one
+        -- instead would meet stale copies, as when two rows swapped keys.
+        for offset = 1, #t.list, 128 do
+            transaction(function()
+                owned(a, gen, {preparing = true})
+                local target = box.space[r.new_id]
+                for i = offset, math.min(offset + 127, #t.list) do target:delete(t.list[i]) end
+            end, held)
+            c.hook('engine_tail'); fiber.sleep(0)
+        end
         for offset = 1, #t.list, 128 do
             local final = read(function()
                 local out, source = {}, box.space[r.old_id]
                 for i = offset, math.min(offset + 127, #t.list) do
-                    local pk = t.list[i]
-                    out[#out + 1] = {pk, source:get(pk) or false}
+                    out[#out + 1] = source:get(t.list[i])
                 end
                 return out
             end)
             transaction(function()
                 owned(a, gen, {preparing = true})
                 local target = box.space[r.new_id]
-                for _, entry in ipairs(final) do
-                    if entry[2] then target:replace(entry[2]) else target:delete(entry[1]) end
+                local unique = uniques(target)
+                for _, row in ipairs(final) do
+                    local other, ix = holder(target, unique, row)
+                    if other ~= nil then duplicate(ix) end
+                    target:replace(row)
                 end
-            end, function() if not capture_valid(t) then fail(1213, 'Engine capture was lost') end end)
+            end, held)
             c.hook('engine_tail'); fiber.sleep(0)
         end
+        deadline = within(a)
         cut(deadline)
         r = read(function() return owned(a, gen, {preparing = true}) end)
+        -- (Each exists: reset created them before the first row.)
         for _, ix in ipairs(r.schema.indexes) do
             c.writable(); schema_index(box.space[r.new_id], ix)
         end
@@ -601,7 +718,7 @@ function M.new(c)
     end
     function E.body(op, name, a, gen)
         c.writable(); c.bk.fresh()
-        local deadline = clock.monotonic() + (a.timeout or 50)
+        local deadline = within(a)
         ready(deadline); E.fresh()
         if op == 'bootstrap' or op == 'ready' then
             read(function() owned(a, gen, {prepared = true}) end)

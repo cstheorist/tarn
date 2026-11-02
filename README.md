@@ -33,16 +33,19 @@ read them as **key/value**.
   wait for its own writes. Transactions retain the strong local index.
   See [the consistency and operational contract](docs/lazy-indexes.md).
 * **Schema changes.** Ordinary `ALTER TABLE` changes retain existing tuple layouts.
-  Vinyl index builds run online on unreplicated shards. On a replicated
-  shard they run behind the table's write fence, as memtx builds do, and
-  the shard's other synchronous writes go one at a time meanwhile (#263,
-  #254). The followers then build the index again, and a build that takes
-  them more than about a second makes the leader resign (#267). Indexed
-  instant defaults and lazy-index bootstrap use bounded
-  write fences while reads remain available.
+  Vinyl index builds run online on unreplicated shards. On a cluster with
+  replicated shards, a change to secondary indexes alone copies the table
+  into a new space whose indexes exist before its rows, while writes go on,
+  so that no follower builds an index on a populated space (#267). Other
+  changes that build indexes on a replicated shard run behind the table's
+  write fence, as memtx builds do, with the shard's other synchronous writes
+  one at a time meanwhile (#263, #254); the followers then build the index
+  again, and a build that takes them more than about a second makes the
+  leader resign. Indexed instant defaults and lazy-index bootstrap use
+  bounded write fences while reads remain available.
   [Online engine changes](docs/operations.md#online-engine-changes) copy a
   table between memtx and vinyl while writes continue, then fence it for
-  the final tail, index builds and publication.
+  the final tail and publication.
 * **Tarantool storage.** Each shard is a Tarantool replica set with
   synchronous replication and automatic leader election. Tables are hash
   sharded with vshard's bucket function and live in RAM (memtx) or, with

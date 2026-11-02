@@ -60,6 +60,7 @@ for cfg in "$@"; do
     ExternalStrongKV|Bug_KV*) module=ExternalStrongKV.tla ;;
     ReplicatedVinylBuild|Bug_VinylBuild*) module=ReplicatedVinylBuild.tla ;;
     ReplicatedBuildFence|Bug_BuildFence*|Tradeoff_BuildFence*) module=ReplicatedBuildFence.tla ;;
+    ShadowUnique|Bug_ShadowUnique*) module=ShadowUnique.tla ;;
     *) module=MC.tla ;;
   esac
   start=$(date +%s)

@@ -19,6 +19,9 @@
 //! An engine change runs separately from other alterations. It binds the
 //! original physical identity, while the cluster allocates an owned shadow
 //! and fresh auxiliary generations (`EngineCopy` and `EngineCutover`).
+//! The same copy rebuilds a table in its own engine when a change to its
+//! secondary indexes would otherwise build them in place on a replicated
+//! cluster (`rebuild_eligible`, issue #267).
 
 use crate::catalog::{self, Catalog, ColumnDef, Fill, IndexDef, TableDef};
 use crate::mpw::Mp;
@@ -998,6 +1001,9 @@ pub struct EngineChange {
     pub old_ver: u64,
     pub old_engine: catalog::Engine,
     pub old_name: String,
+    /// A rebuild in the same engine, with the change's index builds, drops
+    /// and renames, rather than a change of engine.
+    pub rebuild: bool,
 }
 
 /// The result of `apply`: the new definition and what the shards do.
@@ -1864,6 +1870,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
             old_ver: def.ver,
             old_engine: def.engine,
             old_name: def.space_name(),
+            rebuild: false,
         }),
         format,
         drop,
@@ -1882,6 +1889,35 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
         lazy_drop,
         lazy_new: Vec::new(),
     })
+}
+
+/// Whether change `ch` of `def` can build its new indexes by rebuilding the
+/// table into a new space whose indexes exist before the rows are copied in
+/// (lua/tarn_engine.lua), rather than in place. In place, each replica of a
+/// replicated shard builds an index on a populated space in its applier,
+/// which acknowledges nothing until it finishes: the shard's synchronous
+/// writes wait, and past twice `replication_timeout` the leader resigns
+/// (issue #267). The rebuild takes changes to secondary indexes alone --
+/// new ones, with drops and renames -- of a table without global or lazy
+/// indexes; it keeps the primary key, the stored layout and the name.
+pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
+    let local = |t: &TableDef| t.globals.is_empty() && t.indexes.iter().all(|i| i.global.is_none() && i.lazy.is_none());
+    ch.changed
+        && ch.engine_change.is_none()
+        && !ch.builds.is_empty()
+        && ch.builds.iter().all(|b| b.id != 0)
+        && !ch.drop.contains(&0)
+        && ch.format.is_none()
+        && ch.checks.is_empty()
+        && !ch.materialize
+        && ch.pad.is_none()
+        && ch.rename.is_none()
+        && ch.uix_drop.is_empty()
+        && ch.lazy_drop.is_empty()
+        && ch.def.engine == def.engine
+        && ch.def.space_id == def.space_id
+        && local(def)
+        && local(&ch.def)
 }
 
 fn check_lazy(def: &TableDef, nd: &TableDef) -> SqlResult<Vec<u32>> {
@@ -1967,7 +2003,7 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     m.map(14 + !ch.lazy_drop.is_empty() as usize + ch.engine_change.is_some() as usize);
     if let Some(engine) = &ch.engine_change {
         m.str("engine_change")
-            .map(4)
+            .map(4 + engine.rebuild as usize)
             .str("old_id")
             .uint(engine.old_id as u64)
             .str("old_ver")
@@ -1976,6 +2012,9 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
             .str(engine.old_engine.name())
             .str("old_name")
             .str(&engine.old_name);
+        if engine.rebuild {
+            m.str("rebuild").bool(true);
+        }
     }
     if !ch.lazy_drop.is_empty() {
         m.str("lazy_drop").arr(ch.lazy_drop.len());
@@ -2313,6 +2352,68 @@ mod tests {
     }
 
     const T: &str = "CREATE TABLE t (id INT PRIMARY KEY, a INT, s VARCHAR(10), d DECIMAL(6,2), KEY ka (a))";
+
+    #[test]
+    fn rebuild_takes_secondary_index_changes_alone() {
+        let (def, cat) = table(T);
+        let eligible = |sql: &str| {
+            let ch = alter(&def, &cat, sql).unwrap();
+            rebuild_eligible(&def, &ch)
+        };
+        assert!(eligible("ALTER TABLE t ADD INDEX ks (s)"));
+        assert!(eligible("CREATE INDEX kd ON t (d, a)"));
+        assert!(eligible("ALTER TABLE t ADD UNIQUE INDEX us (s, id)"));
+        assert!(eligible("ALTER TABLE t DROP INDEX ka, ADD INDEX ka (a, s)"));
+        assert!(eligible("ALTER TABLE t ADD INDEX ks (s), RENAME INDEX ka TO ka2"));
+        // Nothing to build: a drop or a rename alone stays in place.
+        assert!(!eligible("ALTER TABLE t DROP INDEX ka"));
+        assert!(!eligible("ALTER TABLE t RENAME INDEX ka TO ka2"));
+        // A new column changes the stored layout.
+        assert!(!eligible("ALTER TABLE t ADD COLUMN n INT, ADD INDEX kn (n)"));
+        // Existing rows are checked against a narrower type.
+        assert!(!eligible("ALTER TABLE t MODIFY a SMALLINT, ADD INDEX ks (s)"));
+        // A renamed table, and a unique key needing a global index.
+        assert!(!eligible("ALTER TABLE t ADD INDEX ks (s), RENAME TO t2"));
+        let (sharded, scat) = table(
+            "CREATE TABLE t (tenant_id INT, id INT, a INT, PRIMARY KEY (tenant_id, id)) PARTITION BY KEY(tenant_id)",
+        );
+        let global = alter(&sharded, &scat, "ALTER TABLE t ADD UNIQUE INDEX ua (a)").unwrap();
+        assert!(!rebuild_eligible(&sharded, &global));
+        let local = alter(&sharded, &scat, "ALTER TABLE t ADD INDEX ka (a)").unwrap();
+        assert!(rebuild_eligible(&sharded, &local));
+        // An engine change is a copy of its own.
+        let engine = alter(&def, &cat, "ALTER TABLE t ENGINE = vinyl").unwrap();
+        assert!(!rebuild_eligible(&def, &engine));
+        // A rebuild's job arguments bind the original identity in its engine.
+        let mut ch = alter(&def, &cat, "ALTER TABLE t ADD INDEX ks (s)").unwrap();
+        ch.engine_change = Some(EngineChange {
+            old_id: def.space_id,
+            old_ver: def.ver,
+            old_engine: def.engine,
+            old_name: def.space_name(),
+            rebuild: true,
+        });
+        let args = lua_args(&ch, 7, 5.0);
+        let mut rd = Rd::new(&args);
+        let mut seen = false;
+        for _ in 0..rd.map().unwrap() {
+            if rd.string().unwrap() == "engine_change" {
+                let n = rd.map().unwrap();
+                assert_eq!(n, 5);
+                let mut fields = std::collections::HashMap::new();
+                for _ in 0..n {
+                    let k = rd.string().unwrap().to_string();
+                    fields.insert(k, rd.raw_value().unwrap().to_vec());
+                }
+                assert_eq!(fields["rebuild"], vec![0xc3]);
+                assert_eq!(fields["old_engine"][1..], *def.engine.name().as_bytes());
+                seen = true;
+            } else {
+                rd.skip().unwrap();
+            }
+        }
+        assert!(seen && rd.buf.is_empty());
+    }
 
     #[test]
     fn indexes_require_stored_non_null_fills() {

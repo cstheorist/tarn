@@ -3,9 +3,12 @@
    protocol. A source write has an unconfirmed interval. Its on_replace
    captures old AND new PKs before it can commit; rollback may leave extra
    keys. Only a confirmed reread after fence/drain supplies final payloads.
-   Baseline read and target write are separate actions. The shadow has ONLY
-   a primary index until its final image is frozen: unique secondary-key
-   cycles therefore cannot make an intermediate baseline fail spuriously.
+   Baseline read and target write are separate actions. The shadow's
+   secondary indexes may be created before its first page (as the
+   implementation does since issue #267, so that no replica builds an index
+   on a populated space) or behind the fence; either way PREPARED needs
+   them. Rows here carry no secondary key: ShadowUnique checks the unique
+   conflicts a stale copy meets in an index that exists during the copy.
    A term/capture-generation loss before PREPARED requires a full recopy;
    a durable PREPARED image instead survives and is never rebuilt by APPLY.
    An old request may still be delivered, but cannot pass current ownership.
@@ -117,8 +120,9 @@ Tail(k) ==
     /\ UNCHANGED <<source, copied, indexes, cvars, wvars, qvars>>
 
 BuildIndexes ==
-    /\ phase = "fenced" /\ dirty = {} /\ ~indexes
-    /\ ~pending.active \/ BugSkipFinalDrain
+    /\ ~indexes
+    /\ \/ phase = "copy"
+       \/ phase = "fenced" /\ dirty = {} /\ (~pending.active \/ BugSkipFinalDrain)
     /\ indexes' = TRUE
     /\ UNCHANGED <<source, shadow, copied, dirty, cvars, wvars, qvars>>
 

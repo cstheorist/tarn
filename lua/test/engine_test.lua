@@ -21,7 +21,7 @@ tarn.init{shard_id = 1, peers = {}, sync = true, test_hooks = true, check_yields
 
 local pass, fail, sequence = 0, 0, 88000
 local jobs, workers, streams = {}, {}, {}
-local hooks = {'engine_copy', 'engine_tail', 'engine_prepared', 'engine_publish', 'engine_published'}
+local hooks = {'engine_copy', 'engine_tail', 'engine_prepared', 'engine_publish', 'engine_published', 'write'}
 local function ok(r) assert(type(r) == 'table' and r[1] == 'ok', json.encode(r)); return r end
 local function wait(label, fn, seconds)
     local until_ = fiber.clock() + (seconds or 5)
@@ -213,6 +213,236 @@ local function ready_apply(t)
     ok(call('build', t)); ok(call('prepare', t)); decide(t, 'apply'); ok(call('apply', t))
 end
 
+-- A same-engine rebuild (issue #267): the ALTER drops c_idx (11), renames u
+-- (7) and adds a unique index on the nullable c, one on (v, c) and a unique
+-- one on (bucket_id, c), whose keys have NULL in their last part, all of
+-- which the shadow has before its first row.
+local function rebuild(engine, tag, count, timeout)
+    local t = create(engine, tag, count)
+    end_job(t) -- (create's job changes the engine)
+    local nd = table.deepcopy(t.def)
+    nd.id, nd.ver = t.new_id, 1
+    nd.json = json.encode{space_id = t.new_id, ver = 1, engine = engine, marker = 'rebuilt'}
+    local c_part = {field = 4, type = 'integer', is_nullable = true}
+    nd.indexes = {{name = 'primary', unique = true, parts = {{1, 'unsigned'}}},
+        {name = 'bucket_id', unique = false, parts = {{3, 'unsigned'}}},
+        {name = 'v_u', unique = true, parts = {{2, 'integer'}}},
+        {name = 'c_u', unique = true, parts = {c_part}},
+        {name = 'v_c', unique = false, parts = {{2, 'integer'}, c_part}},
+        {name = 'b_c_u', unique = true, parts = {{3, 'unsigned'}, c_part}}}
+    t.args = {ver = 1, timeout = timeout or 5, def = nd, uix = {}, uix_drop = {}, lazy_drop = {},
+        builds = {{12, 'c_u', true, {c_part}}, {13, 'v_c', false, {{field = 2, type = 'integer'}, c_part}},
+            {14, 'b_c_u', true, {{field = 3, type = 'unsigned'}, c_part}}},
+        drop = {11}, renames = {{7, 'v_u'}},
+        engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = true}}
+    begin_job(t)
+    return t
+end
+local function indexes_of(sid)
+    local out = {}
+    for n, ix in pairs(box.space[sid].index) do
+        if type(n) == 'number' then
+            local parts = {}
+            for _, p in ipairs(ix.parts) do parts[#parts + 1] = {p.fieldno, p.type, p.is_nullable == true} end
+            out[#out + 1] = {ix.id, ix.name, ix.unique, parts}
+        end
+    end
+    table.sort(out, function(a, b) return a[1] < b[1] end)
+    return out
+end
+local REBUILT = {{0, 'primary', true, {{1, 'unsigned', false}}}, {4, 'bucket_id', false, {{3, 'unsigned', false}}},
+    {7, 'v_u', true, {{2, 'integer', false}}}, {12, 'c_u', true, {{4, 'integer', true}}},
+    {13, 'v_c', false, {{2, 'integer', false}, {4, 'integer', true}}},
+    {14, 'b_c_u', true, {{3, 'unsigned', false}, {4, 'integer', true}}}}
+-- c of row n as create() writes it: NULL, n + 7, or no field at all.
+local function c_of(n) return n % 3 == 2 and n + 7 or nil end
+-- The keys the copy's final pass will reread.
+local function captured_keys(t)
+    local track = tarn.engine.tracks[t.old_id]
+    if track == nil or not track.valid then return nil end
+    local out = {}
+    for _, key in ipairs(track.list) do out[#out + 1] = key[1] end
+    table.sort(out)
+    return out
+end
+local function update(t, n, field, value)
+    local r = change(t, {{'update', t.old_id, {n}, {{'=', field, value}}}})
+    if r[1] == 'ok' then t.expected[n][field] = value end
+    return r
+end
+local function publish(t)
+    ok(call('prepare', t)); decide(t, 'apply'); ok(call('apply', t)); end_job(t)
+end
+
+local function exercise_rebuild(engine)
+    local label = function(s) return engine .. ' rebuild: ' .. s end
+    local t = rebuild(engine, 'rebuild', 260)
+    -- Row 230 takes row 2's c (9) before the copy begins, so no write to it
+    -- is captured: the table holds a duplicate until row 2 changes below.
+    ok(update(t, 230, 4, 9))
+    hook('engine_copy', 'hold')
+    local building = spawn(function() return call('build', t) end)
+    local reached = hook('engine_copy', 'reached')
+    check(label('the shadow has every new index, and none dropped, before the copy goes on'),
+        reached[2] == 1 and box.space[t.new_id] ~= nil and box.space[t.new_id].engine == engine
+        and same(indexes_of(t.new_id), REBUILT) and box.space[t.name].id == t.old_id,
+        indexes_of(t.new_id))
+    -- Row 2 (copied, c = 9) gives up 9: its copy is stale when row 230's
+    -- page comes, so it leaves the shadow and row 230 goes in, although no
+    -- write touched row 230.
+    ok(update(t, 2, 4, 1000))
+    -- Rows 5 (c = 12) and 8 (c = 15) swap their keys by way of NULL: the
+    -- table never holds a duplicate, but each copy holds the other's key.
+    ok(change(t, {{'update', t.old_id, {5}, {{'=', 4, box.NULL}}}}))
+    ok(update(t, 8, 4, 12)); ok(update(t, 5, 4, 15))
+    hook('engine_copy', 'release'); ok(result(building))
+    check(label('a stale copy that holds a row\'s key leaves the shadow, and the row goes in'),
+        phase(t).phase == 'copied' and box.space[t.new_id]:get{230} ~= nil
+        and box.space[t.new_id]:get{230}[4] == 9 and box.space[t.new_id]:get{2} == nil, phase(t))
+    check(label('only the keys writes touched go to the final pass'),
+        same(captured_keys(t), {2, 5, 8}), captured_keys(t))
+    ok(call('prepare', t))
+    local shadow = box.space[t.new_id]
+    check(label('the final pass settles stale copies and swapped keys'),
+        phase(t).phase == 'prepared' and exact(t, t.new_id)
+        and shadow.index.c_u:get{9}[1] == 230 and shadow.index.c_u:get{12}[1] == 8
+        and shadow.index.c_u:get{15}[1] == 5 and shadow.index.b_c_u:get{1, 1000}[1] == 2
+        and shadow.index.b_c_u:count() == #wanted(t), difference(t, t.new_id))
+    decide(t, 'apply'); ok(call('apply', t)); end_job(t)
+    check(label('the published table has the new indexes, renamed and without the dropped one'),
+        clean(t) and exact(t, t.new_id) and box.space[t.name].engine == engine
+        and same(indexes_of(t.new_id), REBUILT) and box.space[t.name].index.v_c:count() == #wanted(t)
+        and box.space[t.name].index.c_u:count() == #wanted(t),
+        indexes_of(t.new_id))
+    local dup = tarn_autocommit({{'insert', t.new_id, {5000, 5000, 1, 9}}}, {fence = {t.new_id, t.args.ver}})
+    check(label('the new unique index refuses a duplicate'), dup[1] ~= 'ok' and dup[2] == 1062, dup)
+    local nulls = tarn_autocommit({{'insert', t.new_id, {5001, 5001, 1, box.NULL}},
+        {'insert', t.new_id, {5002, 5002, 1}}}, {fence = {t.new_id, t.args.ver}})
+    check(label('keys with NULL in their last part are no one\'s'), nulls[1] == 'ok', nulls)
+
+    -- Rows 150 and 160 hold row 2's c (9) too, untouched. Row 2's stale
+    -- copy leaves for row 150's sake, and row 160 then meets row 150: both
+    -- held 9 when their page was read.
+    local many = rebuild(engine, 'rebuild_many', 260)
+    ok(update(many, 150, 4, 9)); ok(update(many, 160, 4, 9))
+    hook('engine_copy', 'hold')
+    building = spawn(function() return call('build', many) end)
+    hook('engine_copy', 'reached')
+    ok(update(many, 2, 4, 1000))
+    hook('engine_copy', 'release')
+    local refused = result(building)
+    check(label('two untouched rows behind one stale copy fail the copy with 1062'),
+        refused[1] ~= 'ok' and refused[2] == 1062 and tostring(refused[3]):find("'c_u'") ~= nil, refused)
+    check(label('the copy left them to no final pass'), same(captured_keys(many), {2}), captured_keys(many))
+    decide(many, 'abort'); ok(call('abort', many)); end_job(many)
+    check(label('ABORT after that leaves the table as it was'),
+        box.space[many.new_id] == nil and box.space[many.name].id == many.old_id and exact(many, many.old_id))
+
+    -- A duplicate the table holds when the copy reads it: row 201 takes row
+    -- 11's c (18) while row 11's copy is current.
+    local early = rebuild(engine, 'rebuild_dup', 260)
+    hook('engine_copy', 'hold')
+    building = spawn(function() return call('build', early) end)
+    hook('engine_copy', 'reached')
+    ok(change(early, {{'update', early.old_id, {201}, {{'=', 4, c_of(11)}}}}))
+    hook('engine_copy', 'release')
+    refused = result(building)
+    check(label('a duplicate in the table fails the copy with 1062'),
+        refused[1] ~= 'ok' and refused[2] == 1062 and tostring(refused[3]):find("'c_u'") ~= nil, refused)
+    decide(early, 'abort'); ok(call('abort', early)); end_job(early)
+    check(label('ABORT after a duplicate leaves the table as it was'),
+        box.space[early.new_id] == nil and box.space[early.name].id == early.old_id
+        and box.space[early.name].index.u ~= nil and box.space[early.name].index.c_u == nil)
+
+    -- A duplicate made after its rows were copied, still there at the fence:
+    -- row 14 takes row 17's c (24), and both copies were current before.
+    local late = rebuild(engine, 'rebuild_late', 40)
+    ok(call('build', late))
+    ok(change(late, {{'update', late.old_id, {14}, {{'=', 4, c_of(17)}}}}))
+    local fenced = call('prepare', late)
+    check(label('a duplicate the fenced table holds fails PREPARE with 1062'),
+        fenced[1] ~= 'ok' and fenced[2] == 1062 and tostring(fenced[3]):find("'c_u'") ~= nil, fenced)
+    decide(late, 'abort'); ok(call('abort', late)); end_job(late)
+    local resumed = change(late, {{'update', late.old_id, {14}, {{'=', 4, 1}}}})
+    check(label('writes go on after that ABORT'), resumed[1] == 'ok'
+        and box.space[late.name].id == late.old_id and box.space[late.new_id] == nil, resumed)
+
+    -- A copy that runs past its call's deadline (the ALTER's lock wait
+    -- timeout) waits its own deadline for a cut. Here another job's cut has
+    -- just invalidated the shared meter, and a commit is in flight.
+    local slow = rebuild(engine, 'rebuild_slow', 260, 1)
+    hook('engine_copy', 'hold')
+    building = spawn(function() return call('build', slow) end)
+    hook('engine_copy', 'reached')
+    fiber.sleep(1.2)
+    hook('write', 'hold')
+    local writing = spawn(function() return update(slow, 3, 2, 31) end)
+    hook('write', 'reached')
+    tarn.engine.tickets.invalidate()
+    hook('engine_copy', 'release')
+    fiber.sleep(.2)
+    hook('write', 'release')
+    local built = result(building)
+    check(label('a copy past its deadline waits for a cut with a deadline of its own'),
+        built[1] == 'ok' and result(writing)[1] == 'ok' and phase(slow).phase == 'copied', built)
+    -- Its final pass (row 3) runs past PREPARE's deadline too, and the cut
+    -- after it meets a commit in flight on another table.
+    hook('engine_tail', 'hold')
+    local preparing = spawn(function() return call('prepare', slow) end)
+    hook('engine_tail', 'reached')
+    fiber.sleep(1.2)
+    hook('write', 'hold')
+    writing = spawn(function()
+        return tarn_autocommit({{'update', t.new_id, {10}, {{'=', 2, 101}}}}, {fence = {t.new_id, t.args.ver}})
+    end)
+    hook('write', 'reached')
+    hook('engine_tail', 'release')
+    fiber.sleep(.2)
+    hook('write', 'release')
+    local prepared = result(preparing)
+    check(label('a final pass past its deadline waits for its cut with a deadline of its own'),
+        prepared[1] == 'ok' and result(writing)[1] == 'ok' and phase(slow).phase == 'prepared', prepared)
+    decide(slow, 'apply'); ok(call('apply', slow)); end_job(slow)
+    check(label('that copy is published with the write made meanwhile'), clean(slow) and exact(slow, slow.new_id),
+        difference(slow, slow.new_id))
+
+    -- A capture that writes outgrow after the deadline starts the copy
+    -- again (reset), whose cut and drain have deadlines of their own.
+    local lost = rebuild(engine, 'rebuild_lost', 260, 1)
+    hook('engine_copy', 'hold')
+    building = spawn(function() return call('build', lost) end)
+    hook('engine_copy', 'reached')
+    local token = phase(lost).capture
+    fiber.sleep(1.2)
+    tarn.cfg.engine_dirty_keys = 2
+    ok(update(lost, 3, 2, 31)); ok(update(lost, 6, 2, 61)); ok(update(lost, 9, 2, 91))
+    tarn.cfg.engine_dirty_keys = nil
+    hook('write', 'hold')
+    writing = spawn(function() return update(lost, 12, 2, 121) end)
+    hook('write', 'reached')
+    hook('engine_copy', 'release')
+    fiber.sleep(.2)
+    hook('write', 'release')
+    built = result(building)
+    check(label('a capture lost after the deadline starts the copy again'),
+        built[1] == 'ok' and result(writing)[1] == 'ok' and phase(lost).phase == 'copied'
+        and phase(lost).capture ~= token, {built, phase(lost)})
+    publish(lost)
+    check(label('that copy is published with every write'), clean(lost) and exact(lost, lost.new_id),
+        difference(lost, lost.new_id))
+
+    local bad = rebuild(engine, 'rebuild_bad', 4)
+    bad.args.builds = {}
+    local refused_bad = call('build', bad)
+    check(label('a rebuild without new indexes is refused before any shadow exists'),
+        refused_bad[1] ~= 'ok' and refused_bad[2] == 1210 and box.space[bad.new_id] == nil, refused_bad)
+    bad.args.engine_change.rebuild = nil
+    refused_bad = call('build', bad)
+    check(label('a same-engine change that is not a rebuild is refused'),
+        refused_bad[1] ~= 'ok' and refused_bad[2] == 1210 and box.space[bad.new_id] == nil, refused_bad)
+    decide(bad, 'abort'); end_job(bad)
+end
+
 local function exercise(engine)
     local label = function(s) return engine .. ': ' .. s end
     local t = create(engine, 'online', 260)
@@ -251,9 +481,14 @@ local function exercise(engine)
         not building.done and exact(t, t.old_id) and box.space[t.old_id]:get{4}[2] == 40,
         difference(t, t.old_id))
     hook('engine_copy', 'release'); ok(result(building))
-    check(label('online baseline tolerates the unique-key cycle without publishing early'),
+    -- The shadow has its indexes from the start (issue #267): the cycle's
+    -- stale copy of row 1 holds 10 when row 129 is copied, so that copy
+    -- leaves the shadow (the final pass puts row 1 back) instead of row 129
+    -- failing as a duplicate.
+    check(label('online baseline evicts the unique-key cycle\'s stale copy without publishing early'),
         box.space[t.name].id == t.old_id and box.space[t.new_id] ~= nil
-        and box.space[t.new_id].index[7] == nil and box.space._tarn_catalog:get{t.name}.def.id == t.old_id)
+        and box.space[t.new_id].index[7] ~= nil and box.space[t.new_id]:get{129} ~= nil
+        and box.space[t.new_id]:get{1} == nil and box.space._tarn_catalog:get{t.name}.def.id == t.old_id)
     ok(change(t, {{'update', t.old_id, {5}, {{'=', 2, 99905}}}})); t.expected[5][2] = 99905
     hook('engine_prepared', 'hold')
     local preparing = spawn(function() return call('prepare', t) end)
@@ -509,7 +744,9 @@ local yes, err = xpcall(function()
     print('IDENTITY ' .. json.encode{version = box.info.version, native = ni, layout = layout,
         sync = tarn.cfg.sync, wal = box.cfg.wal_mode})
     assert(mp.encode(tarn_engine_capabilities()) == mp.encode({'ok', 1}), 'engine capability V1 required')
+    assert(mp.encode(tarn_engine_rebuild_capabilities()) == mp.encode({'ok', 1}), 'rebuild capability required')
     exercise('memtx'); exercise('vinyl')
+    exercise_rebuild('memtx'); exercise_rebuild('vinyl')
 end, debug.traceback)
 cleanup()
 if native ~= nil and native ~= '0' then
