@@ -23,7 +23,9 @@ METRICS = """
 local misc=require('misc')
 return {info=tarn_info(), metrics=misc.getmetrics(), calls=box.stat().CALL.total,
  wal=box.cfg.wal_mode, quorum=box.cfg.replication_synchro_quorum,
- engine=box.space['rc186.t'].engine, pid=box.info.pid}
+ engine=box.space['rc186.t'].engine, pid=box.info.pid,
+ test_flags={check_locks=require('tarn').cfg.check_locks,
+             check_yields=require('tarn').cfg.check_yields}}
 """
 
 
@@ -86,6 +88,12 @@ def diagnostic(record, name, operation):
         return None
 
 
+def require_production_flags(result):
+    """Check effective settings: the string '0' enables storage test hooks."""
+    flags = result.get('test_flags', {})
+    assert all(flags.get(name) is False for name in ('check_locks', 'check_yields')), flags
+
+
 def reconcile(records, counters, ledger):
     """Exact identities matter; equal aggregate sums are insufficient."""
     acknowledged = {r['token']: r['key'] for r in records if r['outcome'] == 'ok'}
@@ -111,6 +119,7 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
     assert len(leaders) == 2
     for row in before:
         r = row['result']
+        require_production_flags(r)
         assert r['wal'] == 'fsync' and r['quorum'] == 'N / 2 + 1' and r['engine'] == args.engine, r
         if not r['info']['ro']:
             n = r['info']['native']
@@ -223,6 +232,7 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
     record['deltas'] = []
     for row in after:
         a, b = row['result'], by_address[row['address']]
+        require_production_flags(a)
         assert a['info']['ro'] == b['info']['ro'], 'leader changed during baseline'
         record['deltas'].append(dict(address=row['address'], calls=a['calls'] - b['calls'],
             metrics={k: a['metrics'][k] - b['metrics'][k] for k in
