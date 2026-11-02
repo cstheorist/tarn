@@ -144,6 +144,19 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A schema change no longer reports 1180 when one of its shards has no
+  leader for a moment as it finishes. A replicated shard whose leader
+  resigned while its followers applied an index build (#267) made an ALTER
+  TABLE or engine change report "did not finish on every shard", because
+  APPLY was sent again only after a transaction conflict, five times at
+  once. Or, when it was the first shard, the change reported "another
+  server took the schema change over", because a failed write of its
+  decision was read as a takeover. Both are now sent again on every
+  transient refusal (a conflict, no leader yet, a lost connection, a
+  transaction a new leader rolled back, a new leader still applying the
+  build, storage admission) for up to a minute. Both may be repeated
+  ([#267](https://github.com/cstheorist/tarn/issues/267)).
+
 - Inside a transaction, a read of a shard it had already read no longer
   asks for 4096 rows in one page whatever their size. Such a read (a scan,
   or a non-unique prefix) used plain IPROTO SELECT, which cuts pages by

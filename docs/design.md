@@ -1644,10 +1644,16 @@ APPLY or ABORT is sent. Its SQL server touches it every few seconds; every SQL s
 `ddl_job_stale` (30 s, `cluster.json`) at startup and every 10 s, takes one
 over, and resumes its recorded phase. A job without a decision reruns
 preparation and any global index fill before deciding; `abort` runs ABORT
-everywhere, and `apply` only goes forward. A shard where a transaction
-conflict rolled APPLY back (a DDL statement of it can be) gets it again at
-once, up to five times. A statement whose job is left unfinished reports
-the outcome as unknown (1180).
+everywhere, and `apply` only goes forward. A shard that refuses APPLY for
+a transient reason gets it again, with a growing pause, for up to a minute:
+a transaction conflict can roll back a DDL statement of it, and a
+replicated shard can be left without a leader for a while, as when its
+leader resigns while the followers apply an index build (issue #267); the
+new leader may still be applying that build ("the space is already being
+modified"). The
+decision is recorded on the first shard the same way. A statement whose job
+is still unfinished, or undecided, then reports the outcome as unknown
+(1180).
 
 Writes wait (in the SQL server: the statement is retried, up to the lock
 wait timeout) from the moment PREPARE raises the fence until the servers

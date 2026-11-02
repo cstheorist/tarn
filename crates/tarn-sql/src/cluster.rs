@@ -799,26 +799,30 @@ impl Drop for LockRequestGuard<'_> {
 /// if it still waits.
 const DEADLOCK_MIN_WAIT: Duration = Duration::from_millis(50);
 
-/// How many more times a schema change sends APPLY to a shard where a
-/// transaction conflict rolled it back, before it reports the change
-/// unfinished (see `run_job_steps`).
-const APPLY_CONFLICT_RETRIES: u32 = 5;
+/// How long a schema change keeps sending APPLY to a shard that refused it
+/// for a transient reason, before it reports the change unfinished (see
+/// `run_job_steps`). A replicated shard's leader can resign while its
+/// followers apply an index build, and the shard has no leader until one of
+/// them finishes (issue #267).
+const APPLY_RETRY: Duration = Duration::from_secs(60);
 
-/// Run `attempt` again while it fails with a transaction conflict (1213), at
-/// most `retries` more times, waiting `backoff` and then twice as long each
-/// time in between. Only for steps that may be repeated.
-pub(crate) async fn retry_conflicts<T, F, Fut>(retries: u32, backoff: Duration, mut attempt: F) -> SqlResult<T>
+/// Run `attempt` again while it fails with a transient refusal
+/// (`crate::lazy::online_transient`: a transaction conflict, no leader yet,
+/// a lost connection, a transaction a new leader rolled back, storage
+/// admission), until `limit` has passed since the first refusal. It waits
+/// `backoff` first, then twice as long each time, up to 32 times `backoff`.
+/// Only for steps that may be repeated.
+pub(crate) async fn retry_transient<T, F, Fut>(limit: Duration, backoff: Duration, mut attempt: F) -> SqlResult<T>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = SqlResult<T>>,
 {
-    let (mut left, mut wait) = (retries, backoff);
+    let (mut since, mut wait) = (None, backoff);
     loop {
         match attempt().await {
-            Err(e) if e.code == 1213 && left > 0 => {
-                left -= 1;
+            Err(e) if crate::lazy::online_transient(&e) && since.get_or_insert_with(Instant::now).elapsed() < limit => {
                 tokio::time::sleep(wait).await;
-                wait = wait.saturating_mul(2);
+                wait = wait.saturating_mul(2).min(backoff.saturating_mul(32));
             }
             r => return r,
         }
@@ -2394,6 +2398,46 @@ impl Cluster {
         ))
     }
 
+    /// `job_phase` for a schema change (`run_job_steps`): sent again while
+    /// the first shard refuses it for a transient reason, such as a conflict
+    /// or no leader for a while (issue #267), for up to APPLY_RETRY. The same
+    /// phase may be recorded twice. If it is still not recorded, the job
+    /// stays undecided and a server finishes it, so the outcome is unknown.
+    async fn record_phase(&self, job: &Job, phase: &str) -> SqlResult<()> {
+        let mut a = Mp::new();
+        a.arr(2).str(&job.owner).str(phase);
+        let recorded = retry_transient(APPLY_RETRY, Duration::from_millis(20), || async {
+            let d = self.call(0, "tarn_job_phase", &a.0).await?;
+            if crate::mpw::status_is(&d, "gone") {
+                return Ok(false);
+            }
+            lua_status(&d).map(|_| true)
+        })
+        .await;
+        match recorded {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(SqlError::new(
+                1180,
+                "40003",
+                format!(
+                    "{} of {}: another server took the schema change over; it finishes it",
+                    job.kind.statement(),
+                    job.space
+                ),
+            )),
+            Err(e) => Err(SqlError::new(
+                1180,
+                "40003",
+                format!(
+                    "{} of {} could not record its decision ({}); a server finishes it",
+                    job.kind.statement(),
+                    job.space,
+                    e.message
+                ),
+            )),
+        }
+    }
+
     /// The jobs in progress.
     pub(crate) async fn jobs(&self) -> SqlResult<Vec<Job>> {
         let d = self.call(0, "tarn_jobs", &[0x90]).await?;
@@ -2584,7 +2628,7 @@ impl Cluster {
                 }
             }
             phase = if failed.is_some() && !applied { "abort" } else { "apply" };
-            self.job_phase(job, phase).await?;
+            self.record_phase(job, phase).await?;
         }
         if phase == "abort" {
             for r in crate::topology::collect(
@@ -2617,11 +2661,13 @@ impl Cluster {
         };
         for g in groups {
             // APPLY may be repeated (a server that finishes the job repeats
-            // it). A shard where a transaction conflict rolled it back, as
-            // one can roll back a DDL statement of it, gets it again at once.
+            // it). A shard that refused it for a transient reason gets it
+            // again, for up to APPLY_RETRY: a transaction conflict can roll
+            // back a DDL statement of it, and a leader change can leave the
+            // shard without a leader for a while (issue #267).
             for r in crate::topology::collect(
                 g.iter().map(|&i| {
-                    retry_conflicts(APPLY_CONFLICT_RETRIES, Duration::from_millis(20), move || {
+                    retry_transient(APPLY_RETRY, Duration::from_millis(20), move || {
                         step(i, job.kind.proc("apply"))
                     })
                 }),

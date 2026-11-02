@@ -1045,15 +1045,21 @@ impl Cluster {
     }
 }
 
-/// A step of a lazy build refused before it changed anything, or lost with
-/// its connection: a conflict or leader change (1213), a transaction a new
-/// leader rolled back (Tarantool's ER_SYNC_ROLLBACK, 217, which reaches the
-/// gateway as "storage error 217" when a step raises it), no leader yet
-/// (2003), a lost connection (2013), storage admission or Vinyl memory
-/// quota (1205) or a full outbox (1041). Every step is idempotent.
-fn online_transient(e: &SqlError) -> bool {
+/// A step of a lazy build, or a schema change's APPLY (`retry_transient`),
+/// refused before it changed anything, or lost with its connection: a
+/// conflict or leader change (1213), a transaction a new leader rolled back
+/// (Tarantool's ER_SYNC_ROLLBACK, 217, which reaches the gateway as "storage
+/// error 217" when a step raises it), a new leader still applying an index
+/// build of the same space (ER_ALTER_SPACE, 12: "the space is already being
+/// modified"; issue #267), no leader yet (2003), a lost connection (2013),
+/// storage admission or Vinyl memory quota (1205) or a full outbox (1041).
+/// Every such step is idempotent.
+pub(crate) fn online_transient(e: &SqlError) -> bool {
     matches!(e.code, 1213 | 2003 | 2013)
         || (e.code == 1105 && e.message.starts_with("storage error 217:"))
+        || (e.code == 1105
+            && e.message.starts_with("storage error 12:")
+            && e.message.contains("is already being modified"))
         || (e.code == 1205 && (e.message.contains("admission refused") || e.message.contains("Vinyl memory quota")))
         || (e.code == 1041 && e.message.contains("admission limit"))
 }
