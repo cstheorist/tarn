@@ -1,14 +1,22 @@
-name: READ COMMITTED current-main profile
+name: READ COMMITTED matched cost pilot
 
 on:
   workflow_dispatch:
+    inputs:
+      hypothesis:
+        description: Isolated source-copy candidate
+        type: choice
+        options: [guards, confirmation]
+        default: guards
+      full_matrix:
+        description: Run both engines and native configurations
+        type: boolean
+        default: false
 
 permissions:
   contents: read
-
-# Each diagnostic run keeps its evidence, including failed runs.
 concurrency:
-  group: rc-profile-${{ github.run_id }}
+  group: rc-cost-${{ github.run_id }}
   cancel-in-progress: false
 
 defaults:
@@ -23,7 +31,18 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup toolchain install 1.98.1 --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - name: Build production release artifacts
+      - name: Collector and source-copy controls
+        run: |
+          python3 -m pip install PyMySQL==1.1.2
+          python3 bench/rc_profile_test.py
+          python3 bench/rc_guard_candidate_test.py
+          python3 bench/rc_confirm_candidate_test.py
+      - name: Companion safety and sensitivity models
+        run: |
+          curl -fsSL -o /tmp/rc-cost-tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+          sha256sum /tmp/rc-cost-tla2tools.jar > /tmp/rc-cost-tla.sha256
+          python3 bench/rc_cost_models.py --jar /tmp/rc-cost-tla2tools.jar --out /tmp/rc-cost-models
+      - name: Build unchanged production release artifacts
         run: |
           cargo build --release --locked -p tarn-server -p tarn-storage
           mkdir -p /tmp/rc186-build
@@ -33,44 +52,48 @@ jobs:
           rustc -Vv > /tmp/rc186-build/rustc.txt
           sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/rc186-build/binaries.sha256
       - uses: actions/upload-artifact@v6
+        if: always()
         with:
           name: rc186-build-${{ github.run_id }}
-          path: /tmp/rc186-build
+          path: |
+            /tmp/rc186-build
+            /tmp/rc-cost-models
+            /tmp/rc-cost-tla.sha256
           retention-days: 30
 
-  profile:
+  compare:
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 2
       matrix:
-        engine: [memtx, vinyl]
-        native: [enabled, disabled]
+        engine: ${{ fromJSON(inputs.full_matrix && '["memtx","vinyl"]' || '["memtx"]') }}
+        native: ${{ fromJSON(inputs.full_matrix && '["enabled","disabled"]' || '["enabled"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v6
         with:
           name: rc186-build-${{ github.run_id }}
-          path: /tmp/rc186-build
+          path: /tmp/rc-cost-build-download
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: pip install PyMySQL==1.1.2
-      - run: python3 bench/rc_profile_test.py
       - uses: actions/cache/restore@v6
         id: tarantool-cache
         with:
           path: ~/.local/tarantool
           key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
-      - name: Install pinned storage runtime and release artifacts
+      - name: Install pinned runtime and normal release artifacts
         run: |
           ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
           echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+          mv /tmp/rc-cost-build-download/rc186-build /tmp/rc186-build
           chmod +x /tmp/rc186-build/tarn-server
           test "$(cat /tmp/rc186-build/source.txt)" = "$(git rev-parse HEAD)"
-          mkdir -p target/release /tmp/rc186-results
+          mkdir -p target/release /tmp/rc-cost-results
           cp /tmp/rc186-build/tarn-server /tmp/rc186-build/libtarn_storage.so target/release/
           sha256sum -c /tmp/rc186-build/binaries.sha256
       - uses: actions/cache/save@v6
@@ -78,36 +101,22 @@ jobs:
         with:
           path: ~/.local/tarantool
           key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
-      - name: RF3 fsync baseline and separate bounded sampling
-        env:
-          TARN_NATIVE: ${{ matrix.native == 'enabled' && '/tmp/rc186-build/libtarn_storage.so' || '0' }}
-          TARN_BIN: /tmp/rc186-build/tarn-server
-          TARN_VINYL_CACHE_MB: '0'
-          # storage.lua treats every nonempty value, including '0', as true.
-          TARN_CHECK_LOCKS: ''
-          TARN_CHECK_YIELDS: ''
+      - name: Five alternating 15-second pairs with exact effects
         run: |
-          tarantool bench/rc_guest_profile_test.lua
-          tarantool --version > /tmp/rc186-results/tarantool.txt
-          sha256sum "$(command -v tarantool)" > /tmp/rc186-results/tarantool.sha256
-          lscpu > /tmp/rc186-results/cpu.txt
-          df -h > /tmp/rc186-results/disk-before.txt
-          scripts/cluster.sh start -d /tmp/rc186-cluster -n 2 -r 3 -w fsync -b 16300 -p 16400 -s 1 -m 256 -e '${{ matrix.engine }}'
-          python3 bench/rc_profile.py --sql 127.0.0.1:16400 --cluster-dir /tmp/rc186-cluster --bin /tmp/rc186-build/tarn-server \
+          tarantool --version > /tmp/rc-cost-results/tarantool.txt
+          sha256sum "$(command -v tarantool)" > /tmp/rc-cost-results/tarantool.sha256
+          lscpu > /tmp/rc-cost-results/cpu.txt
+          df -h > /tmp/rc-cost-results/disk-before.txt
+          python3 bench/rc_cost_compare.py --bin /tmp/rc186-build/tarn-server --out /tmp/rc-cost-results/paired \
             --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' \
-            --repeats 5 --seconds 5 --out /tmp/rc186-results/baseline.json
-      - name: Stop only the owned fixture and retain its state
+            --hypothesis '${{ inputs.hypothesis }}' --seconds 15 --base-port 17300 --sql-port 17400
+      - name: Retain complete and failed evidence
         if: always()
-        run: |
-          KEEP=1 scripts/cluster.sh stop -d /tmp/rc186-cluster
-          df -h > /tmp/rc186-results/disk-after.txt
-          if test -d /tmp/rc186-cluster; then tar -czf /tmp/rc186-results/fixture.tar.gz -C /tmp rc186-cluster; fi
-      - uses: actions/upload-artifact@v6
-        if: always()
+        uses: actions/upload-artifact@v6
         with:
-          name: rc186-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
+          name: rc-cost-${{ inputs.hypothesis }}-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
           path: |
-            /tmp/rc186-results
+            /tmp/rc-cost-results
             /tmp/rc186-build/source.txt
             /tmp/rc186-build/lua-tree.txt
             /tmp/rc186-build/rustc.txt
