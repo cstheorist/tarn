@@ -1,0 +1,994 @@
+{
+  "totals": {
+    "samples": 132,
+    "attempts": 367708,
+    "acknowledged": 367708,
+    "refused": 0
+  },
+  "modes": [
+    {
+      "engine": "memtx",
+      "native": "disabled",
+      "source": "088cdb15477e7646d5483561060fc92cc0548bd3",
+      "totals": {
+        "samples": 33,
+        "attempts": 87364,
+        "acknowledged": 87364,
+        "refused": 0
+      },
+      "groups": {
+        "uncontended": {
+          "tps": {
+            "median": 360.95505791904446,
+            "minimum": 359.3889567417103,
+            "maximum": 361.68253397633725
+          },
+          "p50_ms": {
+            "median": 2.6601449999930082,
+            "minimum": 2.652957999998762,
+            "maximum": 2.662896999993336
+          },
+          "p99_ms": {
+            "median": 4.307720000014115,
+            "minimum": 4.129567999996198,
+            "maximum": 4.357421000008799
+          },
+          "tx_cpu_us": {
+            "median": 1195.1083935519732,
+            "minimum": 1190.2113459399334,
+            "maximum": 1216.1415146489776
+          },
+          "process_cpu_us": {
+            "median": 3457.4763757643136,
+            "minimum": 3442.7141268075643,
+            "maximum": 3466.223698781838
+          },
+          "lua_bytes": {
+            "median": 40585.114980652295,
+            "minimum": 40520.956062291436,
+            "maximum": 40593.49446290144
+          },
+          "gc_steps": {
+            "median": 157.30287929125137,
+            "minimum": 138.38648947951273,
+            "maximum": 165.96329254727476
+          },
+          "plock_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "native_counts": {}
+        },
+        "unrelated": {
+          "tps": {
+            "median": 879.7807981862674,
+            "minimum": 754.216531843343,
+            "maximum": 884.0460708068726
+          },
+          "p50_ms": {
+            "median": 8.83952299997759,
+            "minimum": 8.800632000003361,
+            "maximum": 8.929640999980393
+          },
+          "p99_ms": {
+            "median": 15.687834999994266,
+            "minimum": 15.072479999986399,
+            "maximum": 17.245118999994702
+          },
+          "tx_cpu_us": {
+            "median": 896.7082860385925,
+            "minimum": 892.4485125858123,
+            "maximum": 900.4524886877828
+          },
+          "process_cpu_us": {
+            "median": 2299.8375493153867,
+            "minimum": 2286.04118993135,
+            "maximum": 2305.4298642533936
+          },
+          "lua_bytes": {
+            "median": 41974.57936328743,
+            "minimum": 41916.37126696832,
+            "maximum": 42077.28011139476
+          },
+          "gc_steps": {
+            "median": 151.24226687739898,
+            "minimum": 142.06197502837685,
+            "maximum": 153.5929061784897
+          },
+          "plock_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "native_counts": {}
+        },
+        "hot": {
+          "tps": {
+            "median": 421.2046126359924,
+            "minimum": 409.9764344329125,
+            "maximum": 423.01651998740454
+          },
+          "p50_ms": {
+            "median": 18.313814000009643,
+            "minimum": 18.284784999991643,
+            "maximum": 18.476661999983435
+          },
+          "p99_ms": {
+            "median": 27.806766999987076,
+            "minimum": 25.398033000016085,
+            "maximum": 29.689294999997173
+          },
+          "tx_cpu_us": {
+            "median": 1159.488878371983,
+            "minimum": 1136.7924528301887,
+            "maximum": 1182.897862232779
+          },
+          "process_cpu_us": {
+            "median": 3293.894936109796,
+            "minimum": 3270.499528746466,
+            "maximum": 3325.4156769596198
+          },
+          "lua_bytes": {
+            "median": 44113.801131008484,
+            "minimum": 44058.60566037736,
+            "maximum": 44150.62451361868
+          },
+          "gc_steps": {
+            "median": 160.97785108388314,
+            "minimum": 156.96532066508314,
+            "maximum": 163.7330809275911
+          },
+          "plock_waits": {
+            "median": 0.9995267392333176,
+            "minimum": 0.9995136186770428,
+            "maximum": 0.9995287464655985
+          },
+          "commit_waits": {
+            "median": 0.9995267392333176,
+            "minimum": 0.9995136186770428,
+            "maximum": 0.9995287464655985
+          },
+          "native_counts": {}
+        }
+      },
+      "vm_states": {
+        "I": 898,
+        "N": 225,
+        "C": 3985,
+        "G": 366,
+        "J": 30
+      },
+      "guest_stacks": [
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:4119;",
+          1132
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x55ed023c6500;",
+          798
+        ],
+        [
+          "C:builtin/box/schema.lua:291;builtin/box/schema.lua:302;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:214;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          527
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:4088;@0x55ed023c6500;",
+          317
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          152
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;",
+          136
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2459;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x55ed023c6500;",
+          100
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];",
+          96
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x55ed023c6500;",
+          73
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2778;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x55ed023c6500;",
+          71
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2871;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x55ed023c6500;",
+          59
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_lazy.lua:1201;",
+          51
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn.lua:2870;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x55ed023c6500;",
+          51
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          48
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;",
+          46
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2650;/home/runner/work/tarn/tarn/lua/tarn.lua:2772;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x55ed023c6500;",
+          41
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2871;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x55ed023c6500;",
+          39
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn.lua:2870;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x55ed023c6500;",
+          36
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2459;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x55ed023c6500;",
+          35
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2023;/home/runner/work/tarn/tarn/lua/tarn.lua:2033;/home/runner/work/tarn/tarn/lua/tarn.lua:2050;/home/runner/work/tarn/tarn/lua/tarn.lua:2435;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x55ed023c6500;",
+          34
+        ]
+      ]
+    },
+    {
+      "engine": "memtx",
+      "native": "enabled",
+      "source": "088cdb15477e7646d5483561060fc92cc0548bd3",
+      "totals": {
+        "samples": 33,
+        "attempts": 85431,
+        "acknowledged": 85431,
+        "refused": 0
+      },
+      "groups": {
+        "uncontended": {
+          "tps": {
+            "median": 350.1215811687358,
+            "minimum": 341.87133535545286,
+            "maximum": 355.69655127806584
+          },
+          "p50_ms": {
+            "median": 2.717309000018986,
+            "minimum": 2.686583000013343,
+            "maximum": 2.7255589999981567
+          },
+          "p99_ms": {
+            "median": 5.046801999981199,
+            "minimum": 4.881100999995169,
+            "maximum": 5.178991999997606
+          },
+          "tx_cpu_us": {
+            "median": 1222.2222222222222,
+            "minimum": 1202.9229904440697,
+            "maximum": 1239.2918332381496
+          },
+          "process_cpu_us": {
+            "median": 3497.076023391813,
+            "minimum": 3451.377178189994,
+            "maximum": 3503.6910846110163
+          },
+          "lua_bytes": {
+            "median": 40774.83450292398,
+            "minimum": 40646.33951658235,
+            "maximum": 42086.07252998287
+          },
+          "gc_steps": {
+            "median": 147.26499143346658,
+            "minimum": 123.87577290612704,
+            "maximum": 159.49766081871346
+          },
+          "plock_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "native_counts": {}
+        },
+        "unrelated": {
+          "tps": {
+            "median": 856.1388200420223,
+            "minimum": 755.5407836949653,
+            "maximum": 870.5720706306118
+          },
+          "p50_ms": {
+            "median": 8.979791999990994,
+            "minimum": 8.936736999999084,
+            "maximum": 9.058702999993784
+          },
+          "p99_ms": {
+            "median": 16.039927000008447,
+            "minimum": 15.806915000013078,
+            "maximum": 23.283465000019987
+          },
+          "tx_cpu_us": {
+            "median": 901.5829318651067,
+            "minimum": 893.2346723044396,
+            "maximum": 912.0521172638436
+          },
+          "process_cpu_us": {
+            "median": 2291.1805879608028,
+            "minimum": 2288.5835095137422,
+            "maximum": 2310.1628813948155
+          },
+          "lua_bytes": {
+            "median": 41908.23728418106,
+            "minimum": 41849.79688227082,
+            "maximum": 41986.44983667755
+          },
+          "gc_steps": {
+            "median": 135.87144190387306,
+            "minimum": 123.94631796283551,
+            "maximum": 143.57839477368177
+          },
+          "plock_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "native_counts": {}
+        },
+        "hot": {
+          "tps": {
+            "median": 411.10976697237163,
+            "minimum": 396.1938575245487,
+            "maximum": 416.3969765242284
+          },
+          "p50_ms": {
+            "median": 18.749447000004693,
+            "minimum": 18.54771399999322,
+            "maximum": 18.882886999989523
+          },
+          "p99_ms": {
+            "median": 27.24754499999449,
+            "minimum": 27.24061900002539,
+            "maximum": 28.906086000006326
+          },
+          "tx_cpu_us": {
+            "median": 1188.2640586797067,
+            "minimum": 1166.9057867049257,
+            "maximum": 1197.1830985915492
+          },
+          "process_cpu_us": {
+            "median": 3324.949698189135,
+            "minimum": 3314.2037302725967,
+            "maximum": 3331.721470019342
+          },
+          "lua_bytes": {
+            "median": 44190.43158953722,
+            "minimum": 44082.94165471067,
+            "maximum": 44265.38926499033
+          },
+          "gc_steps": {
+            "median": 143.25352112676057,
+            "minimum": 138.09064469219584,
+            "maximum": 152.67286063569682
+          },
+          "plock_waits": {
+            "median": 0.9995152690256908,
+            "minimum": 0.9994969818913481,
+            "maximum": 0.9995217599234816
+          },
+          "commit_waits": {
+            "median": 0.9995152690256908,
+            "minimum": 0.9994969818913481,
+            "maximum": 0.9995217599234816
+          },
+          "native_counts": {}
+        }
+      },
+      "vm_states": {
+        "I": 885,
+        "J": 39,
+        "N": 293,
+        "C": 3887,
+        "G": 376
+      },
+      "guest_stacks": [
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:4119;",
+          1060
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x5608e0bef500;",
+          765
+        ],
+        [
+          "C:builtin/box/schema.lua:291;builtin/box/schema.lua:302;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:214;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          538
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:4088;@0x5608e0bef500;",
+          343
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          147
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;",
+          111
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2459;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x5608e0bef500;",
+          100
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x5608e0bef500;",
+          93
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2871;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x5608e0bef500;",
+          82
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];",
+          67
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2778;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x5608e0bef500;",
+          66
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn.lua:2870;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x5608e0bef500;",
+          51
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2650;/home/runner/work/tarn/tarn/lua/tarn.lua:2772;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x5608e0bef500;",
+          46
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2871;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x5608e0bef500;",
+          46
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;",
+          43
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_lazy.lua:1201;",
+          40
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn.lua:2870;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x5608e0bef500;",
+          33
+        ],
+        [
+          "C:builtin/box/net_box.lua:939;builtin/box/net_box.lua:947;builtin/box/net_box.lua:983;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_clock.lua:654;",
+          31
+        ],
+        [
+          "C:builtin/box/schema.lua:291;builtin/box/schema.lua:302;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:214;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:8033;@0x558dbde00500;",
+          31
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x5608e0bef500;",
+          30
+        ]
+      ]
+    },
+    {
+      "engine": "vinyl",
+      "native": "disabled",
+      "source": "088cdb15477e7646d5483561060fc92cc0548bd3",
+      "totals": {
+        "samples": 33,
+        "attempts": 98715,
+        "acknowledged": 98715,
+        "refused": 0
+      },
+      "groups": {
+        "uncontended": {
+          "tps": {
+            "median": 363.04478688139227,
+            "minimum": 355.7429374098681,
+            "maximum": 368.2131313203566
+          },
+          "p50_ms": {
+            "median": 2.434784000001855,
+            "minimum": 2.42592799999386,
+            "maximum": 2.470881000000702
+          },
+          "p99_ms": {
+            "median": 21.645808000002376,
+            "minimum": 19.69335799999783,
+            "maximum": 21.74710200000618
+          },
+          "tx_cpu_us": {
+            "median": 1010.928961748634,
+            "minimum": 1002.2026431718061,
+            "maximum": 1017.4255199550311
+          },
+          "process_cpu_us": {
+            "median": 2470.14115092291,
+            "minimum": 2439.42731277533,
+            "maximum": 2512.6475548060707
+          },
+          "lua_bytes": {
+            "median": 41145.73387978142,
+            "minimum": 41119.05157437568,
+            "maximum": 41230.660753880264
+          },
+          "gc_steps": {
+            "median": 157.78501628664495,
+            "minimum": 143.31662995594715,
+            "maximum": 175.25792349726777
+          },
+          "plock_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "native_counts": {}
+        },
+        "unrelated": {
+          "tps": {
+            "median": 1052.149546988001,
+            "minimum": 955.4559817139367,
+            "maximum": 1056.4897117191817
+          },
+          "p50_ms": {
+            "median": 6.822562000010635,
+            "minimum": 6.819618000001526,
+            "maximum": 6.865360000006149
+          },
+          "p99_ms": {
+            "median": 27.941329000000792,
+            "minimum": 27.75907299999858,
+            "maximum": 28.61952599999995
+          },
+          "tx_cpu_us": {
+            "median": 644.8562783661121,
+            "minimum": 641.6097190584662,
+            "maximum": 647.4273780140497
+          },
+          "process_cpu_us": {
+            "median": 1382.191000569584,
+            "minimum": 1377.7777777777776,
+            "maximum": 1386.1573373676247
+          },
+          "lua_bytes": {
+            "median": 41955.63445537065,
+            "minimum": 41868.62794229309,
+            "maximum": 42028.38048309179
+          },
+          "gc_steps": {
+            "median": 153.25226928895611,
+            "minimum": 149.2891589139928,
+            "maximum": 159.04347826086956
+          },
+          "plock_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "native_counts": {}
+        },
+        "hot": {
+          "tps": {
+            "median": 409.5748704799553,
+            "minimum": 327.9268451671658,
+            "maximum": 415.7252168743535
+          },
+          "p50_ms": {
+            "median": 17.472301000005075,
+            "minimum": 17.311117000005538,
+            "maximum": 17.59255000000337
+          },
+          "p99_ms": {
+            "median": 40.84164399999679,
+            "minimum": 39.088049999989494,
+            "maximum": 91.30548199999566
+          },
+          "tx_cpu_us": {
+            "median": 987.7202349172451,
+            "minimum": 982.2712026832774,
+            "maximum": 1015.1975683890577
+          },
+          "process_cpu_us": {
+            "median": 2354.5114789108384,
+            "minimum": 2338.284619070436,
+            "maximum": 2382.9787234042556
+          },
+          "lua_bytes": {
+            "median": 44700.1267537494,
+            "minimum": 44594.00213561132,
+            "maximum": 45046.67841945289
+          },
+          "gc_steps": {
+            "median": 166.53738601823707,
+            "minimum": 153.89695210449926,
+            "maximum": 175.27869649805447
+          },
+          "plock_waits": {
+            "median": 0.9995136186770428,
+            "minimum": 0.9993920972644377,
+            "maximum": 0.9995208433157643
+          },
+          "commit_waits": {
+            "median": 0.9995136186770428,
+            "minimum": 0.9993920972644377,
+            "maximum": 0.9995208433157643
+          },
+          "native_counts": {}
+        }
+      },
+      "vm_states": {
+        "I": 888,
+        "J": 35,
+        "N": 169,
+        "C": 3117,
+        "G": 339
+      },
+      "guest_stacks": [
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:4119;",
+          885
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x563471042500;",
+          535
+        ],
+        [
+          "C:builtin/box/schema.lua:291;builtin/box/schema.lua:302;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:214;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          394
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:4088;@0x563471042500;",
+          269
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          112
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;",
+          104
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2459;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x563471042500;",
+          85
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x563471042500;",
+          77
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];",
+          63
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2778;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x563471042500;",
+          61
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2871;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x563471042500;",
+          60
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          52
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2462;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x563471042500;",
+          50
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2774;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x563471042500;",
+          47
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_lazy.lua:1201;",
+          46
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2459;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x563471042500;",
+          42
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;",
+          42
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2871;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x563471042500;",
+          37
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2650;/home/runner/work/tarn/tarn/lua/tarn.lua:2772;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x563471042500;",
+          36
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn.lua:2870;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x563471042500;",
+          36
+        ]
+      ]
+    },
+    {
+      "engine": "vinyl",
+      "native": "enabled",
+      "source": "088cdb15477e7646d5483561060fc92cc0548bd3",
+      "totals": {
+        "samples": 33,
+        "attempts": 96198,
+        "acknowledged": 96198,
+        "refused": 0
+      },
+      "groups": {
+        "uncontended": {
+          "tps": {
+            "median": 396.4735894708587,
+            "minimum": 385.7769507110841,
+            "maximum": 397.0113297350112
+          },
+          "p50_ms": {
+            "median": 2.436144000000695,
+            "minimum": 2.425785999989216,
+            "maximum": 2.4915810000010197
+          },
+          "p99_ms": {
+            "median": 3.667006999990008,
+            "minimum": 3.4944589999952314,
+            "maximum": 3.7317249999944124
+          },
+          "tx_cpu_us": {
+            "median": 1220.3731719616742,
+            "minimum": 1193.3534743202417,
+            "maximum": 1264.2487046632125
+          },
+          "process_cpu_us": {
+            "median": 3338.3761976802825,
+            "minimum": 3308.1570996978853,
+            "maximum": 3362.694300518135
+          },
+          "lua_bytes": {
+            "median": 41044.67824773414,
+            "minimum": 41017.06051437216,
+            "maximum": 41159.04922279793
+          },
+          "gc_steps": {
+            "median": 142.53706505295008,
+            "minimum": 132.39425981873111,
+            "maximum": 167.76062176165803
+          },
+          "plock_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "native_counts": {}
+        },
+        "unrelated": {
+          "tps": {
+            "median": 969.280487842636,
+            "minimum": 851.5918907995413,
+            "maximum": 978.4572162144933
+          },
+          "p50_ms": {
+            "median": 7.995843000003333,
+            "minimum": 7.967137000008506,
+            "maximum": 8.080205999988266
+          },
+          "p99_ms": {
+            "median": 14.63688900000193,
+            "minimum": 14.560301999992475,
+            "maximum": 15.637988000001712
+          },
+          "tx_cpu_us": {
+            "median": 875.7469606429013,
+            "minimum": 860.016420361248,
+            "maximum": 880.6464981351015
+          },
+          "process_cpu_us": {
+            "median": 2147.1254893880073,
+            "minimum": 2134.6469622331692,
+            "maximum": 2163.2822213012846
+          },
+          "lua_bytes": {
+            "median": 41983.288069235525,
+            "minimum": 41926.92405582923,
+            "maximum": 42072.86934083978
+          },
+          "gc_steps": {
+            "median": 133.5282664790054,
+            "minimum": 132.88,
+            "maximum": 134.445503522586
+          },
+          "plock_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "native_counts": {}
+        },
+        "hot": {
+          "tps": {
+            "median": 455.00504407984556,
+            "minimum": 439.6834640695855,
+            "maximum": 470.1909961889302
+          },
+          "p50_ms": {
+            "median": 16.777822999998193,
+            "minimum": 16.54354000000069,
+            "maximum": 17.64962699999728
+          },
+          "p99_ms": {
+            "median": 24.696278999982724,
+            "minimum": 23.54501599999992,
+            "maximum": 25.711355999987973
+          },
+          "tx_cpu_us": {
+            "median": 1163.6201515827017,
+            "minimum": 1144.0677966101696,
+            "maximum": 1224.4897959183675
+          },
+          "process_cpu_us": {
+            "median": 3168.864313058273,
+            "minimum": 3131.35593220339,
+            "maximum": 3278.9115646258506
+          },
+          "lua_bytes": {
+            "median": 44497.81551270815,
+            "minimum": 44418.99618644068,
+            "maximum": 45233.809977324265
+          },
+          "gc_steps": {
+            "median": 150.37335670464506,
+            "minimum": 145.3040570664289,
+            "maximum": 159.2952380952381
+          },
+          "plock_waits": {
+            "median": 0.9995617879053462,
+            "minimum": 0.999546485260771,
+            "maximum": 0.9995762711864407
+          },
+          "commit_waits": {
+            "median": 0.9995617879053462,
+            "minimum": 0.999546485260771,
+            "maximum": 0.9995762711864407
+          },
+          "native_counts": {}
+        }
+      },
+      "vm_states": {
+        "I": 997,
+        "G": 451,
+        "C": 4114,
+        "N": 227,
+        "J": 47
+      },
+      "guest_stacks": [
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:4119;",
+          1222
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x56396eeea500;",
+          796
+        ],
+        [
+          "C:builtin/box/schema.lua:291;builtin/box/schema.lua:302;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:214;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          503
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:4088;@0x56396eeea500;",
+          363
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;",
+          125
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          113
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x56396eeea500;",
+          98
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2459;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x56396eeea500;",
+          96
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];",
+          91
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2462;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x56396eeea500;",
+          75
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2778;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x56396eeea500;",
+          68
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2871;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x56396eeea500;",
+          62
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2650;/home/runner/work/tarn/tarn/lua/tarn.lua:2772;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x56396eeea500;",
+          54
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:218;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:215;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;",
+          54
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2871;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x56396eeea500;",
+          52
+        ],
+        [
+          "I:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:83;/home/runner/work/tarn/tarn/lua/tarn.lua:2870;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x56396eeea500;",
+          47
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn.lua:2870;/home/runner/work/tarn/tarn/lua/tarn.lua:4070;/home/runner/work/tarn/tarn/lua/tarn.lua:4117;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x56396eeea500;",
+          45
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:91;/home/runner/work/tarn/tarn/lua/tarn.lua:2459;/home/runner/work/tarn/tarn/lua/tarn.lua:2473;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;@0x56396eeea500;",
+          44
+        ],
+        [
+          "G:/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:56;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:69;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:213;/home/runner/work/tarn/tarn/lua/tarn_fresh.lua:230;/home/runner/work/tarn/tarn/lua/tarn.lua:2411;/home/runner/work/tarn/tarn/lua/tarn.lua:2467;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn_engine.lua:314;",
+          40
+        ],
+        [
+          "C:/home/runner/work/tarn/tarn/lua/tarn.lua:2774;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:2810;/home/runner/work/tarn/tarn/lua/tarn.lua:4111;[builtin#20];/home/runner/work/tarn/tarn/lua/tarn.lua:4090;@0x56396eeea500;",
+          40
+        ]
+      ]
+    }
+  ]
+}

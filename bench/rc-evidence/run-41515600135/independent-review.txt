@@ -1,0 +1,120 @@
+Independent review of READ COMMITTED run 41515600135
+
+Scope and method
+Reviewed original downloaded baseline JSON, every attempt JSONL, retained fixture
+archives, release artifacts and receipts without using the author's audit or
+summary to form the initial result. A separate Python implementation recomputed
+identities, effects, schedules, quantiles, rates, counters and profile bounds.
+Then compared the repository archives and public audit output with that result.
+No production files, external services or running databases were changed.
+
+Result: no material inconsistency found in the completed current-run evidence.
+
+Source and provenance
+Measurement source is 088cdb15477e7646d5483561060fc92cc0548bd3. Its diff from
+295305a26fbdd1aaa773feaafc6a3423548e22bd contains only the five new benchmark,
+profiler/test and workflow files; production Rust/Lua and cluster scripts match.
+Collector, profiler and Lua hashes match that measured commit. All four mode
+receipts agree with the build receipts and actual downloaded release files:
+  tarn-server SHA256:
+  698163d8c219869e7dbe27a90f3a0d30d125d28d13d6bd8536dbd4c1e9ed0eb2
+  libtarn_storage.so SHA256:
+  1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae
+The Lua tree receipt matches Git; compiler receipt reports Rust 1.98.1.
+All four runtime receipts identify Tarantool 3.9.0-0-g8b9a0f5 and the same
+executable digest. The Tarantool executable itself was not available in the
+provided artifacts, so that digest is a recorded runtime receipt, not an
+independently rehashed executable. Startup commands agree with the intended
+release paths, native settings, fsync, empty debug flags and zero Vinyl cache.
+
+Exact outcomes and schedules
+All 132 samples complete: 12 three-second warmups, 60 ordinary five-second
+windows and 60 profiled five-second windows. Sample numbers, alternating shape
+order, client counts, per-worker token formula, continuous sequence numbers,
+key selection and unique identities match the collector's declared schedule.
+Every raw attempt-file hash matches. Acknowledgements by mode:
+  memtx / disabled: 87,364
+  memtx / enabled:  85,431
+  vinyl / disabled: 98,715
+  vinyl / enabled:  96,198
+  total:          367,708
+Every acknowledged token and key exactly matches its ledger readback. All eight
+individual counter values match their acknowledged effects in every sample.
+There are zero recorded refusals or unknowns. Source inspection finds no retry;
+raw records contain no duplicate or reused attempt identity. These records are
+not an independent wire trace of internal execution, and a run with no refusals
+cannot dynamically establish refusal classification behavior.
+
+All six endpoints report effective check_locks=false and check_yields=false
+before and after every sample. Engine, fsync and quorum-string receipts agree;
+PIDs and leadership are stable within each sample. Recomputed commit_rc deltas
+exactly equal acknowledgements. Runtime lock-copy/protocol error counters are
+zero. Archived error-level log entries occur during startup or shutdown, outside
+the measurement span; no fatal/panic/assertion entries were found.
+
+Native-enabled leaders are ready, but every measured served/read/write/commit/
+validation and handback counter delta is zero. This SQL workload uses Lua RC
+locking/commit even when the native module is loaded. Library loading alone
+does not establish native procedure execution or an end-to-end native gain.
+
+Metrics and bounded profiles
+All stored before/after deltas, acknowledged latency quantiles and goodput
+arithmetic independently recompute. The twelve ordinary-window rows in
+RC_PROFILE_REFRESH.md agree with the independent results at reported precision.
+Uncontended/unrelated windows have zero row-lock/commit waits; hot-key windows
+have approximately one increment of each counter per acknowledgement. Those
+counters are event counts, not wait durations.
+
+The 120 leader histograms retain 21,368 weighted samples, at most 174 distinct
+stacks each, zero overflow and no watchdog expiry. State weights, stack weights,
+256-stack/8-frame/2,048-byte caps, 10ms interval and start-bound receipts pass.
+Guest frames and C-state samples cannot separate engine CPU, WAL fsync, quorum
+waiting and ownership/freshness work into exact costs.
+
+Storage CPU is tick-quantized and excludes the gateway/client. Eleven small
+inactive-process observations have TX deltas exceeding process deltas by one
+10ms tick; no deltas are negative. Separate reads and quantization limit strict
+ordering or precise sub-tick attribution. CPU/allocation intervals also include
+setup, diagnostics and background activity. The summary's GC-step metric sums
+selected retained GC counters, excluding sweepstring/pause; it is not complete
+GC work. Ordinary goodput includes recorded drain time; no outlier was trimmed.
+
+Hardware and comparison limits
+Each runner exposes four logical CPUs. Memtx modes report AMD EPYC 7763; Vinyl
+with native disabled reports Intel Xeon Platinum 8573C, while Vinyl enabled
+reports AMD EPYC 9V74. Modes use separate runners and are not matched engine or
+native comparisons. Ordinary and profiled phases are sequential, so differences
+are descriptive and confounded by time/JIT/heap drift, not a causal estimate of
+profiler overhead. The small, single-host, closed-loop, same-shard workload does
+not establish disk capacity, physical scale-out, overload behavior or candidate
+improvements. Historical checks-enabled paired studies remain instrumented-run
+evidence and cannot be numerically converted into production performance.
+
+Retained archive and public auditor review
+Independently verified all four archive hashes and all 236 member hashes/bytes,
+and matched every member to the original artifact or its fixture archive. The
+public auditor rerun exactly reproduces summary.json; independently recomputed
+rate, latency, CPU and allocation summaries agree.
+
+Initial review found that the public auditor trusted collector-produced
+sample.deltas and validated only part of the exact schedule/profiling bounds.
+The revised auditor checks every stored metric/stat/call delta against raw
+before/after snapshots, verifies exact sample numbering/order/durations,
+checks declared profiler depth/interval/start bounds and validates ordinary
+CPU PID coverage. I reviewed those corrections and reran the final auditor;
+it still exactly reproduces summary.json. The identified validation gaps are
+resolved. Current numerical results also pass the separate independent checks
+above. The report now accurately labels the selected GC-step counters.
+
+Collector fixes and review boundary
+The debug-setting correction is present in measured source 088cdb1. The later
+470c954 admission-sealing/failure-path fix was reviewed separately and was not
+used for these measurements. Its applied-but-unreplied COMMIT and controller
+interruption tests meaningfully cover the earlier attempt-loss defects. This
+successful run does not itself qualify that later failure path.
+
+The refresh's current-run numerical conclusions and comparison limits are
+supported. Historical long-guard totals, remote workflow cancellation history,
+and full release/SQL/live-fault gates were not independently executed or
+validated in this raw-evidence audit. No production optimization or merge
+approval follows from this review.
