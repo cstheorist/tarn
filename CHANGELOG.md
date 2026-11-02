@@ -144,6 +144,25 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An ALTER TABLE or engine change that builds several vinyl indexes on a
+  replicated shard no longer splits the shard's old leader from its replica
+  set. If the followers took more than about a second to apply one build
+  (#267), the leader resigned while it was building the next one. That
+  build still committed on it, as an asynchronous DDL row the others never
+  got: they refused it later ("Split-Brain discovered: got an async
+  transaction from an old term"), and the old leader kept an index nobody
+  else had. Before each further build, the leader now waits until a quorum
+  of the replica set has applied what it wrote, so it doesn't resign in the
+  middle of one, and a build commits only if its node is still writable
+  once it has built; a leader that resigned while it waited or built
+  refuses the build and writes nothing. The SQL server now also sends
+  BUILD and PREPARE again on transient refusals, as it does APPLY, so the
+  next leader goes on with the indexes left instead of the change being
+  aborted. A follower that does not get a build's DDL row before the
+  shard's next election can still refuse it, as with any schema change,
+  and more often while #267 makes the leader resign during builds
+  ([#271](https://github.com/cstheorist/tarn/issues/271)).
+
 - A schema change no longer reports 1180 when one of its shards has no
   leader for a moment as it finishes. A replicated shard whose leader
   resigned while its followers applied an index build (#267) made an ALTER

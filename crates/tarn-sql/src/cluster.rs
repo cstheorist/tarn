@@ -808,12 +808,12 @@ impl Drop for LockRequestGuard<'_> {
 /// if it still waits.
 const DEADLOCK_MIN_WAIT: Duration = Duration::from_millis(50);
 
-/// How long a schema change keeps sending APPLY to a shard that refused it
-/// for a transient reason, before it reports the change unfinished (see
+/// How long a schema change keeps sending a step (BUILD, PREPARE, its
+/// decision, APPLY) to a shard that refused it for a transient reason (see
 /// `run_job_steps`). A replicated shard's leader can resign while its
 /// followers apply an index build, and the shard has no leader until one of
 /// them finishes (issue #267).
-const APPLY_RETRY: Duration = Duration::from_secs(60);
+const JOB_STEP_RETRY: Duration = Duration::from_secs(60);
 
 /// Run `attempt` again while it fails with a transient refusal
 /// (`step_transient`: a transaction conflict, no leader yet, a lost
@@ -2418,13 +2418,13 @@ impl Cluster {
 
     /// `job_phase` for a schema change (`run_job_steps`): sent again while
     /// the first shard refuses it for a transient reason, such as a conflict
-    /// or no leader for a while (issue #267), for up to APPLY_RETRY. The same
-    /// phase may be recorded twice. If it is still not recorded, the job
+    /// or no leader for a while (issue #267), for up to JOB_STEP_RETRY. The
+    /// same phase may be recorded twice. If it is still not recorded, the job
     /// stays undecided and a server finishes it, so the outcome is unknown.
     async fn record_phase(&self, job: &Job, phase: &str) -> SqlResult<()> {
         let mut a = Mp::new();
         a.arr(2).str(&job.owner).str(phase);
-        let recorded = retry_transient(APPLY_RETRY, Duration::from_millis(20), || async {
+        let recorded = retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), || async {
             let d = self.call(0, "tarn_job_phase", &a.0).await?;
             if crate::mpw::status_is(&d, "gone") {
                 return Ok(false);
@@ -2592,7 +2592,11 @@ impl Cluster {
         if phase == "prepare" || phase == "run" {
             if job.kind == JobKind::Alter {
                 for r in crate::topology::collect(
-                    live.iter().map(|&i| step(i, job.kind.proc("build"))),
+                    live.iter().map(|&i| {
+                        retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || {
+                            step(i, job.kind.proc("build"))
+                        })
+                    }),
                     self.cfg.topology.fanout,
                 )
                 .await
@@ -2617,9 +2621,17 @@ impl Cluster {
                 }
             }
             let mut applied = false;
+            // BUILD and PREPARE may be repeated too: an index a shard has
+            // already built is not built again. A leader that resigns while
+            // its followers apply one of several builds refuses its next
+            // build (issue #271), and the new leader goes on from there.
             if failed.is_none() {
                 for r in crate::topology::collect(
-                    live.iter().map(|&i| step(i, job.kind.proc("prepare"))),
+                    live.iter().map(|&i| {
+                        retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || {
+                            step(i, job.kind.proc("prepare"))
+                        })
+                    }),
                     self.cfg.topology.fanout,
                 )
                 .await
@@ -2680,12 +2692,12 @@ impl Cluster {
         for g in groups {
             // APPLY may be repeated (a server that finishes the job repeats
             // it). A shard that refused it for a transient reason gets it
-            // again, for up to APPLY_RETRY: a transaction conflict can roll
+            // again, for up to JOB_STEP_RETRY: a transaction conflict can roll
             // back a DDL statement of it, and a leader change can leave the
             // shard without a leader for a while (issue #267).
             for r in crate::topology::collect(
                 g.iter().map(|&i| {
-                    retry_transient(APPLY_RETRY, Duration::from_millis(20), move || {
+                    retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || {
                         step(i, job.kind.proc("apply"))
                     })
                 }),
