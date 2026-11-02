@@ -1,8 +1,8 @@
 # READ COMMITTED profile refresh for #186
 
-Recommendation to Jeremiah: replace draft #202 with a narrower profiling PR,
-retain its historical experiments, and keep both allocation candidates
-experimental. Leave #186 open for a measured optimization. This refresh does
+Jeremiah approved replacing draft #202 with this narrower profiling PR;
+#202 is closed with its historical experiments retained. Both allocation
+candidates remain experimental. Leave #186 open for a measured optimization. This refresh does
 not change production execution or defaults, and is not evidence of a
 candidate speedup.
 
@@ -135,9 +135,11 @@ the later failure-path fix was used for their timing.
 
 ## Reproduce the retained audit
 
-From the repository root:
+From the repository root, fetch the measured commit first if it is not already
+available locally (the profiling branch was subsequently rebased):
 
 ```sh
+git fetch origin 088cdb15477e7646d5483561060fc92cc0548bd3
 python3 bench/rc-evidence/run-41515600135/audit.py \
   bench/rc-evidence/run-41515600135/manifest.json
 ```
