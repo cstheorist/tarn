@@ -1,6 +1,11 @@
 -- Qualification of this isolated RF3 fixture, not production administration.
+-- Arguments: enabled|disabled (the native module), the output file, and the
+-- tables' engine.
 local json, net = require('json'), require('net.box')
 local rows, leaders, failures = {}, 0, {}
+-- Which storage paths the histories took, summed over the leaders: requests
+-- the native procedures served, and requests they handed to the Lua ones.
+local paths = {native = 0, lua_handoff = 0}
 for shard = 1, 2 do
     local writable = 0
     for replica = 1, 3 do
@@ -34,8 +39,13 @@ return {wal_mode=cfg.wal_mode,quorum_config=cfg.replication_synchro_quorum,
         if not state.ro then
             writable = writable + 1
             if arg[1] == 'enabled' then
-                if not (type(state.info.native) == 'table' and state.info.native.ready == 1) then
+                local n = state.info.native
+                if not (type(n) == 'table' and n.ready == 1) then
                     failures[#failures + 1] = 'native module not ready on ' .. address
+                else
+                    paths.native = paths.native + n.served + n.writes + n.commits + n.validations
+                    paths.lua_handoff = paths.lua_handoff + n.to_lua + n.writes_to_lua + n.commits_to_lua
+                        + n.validations_to_lua
                 end
             else
                 if state.info.native ~= false then
@@ -47,8 +57,19 @@ return {wal_mode=cfg.wal_mode,quorum_config=cfg.replication_synchro_quorum,
     if writable ~= 1 then failures[#failures + 1] = 'expected one leader in shard ' .. tostring(shard) end
     leaders = leaders + writable
 end
+-- With the native module, the histories must take both paths on memtx
+-- tables. Vinyl requests stay on the Lua path (docs/native-storage.md), so
+-- there they must at least reach the native module and be handed back.
+if arg[1] == 'enabled' then
+    if arg[3] == 'memtx' and paths.native == 0 then
+        failures[#failures + 1] = 'no request took the native path'
+    end
+    if paths.lua_handoff == 0 then
+        failures[#failures + 1] = 'no request was handed from the native procedures to the Lua ones'
+    end
+end
 local f = assert(io.open(arg[2], 'w'))
-f:write(json.encode({leaders=leaders, nodes=rows, failures=failures}), '\n')
+f:write(json.encode({leaders=leaders, nodes=rows, paths=paths, failures=failures}), '\n')
 f:close()
 assert(#failures == 0, table.concat(failures, '; '))
 os.exit(0)

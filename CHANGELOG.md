@@ -8,6 +8,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The MySQL contract workflow checks which storage paths its histories
+  took. With the native procedures, the memtx histories must include
+  requests the native procedures served and requests they handed to the Lua
+  procedures. The vinyl histories, which stay on the Lua path, must reach
+  the native module and be handed back. The job's storage evidence keeps the
+  counts ([#178](https://github.com/cstheorist/tarn/issues/178)).
+
 - `bench/online_lazy_build.py` measures index builds on replicated shards.
   `--index plain` adds an ordinary index, and `--other-rate` inserts into
   another table meanwhile. Each run records the shards' leader changes, and

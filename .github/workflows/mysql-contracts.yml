@@ -110,7 +110,7 @@ jobs:
           tarantool --version > /tmp/contract-results/tarantool.txt
           python3 tests/sql/contracts.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 \
             --engine '${{ matrix.engine }}' --output /tmp/contract-results/results.json
-          tarantool tests/sql/contract_runtime.lua '${{ matrix.native }}' /tmp/contract-results/storage.json
+          tarantool tests/sql/contract_runtime.lua '${{ matrix.native }}' /tmp/contract-results/storage.json '${{ matrix.engine }}'
       - name: Stop owned fixture
         if: always()
         run: KEEP=1 scripts/cluster.sh stop -d /tmp/tarn-contract-cluster
