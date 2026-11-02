@@ -158,13 +158,25 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   their copy's indexes before the copy too, so their final fence no longer
   builds them. A unique index the change adds fails it with 1062 only for a
   value two rows held at once: one the copy finds in two rows, or one the
-  fenced table holds twice. The copy takes changes to secondary indexes alone (new ones, with
-  drops and renames) of tables without global or lazy indexes, needs room
-  for a second copy of the table until the change is published, and writes
-  every row once more through the WAL and replication. `index_build` in
-  `cluster.json` chooses `auto` (copy when a shard has replicas, the
-  default), `copy` or `in_place`. `tla/ShadowUnique.tla` models the copy's
-  unique index, and `tests/indexcopy.sh` runs it on 2 shards x 3 replicas
+  fenced table holds twice. The copy takes changes to secondary indexes
+  alone (new ones, with drops and renames) of tables without global or
+  lazy indexes, needs room for a second copy of the table until the change
+  is published, and writes every row once more through the WAL and
+  replication. `index_build` in `cluster.json` chooses `auto` (copy when a
+  shard has replicas, the default), `copy` or `in_place`.
+  `tla/ShadowUnique.tla` models the copy's unique index, and
+  `tests/indexcopy.sh` runs it on 2 shards x 3 replicas
+  ([#267](https://github.com/cstheorist/tarn/issues/267)).
+
+- An engine change whose copy took longer than the session's lock wait
+  timeout (50 s by default) could fail with 1205 ("Engine-change
+  transactions have not drained") instead of finishing. When another engine
+  change on the node made it wait for the commits in flight again, or
+  writes outgrew its capture so that the copy started over, that wait had
+  only what was left of the timeout, and failed at once if any commit was
+  in flight on the node. The wait after a long final pass had the same
+  problem. Each such wait now gets the whole timeout. Index builds that
+  copy the table (above) take the same path
   ([#267](https://github.com/cstheorist/tarn/issues/267)).
 
 - An ALTER TABLE or engine change that builds several vinyl indexes on a

@@ -1,0 +1,152 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=45901 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 9 and seed 1578069630479172574 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 20359] (Linux 6.18.44-fc-v185 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-shadow/tla/ShadowUnique.tla
+Parsing file /tmp/tlc-1286973282131409188/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-1286973282131409188/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-1286973282131409188/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-1286973282131409188/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-1286973282131409188/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-1286973282131409188/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-1286973282131409188/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module ShadowUnique
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module ShadowUnique
+Starting... (2026-11-02 07:27:42)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 27 distinct states generated at 2026-11-02 07:27:42.
+Error: Invariant PreparedImage is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ source = <<0, 1, 1>>
+/\ dirty = {}
+/\ inserted = {}
+/\ deleted = {}
+/\ page = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ phase = "copy"
+/\ dupSeen = TRUE
+/\ copied = {}
+/\ writes = 0
+/\ shadow = <<0, 0, 0>>
+
+State 2: <ReadPage(1) line 77, col 5 to line 79, col 102 of module ShadowUnique>
+/\ pending = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ source = <<0, 1, 1>>
+/\ dirty = {}
+/\ inserted = {}
+/\ deleted = {}
+/\ page = [active |-> TRUE, key |-> 1, value |-> 0]
+/\ phase = "copy"
+/\ dupSeen = TRUE
+/\ copied = {}
+/\ writes = 0
+/\ shadow = <<0, 0, 0>>
+
+State 3: <WritePage line 82, col 5 to line 95, col 79 of module ShadowUnique>
+/\ pending = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ source = <<0, 1, 1>>
+/\ dirty = {}
+/\ inserted = {}
+/\ deleted = {}
+/\ page = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ phase = "copy"
+/\ dupSeen = TRUE
+/\ copied = {1}
+/\ writes = 0
+/\ shadow = <<0, 0, 0>>
+
+State 4: <ReadPage(2) line 77, col 5 to line 79, col 102 of module ShadowUnique>
+/\ pending = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ source = <<0, 1, 1>>
+/\ dirty = {}
+/\ inserted = {}
+/\ deleted = {}
+/\ page = [active |-> TRUE, key |-> 2, value |-> 1]
+/\ phase = "copy"
+/\ dupSeen = TRUE
+/\ copied = {1}
+/\ writes = 0
+/\ shadow = <<0, 0, 0>>
+
+State 5: <WritePage line 82, col 5 to line 95, col 79 of module ShadowUnique>
+/\ pending = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ source = <<0, 1, 1>>
+/\ dirty = {}
+/\ inserted = {}
+/\ deleted = {}
+/\ page = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ phase = "copy"
+/\ dupSeen = TRUE
+/\ copied = {1, 2}
+/\ writes = 0
+/\ shadow = <<0, 1, 0>>
+
+State 6: <ReadPage(3) line 77, col 5 to line 79, col 102 of module ShadowUnique>
+/\ pending = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ source = <<0, 1, 1>>
+/\ dirty = {}
+/\ inserted = {}
+/\ deleted = {}
+/\ page = [active |-> TRUE, key |-> 3, value |-> 1]
+/\ phase = "copy"
+/\ dupSeen = TRUE
+/\ copied = {1, 2}
+/\ writes = 0
+/\ shadow = <<0, 1, 0>>
+
+State 7: <WritePage line 82, col 5 to line 95, col 79 of module ShadowUnique>
+/\ pending = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ source = <<0, 1, 1>>
+/\ dirty = {}
+/\ inserted = {}
+/\ deleted = {}
+/\ page = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ phase = "copy"
+/\ dupSeen = TRUE
+/\ copied = {1, 2, 3}
+/\ writes = 0
+/\ shadow = <<0, 0, 1>>
+
+State 8: <Fence line 100, col 5 to line 102, col 101 of module ShadowUnique>
+/\ pending = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ source = <<0, 1, 1>>
+/\ dirty = {}
+/\ inserted = {}
+/\ deleted = {}
+/\ page = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ phase = "insert"
+/\ dupSeen = TRUE
+/\ copied = {1, 2, 3}
+/\ writes = 0
+/\ shadow = <<0, 0, 1>>
+
+State 9: <Prepare line 123, col 5 to line 125, col 101 of module ShadowUnique>
+/\ pending = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ source = <<0, 1, 1>>
+/\ dirty = {}
+/\ inserted = {}
+/\ deleted = {}
+/\ page = [active |-> FALSE, key |-> 1, value |-> 0]
+/\ phase = "prepared"
+/\ dupSeen = TRUE
+/\ copied = {1, 2, 3}
+/\ writes = 0
+/\ shadow = <<0, 0, 1>>
+
+231635 states generated, 83024 distinct states found, 30625 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 03s at (2026-11-02 07:27:45)
+Trace exploration spec path: ./ShadowUnique_TTrace_1793622461.tla

@@ -114,7 +114,7 @@ of workload, fault budget and options. The names say what is checked:
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
 | `ReplicatedVinylBuild` | a separate model of a vinyl index build on a replicated shard: behind the table's drained fence, and with one synchronous write in flight while it runs, the index is complete and the replicas keep applying |
 | `ReplicatedBuildFence` | a separate model of an ALTER TABLE's vinyl builds on a replicated shard across leader changes: with a follower caught up before each build and a commit only on a node that still leads, no node meets a build's DDL row it refuses |
-| `ShadowUnique` | a separate model of a copy whose unique index exists before its first row: a row a stale copy blocks waits for the final pass, which removes every dirty key before it puts their rows back; a prepared copy is the source, and a change fails with 1062 only for a duplicate the source held |
+| `ShadowUnique` | a separate model of a copy whose unique index exists before its first row: a stale copy that holds a page row's value leaves the copy, and the final pass removes every dirty key before it puts their rows back; a prepared copy is the source, a change fails with 1062 only for a duplicate the source held, and the final pass has only keys that writes touched |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
@@ -1394,7 +1394,7 @@ long when many were.
 
 The independent [protocol suite](../lua/test/engine_test.lua) exercises
 both directions with the native module loaded and with native disabled:
-98 and 96 checks respectively, including the same-engine rebuilds of
+118 and 116 checks respectively, including the same-engine rebuilds of
 issue #267 (below). It verifies
 acknowledged writes during a paused copy, a unique-key cycle, DELETE/PK
 moves, rollback extras, sparse index IDs, unchanged physical tuple suffixes,
@@ -1466,36 +1466,47 @@ source and written later; a write marks its key dirty before it can commit
 and may roll back, and the final fence drains it.
 
 A copied row is the source's row while its key is clean, and may be stale
-once its key is dirty. So a page row whose value the copy of a dirty row
-holds is deferred: its key becomes dirty, and the row stays out of the
-shadow. A page row whose value the copy of a clean row holds fails the
-change, since both rows held the value in the source the page came from.
-Behind the fence every dirty key leaves the shadow first, and only then do
-the dirty keys' confirmed rows go in; a conflict there fails the change.
-`ShadowUnique` says the shadow's index never holds a value twice;
-`PreparedImage` says a prepared shadow is the source, which then holds no
-duplicate; `NoFalseDuplicate` says a change fails only if the source held
-a duplicate at some moment while it ran.
+once its key is dirty. So when a page row's value is held by the copy of a
+dirty row, that copy leaves the shadow (the final pass puts the dirty row
+back) and the page row goes in. When it is held by the copy of a clean row,
+the change fails, since both rows held the value in the source the page
+came from. Behind the fence every dirty key leaves the shadow first, and
+only then do the dirty keys' confirmed rows go in; a conflict there fails
+the change. `ShadowUnique` says the shadow's index never holds a value
+twice; `PreparedImage` says a prepared shadow is the source, which then
+holds no duplicate; `NoFalseDuplicate` says a change fails only if the
+source held a duplicate at some moment while it ran; `DirtyOnlyWritten`
+says the final pass has no more keys than writes began, so a copy that
+meets many stale copies of one duplicated value fails with 1062 rather
+than outgrowing the capture's limits.
 
 ```sh
 tla/check.sh ShadowUnique Bug_ShadowUniqueFailOnDirtyHolder \
-  Bug_ShadowUniqueSkipWithoutDefer Bug_ShadowUniqueTailInPlace
+  Bug_ShadowUniqueEvictClean Bug_ShadowUniqueTailInPlace
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
 |---|---:|---:|---|
-| `ShadowUnique` | 190,764 | 21 | passes (three keys, two values, three writes) |
+| `ShadowUnique` | 183,878 | 21 | passes (three keys, two values, three writes) |
 | `Bug_ShadowUniqueFailOnDirtyHolder` | 71,776 | 9 | violates `NoFalseDuplicate`: a row takes a value a copied row gave up, and its page fails against that row's stale copy |
-| `Bug_ShadowUniqueSkipWithoutDefer` | 186,843 | 13 | violates `PreparedImage`: a row left out of the shadow for a stale copy's sake is never put back |
-| `Bug_ShadowUniqueTailInPlace` | 182,830 | 13 | violates `NoFalseDuplicate`: a value moves from one row to another, and putting the dirty rows back one at a time meets the old row's copy |
+| `Bug_ShadowUniqueEvictClean` | 83,024 | 9 | violates `PreparedImage`: two rows hold one value from the start, and the copy of the first, which no write touched, leaves the shadow for the second's sake and never comes back |
+| `Bug_ShadowUniqueTailInPlace` | 177,216 | 13 | violates `NoFalseDuplicate`: a value moves from one row to another, and putting the dirty rows back one at a time meets the old row's copy |
 
 `lua/test/engine_test.lua` runs the same cases on both engines, through a
-rebuild that adds a unique index: a row deferred for a stale copy although
-no write touched it, two rows that swap values by way of NULL, a duplicate
-present when its page is read (1062 from BUILD), and one made after both
-rows were copied (1062 from PREPARE). Each control above, applied to
-`lua/tarn_engine.lua`, fails that suite. `tests/indexcopy.sh` runs the copy
-through SQL on 2 shards x 3 replicas with fsync while writes go on.
+rebuild that adds unique indexes, one with NULL in the last part of many
+keys: a stale copy that leaves the shadow for a row no write touched, two
+rows that swap values by way of NULL, two untouched rows that share a value
+behind one stale copy (1062 from BUILD, with only the written key captured),
+a duplicate present when its page is read (1062 from BUILD), and one made
+after both rows were copied (1062 from PREPARE). It also runs a copy and a
+final pass past their call's deadline, with another job's cut, a capture
+lost to writes, and a commit in flight. Each control above, and each of
+those deadlines left as the call's, applied to `lua/tarn_engine.lua`, fails
+that suite. `tests/indexcopy.sh` runs the copy through SQL on 2 shards x 3
+replicas with fsync while sessions increment a column, hand unique values
+from row to row, swap them by way of NULL, insert, delete and move rows to
+new primary keys, and checks the rows against those sessions' models; it
+fails when the final pass is skipped.
 The four configurations are generated by `gen_cfgs.sh` and bring the
 default check list from 333 to 337.
 

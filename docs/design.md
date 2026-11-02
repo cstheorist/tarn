@@ -1846,12 +1846,14 @@ while it is empty, before the first page (issue #267): no replica builds an
 index on a populated space, and the final fence builds none. A unique
 index on the shadow can meet a stale copy during the copy: a row whose key
 a write has touched since it was copied may still hold, in the shadow, a
-value another row has taken. A row whose unique value the copy of such a
-row holds waits for the final pass, its key joining the dirty ones; a row
-whose value the copy of an untouched row holds fails the change with 1062,
-since both rows held the value in the confirmed source its page came from
-(only a unique index the change adds can meet that). A final persistent
-hold/fence drains old work, including decided APPLY. Then every dirty key
+value another row has taken. When a page's row has a unique value that the
+copy of such a row holds, that copy leaves the shadow and the page's row
+goes in; the dirty row comes back in the final pass. When the holder is the
+copy of an untouched row, the change fails with 1062, since both rows held
+the value in the confirmed source the page came from (only a unique index
+the change adds can meet that). So the copy adds no key to the final pass:
+only writes do, within the capture's limits. A final persistent hold/fence
+drains old work, including decided APPLY. Then every dirty key
 leaves the shadow before the dirty keys' confirmed rows go back in, so a
 conflict there is a duplicate in the fenced source (1062); putting the
 dirty rows back one at a time would meet stale copies, as when two rows
@@ -2301,7 +2303,7 @@ throughput measurements:
 
 | Suite | Engine-change boundary | Recorded result |
 |---|---|---|
-| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup; same-engine rebuilds (issue #267): indexes before the first row, rows a stale copy blocks, swapped unique values, duplicates found by the copy and at the fence (1062), drops and renames | 98 checks with the native module; 96 with native disabled; both engine directions |
+| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup; same-engine rebuilds (issue #267): indexes before the first row, stale copies evicted for a page's row, swapped unique values, shared values behind one stale copy, NULL in a unique key's last part, duplicates found by the copy and at the fence (1062), copies and final passes past their call's deadline, drops and renames | 118 checks with the native module; 116 with native disabled; both engine directions |
 | `lua/test/engine_terminal_test.lua` | a detached shadow commit remains tracked after its caller ends; cleanup waits for the terminal/native queue cut; capture allocation failure cannot certify a lost tail | focused native-terminal fault gate, separate from process loss |
 | `lua/test/engine_replication.sh` | quorum-2/fsync replica sets: leader loss during copy forces recopy; a later leader loss preserves PREPARED and completes publication/cleanup | passes in both engine directions, with native enabled and disabled; eight owned leader terminations across four cohorts |
 
@@ -2570,9 +2572,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_RecordPolicyIgnoreHealth | violates NoUnsafeAdmission | 104 | 217 | 7 | 00s | 4 |
 | Bug_RecordPolicyMutablePolicy | violates NoUnsafeAdmission | 407 | 997 | 11 | 00s | 10 |
 | Bug_RecordPolicyNoWatermark | violates NoUnsafeAdmission | 393 | 977 | 12 | 00s | 10 |
+| Bug_ShadowUniqueEvictClean | violates PreparedImage | 83024 | 231635 | 9 | 03s | 9 |
 | Bug_ShadowUniqueFailOnDirtyHolder | violates NoFalseDuplicate | 71776 | 200692 | 9 | 02s | 9 |
-| Bug_ShadowUniqueSkipWithoutDefer | violates PreparedImage | 186843 | 632484 | 13 | 05s | 13 |
-| Bug_ShadowUniqueTailInPlace | violates NoFalseDuplicate | 182830 | 622443 | 13 | 05s | 13 |
+| Bug_ShadowUniqueTailInPlace | violates NoFalseDuplicate | 177216 | 603131 | 13 | 04s | 13 |
 | Bug_StreamCompletionDropReadset | violates NoFracturedCommit | 2798 | 6345 | 14 | 00s | 14 |
 | Bug_StreamCompletionSkipFinalPrefix | violates NoFracturedCommit | 196 | 372 | 8 | 00s | 8 |
 | Bug_StreamMarksCommitInNewTxn | violates CommittedReadsCurrent | 11392 | 22752 | 8 | 01s | 8 |
@@ -2688,7 +2690,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Recov_GC | no errors | 1136892 | 8123071 | 23 | 02min 26s |  |
 | ReplicatedBuildFence | no errors | 135018 | 406180 | 29 | 26s |  |
 | ReplicatedVinylBuild | no errors | 18694 | 28734 | 20 | 01s |  |
-| ShadowUnique | no errors | 190764 | 654011 | 21 | 04s |  |
+| ShadowUnique | no errors | 183878 | 630707 | 21 | 05s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
 | SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 11min 32s |  |

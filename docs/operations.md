@@ -801,7 +801,10 @@ fills and lazy-index bootstrap follow that tail.
 during the copy and auxiliary-index readiness, not just a name switch. Reads that honor
 DDL holds and writers can wait or fail their normal lock deadlines during
 this phase. Copying is paged and the job is kept alive; the lock/drain
-timeout is not a whole-migration duration guarantee. A busy source can also
+timeout is not a whole-migration duration guarantee. Each wait for commits
+in flight, whether between pages, before a new copy or after the final
+pass, gets the session's lock wait timeout anew, so a copy that runs longer
+than the timeout does not fail its next wait. A busy source can also
 outgrow its capture set and require another full copy. Its default limits
 are 65,536 keys and 8 MiB of encoded keys (`tarn.cfg.engine_dirty_keys` and
 `engine_dirty_bytes`); Lua tables and other bookkeeping require additional

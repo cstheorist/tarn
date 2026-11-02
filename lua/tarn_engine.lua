@@ -99,6 +99,12 @@ function M.new(c)
     local function ready(deadline)
         if not q.ready() then cut(deadline) end
     end
+    -- A wait's deadline: the ALTER's lock wait timeout from now. The copy
+    -- and the final tail take as long as the table needs, a page or a batch
+    -- per transaction, so a cut or drain after them gets a deadline of its
+    -- own rather than what is left of the call's: past that, a cut that
+    -- meets one commit in flight on the node fails at once (1205).
+    local function within(a) return clock.monotonic() + (a.timeout or 50) end
     local function snapshot(sp)
         local indexes = {}
         for id, ix in pairs(sp.index) do
@@ -206,13 +212,6 @@ function M.new(c)
     -- row is the source's still.
     local function captured(t, sid, row)
         return t.keys[mp.encode(c.key_def(sid, 0):extract_key(row):totable())] ~= nil
-    end
-    -- Leave row's key to the final pass, as if a write had touched it. A
-    -- set that runs over its limits is lost, as it is by writes.
-    local function defer(t, sid, row)
-        local ok, err = pcall(capture_body, t, sid, nil, row)
-        if not ok then t.valid = false; error(err) end
-        if not capture_valid(t) then fail(1213, 'Engine capture was lost') end
     end
     local function attach(sid)
         local sp = box.space[sid]
@@ -459,7 +458,10 @@ function M.new(c)
         repeat
             -- A cut may be lost between successful stages. Nothing sampled
             -- below survives this wait: reread ownership, phase and capture
-            -- only after the terminal-ticket/native prefix is current.
+            -- only after the terminal-ticket/native prefix is current. The
+            -- copy may have run past the call's deadline: another job's cut
+            -- or a capture lost to writes needs a wait of its own here.
+            deadline = within(a)
             ready(deadline)
             r = read(function() return owned(a, gen) end)
             if certified(r) then return {'ok', 'applied'} end
@@ -502,18 +504,22 @@ function M.new(c)
                         local v = owned(a, gen, {copying = true})
                         if not capture_valid(t) or E.tracks[x.old_id] ~= t then fail(1213, 'Engine capture was lost') end
                         local shadow = box.space[v.new_id]
-                        local unique = uniques(shadow)
+                        local unique, pk = uniques(shadow), c.key_def(shadow.id, 0)
                         for _, tuple in ipairs(rows) do
-                            -- A row whose unique key a copied row holds: if
-                            -- a write to that row began since capture did,
-                            -- the copy may be stale, and the final pass
-                            -- settles both rows (the key joins the captured
-                            -- ones). Otherwise both rows held the key in the
-                            -- confirmed source this page was read from.
+                            -- A copied row that holds one of this row's
+                            -- unique keys: if a write to it began since
+                            -- capture did, its copy may be stale and leaves
+                            -- the replacement (the row's key is captured, so
+                            -- the final pass puts it back). Otherwise both
+                            -- rows held the key in the confirmed source this
+                            -- page was read from.
                             local other, ix = holder(shadow, unique, tuple)
-                            if other == nil then shadow:replace(tuple)
-                            elseif captured(t, x.old_id, other) then defer(t, x.old_id, tuple)
-                            else duplicate(ix) end
+                            while other ~= nil do
+                                if not captured(t, x.old_id, other) then duplicate(ix) end
+                                shadow:delete(pk:extract_key(other))
+                                other, ix = holder(shadow, unique, tuple)
+                            end
+                            shadow:replace(tuple)
                         end
                         v.cursor, v.copied = cursor, v.copied + #rows
                         if #rows == 0 then v.phase = 'copied' end
@@ -534,7 +540,7 @@ function M.new(c)
         end
         if r.phase == 'preparing' and E.tracks[r.old_id] then E.tracks[r.old_id].valid = false end
         E.build(name, a, gen, deadline)
-        deadline = clock.monotonic() + (a.timeout or 50)
+        deadline = within(a)
         update(a, gen, {copied = true}, function(v)
             v.phase = 'preparing'
             for _, old in ipairs({true, false}) do
@@ -587,6 +593,7 @@ function M.new(c)
             end, held)
             c.hook('engine_tail'); fiber.sleep(0)
         end
+        deadline = within(a)
         cut(deadline)
         r = read(function() return owned(a, gen, {preparing = true}) end)
         -- (Each exists: reset created them before the first row.)
@@ -711,7 +718,7 @@ function M.new(c)
     end
     function E.body(op, name, a, gen)
         c.writable(); c.bk.fresh()
-        local deadline = clock.monotonic() + (a.timeout or 50)
+        local deadline = within(a)
         ready(deadline); E.fresh()
         if op == 'bootstrap' or op == 'ready' then
             read(function() owned(a, gen, {prepared = true}) end)

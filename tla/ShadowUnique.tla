@@ -11,23 +11,26 @@
    A copied row is the source's row as long as its key is clean. A copied
    row may be stale once its key is dirty, so it can hold a value that
    another row has taken since. So:
-     - copying a row whose value a dirty row's copy holds defers the row
-       (its key becomes dirty, the row stays out of the shadow), and copying
-       one whose value a clean row's copy holds fails the change: both rows
-       held the value in the source the page was read from;
+     - copying a row whose value a dirty row's copy holds evicts that copy
+       (the final pass puts the dirty row back) and copies the row, and
+       copying one whose value a clean row's copy holds fails the change:
+       both rows held the value in the source the page was read from;
      - behind the fence, every dirty key first leaves the shadow, and only
        then do the dirty keys' rows go in, where a conflict is a duplicate in
        the fenced source.
-   Pages are read from the confirmed source and written later, as separate
-   actions; writes have an unconfirmed interval and may roll back.
+   Only writes make keys dirty, so the final pass covers no more keys than
+   the writes touched. Pages are read from the confirmed source and written
+   later, as separate actions; writes have an unconfirmed interval and may
+   roll back.
 
    PreparedImage: a prepared shadow is the source, and the source holds no
    duplicate. NoFalseDuplicate: a change fails with 1062 only if the source
-   held a duplicate at some moment while it ran. *)
+   held a duplicate at some moment while it ran. DirtyOnlyWritten: the
+   final pass has no more keys than writes began. *)
 EXTENDS Naturals, FiniteSets
 CONSTANTS MaxWrites,
           BugFailOnDirtyHolder,   \* a stale copy's value fails the change
-          BugSkipWithoutDefer,    \* a deferred row is left out, not made dirty
+          BugEvictClean,          \* a clean row's copy is evicted too
           BugTailInPlace          \* the final pass replaces dirty rows one by one
 
 Keys == {1, 2, 3}
@@ -80,18 +83,16 @@ WritePage ==
     /\ LET k == page.key
            v == page.value
            h == IF v = 0 THEN {} ELSE Holders(shadow, k, v)
-       IN IF h = {}
-          THEN /\ shadow' = [shadow EXCEPT ![k] = v]
+           stale == IF BugEvictClean THEN h ELSE h \cap dirty
+       IN IF h \ stale # {} \/ (BugFailOnDirtyHolder /\ h # {})
+          THEN /\ phase' = "failed"
+               /\ UNCHANGED <<shadow, copied>>
+          ELSE /\ shadow' = [j \in Keys |-> IF j = k THEN v
+                                            ELSE IF j \in stale THEN 0 ELSE shadow[j]]
                /\ copied' = copied \cup {k}
-               /\ UNCHANGED <<dirty, phase>>
-          ELSE IF (\E j \in h : j \in dirty) /\ ~BugFailOnDirtyHolder
-               THEN /\ dirty' = IF BugSkipWithoutDefer THEN dirty ELSE dirty \cup {k}
-                    /\ copied' = copied \cup {k}
-                    /\ UNCHANGED <<shadow, phase>>
-               ELSE /\ phase' = "failed"
-                    /\ UNCHANGED <<shadow, dirty, copied>>
+               /\ UNCHANGED phase
     /\ page' = NoPage
-    /\ UNCHANGED <<source, pending, writes, deleted, inserted, dupSeen>>
+    /\ UNCHANGED <<source, dirty, pending, writes, deleted, inserted, dupSeen>>
 
 (* The final fence: no write starts any more, and the ones begun have
    finished (drain). *)
@@ -143,4 +144,8 @@ TypeOK ==
 ShadowUnique == ~Dup(shadow)
 PreparedImage == phase = "prepared" => shadow = source /\ ~Dup(source)
 NoFalseDuplicate == phase = "failed" => dupSeen
+\* The copy adds no key to the final pass: only writes do (lua/tarn_engine.lua
+\* bounds those keys, and a copy that keeps meeting stale copies of
+\* duplicates must not outgrow that bound instead of failing with 1062).
+DirtyOnlyWritten == Cardinality(dirty) <= writes
 =============================================================================
