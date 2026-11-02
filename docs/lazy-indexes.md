@@ -54,7 +54,8 @@ then drop the old index. Bootstrap captures the current committed rows and
 publishes only after delivery completes. An ALTER TABLE that changes no
 column the new index reads builds it while writes go on; other changes
 build it behind the ALTER's fence, within its row and time limits (see
-"Bootstrap"). Comment edits do not change existing routing.
+"Bootstrap"). Either way, the shard-local index that serves strong reads
+builds behind the fence on memtx and on a replicated shard's vinyl table. Comment edits do not change existing routing.
 Upgrade every gateway and replica before creating composite metadata.
 DDL checks every configured replica's routing capability; movement checks
 the destination. Schema exports with active **or retired** composite
@@ -251,7 +252,9 @@ backpressure; they must not be acknowledged as successful delivery.
 An ALTER TABLE builds a new lazy index while writes go on when every field
 the index reads (its key, the primary key and the bucket) holds the same
 column, of the same type and collation, before and after the change
-(issue #184). The build runs before PREPARE, in three steps on each shard:
+(issue #184). The build runs before PREPARE, in three steps on each shard
+(the index's shard-local copy is a native index, built as the end of this
+section says):
 
 1. **Start** (`tarn_lazy_start`). A short fence drains the table's commits
    in flight and its prepared transactions. From then on, every write of

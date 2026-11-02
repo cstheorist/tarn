@@ -43,7 +43,7 @@
     {
       "id": "lazy.online_build",
       "classification": "intentional_extension",
-      "behavior": "ALTER TABLE ... ADD INDEX ... COMMENT 'tarn:lazy' that changes no column the index reads builds the index while writes go on. Writes are captured from a short drain on, and the baseline scan does not count against alter_check_rows. Once the ALTER returns, the index answers as the strong path does, also after a shard leader crashed during the scan. A change that indexes a column it adds still builds behind the fence, and is refused above the limit with 1846.",
+      "behavior": "ALTER TABLE ... ADD INDEX ... COMMENT 'tarn:lazy' that changes no column the index reads builds the index while writes go on; its shard-local index, which serves strong reads, still builds behind the fence on memtx and on a replicated shard's vinyl table. Writes are captured from a short drain on, and the baseline scan does not count against alter_check_rows. Once the ALTER returns, the index answers as the strong path does, also after a shard leader crashed during the scan. A change that indexes a column it adds still builds behind the fence, and is refused above the limit with 1846.",
       "tests": ["tests/sql/lazytest.py::T.test_online_build_while_writes_go_on", "tests/sql/lazyonlinefaults.py::main"]
     },
     {

@@ -137,11 +137,15 @@ def main():
             if time.monotonic() >= deadline:
                 raise AssertionError(f"replica {node} did not answer: {reply}")
             time.sleep(.2)
-    # A shard whose election finds no leader for 8 s has its most advanced
-    # replica promoted, as an operator would: a replica that refuses the
-    # others' votes because its vclock is ahead of theirs does not stand
-    # itself while their elections keep bumping the term (#254). The
-    # online build is what this test checks, not that election.
+    # A replica that refuses the others' votes because its vclock is ahead
+    # of theirs used not to stand itself while their elections kept bumping
+    # the term, leaving its shard without a leader for minutes (#254). The
+    # storage nodes' election watchdog now has a candidate stand once its
+    # shard has had no leader for three election timeouts (15 s here), plus
+    # up to half of that. A shard that still finds no leader after
+    # HEAL_AFTER seconds has its most advanced replica promoted, as an
+    # operator would, so that the build's checks go on; the test then fails.
+    HEAL_AFTER = 45
     crashed, healed, healer_stop = None, [], threading.Event()
 
     def healer():
@@ -160,7 +164,7 @@ def main():
                     leaderless.pop(g["id"], None)
                     continue
                 since = leaderless.setdefault(g["id"], time.monotonic())
-                if time.monotonic() - since < 8:
+                if time.monotonic() - since < HEAL_AFTER:
                     continue
                 # (Component 0 counts a replica's local writes: not replicated.)
                 clocks = {n: {int(k): v for k, v in st["vclock"].items() if int(k) != 0}
@@ -176,7 +180,7 @@ def main():
                     continue
                 healed.append({"shard": g["id"], "replica": best, "after": round(time.monotonic() - since, 1)})
                 record("healed", **healed[-1], vclocks=clocks)
-                print(f"WARN shard {g['id']} found no leader for 8 s; promoted {best}", flush=True)
+                print(f"WARN shard {g['id']} found no leader for {HEAL_AFTER} s; promoted {best}", flush=True)
                 leaderless.pop(g["id"], None)
 
     threading.Thread(target=healer, daemon=True).start()
@@ -398,9 +402,15 @@ def main():
         time.sleep(.5)
     live = [n for g in groups for n in g["replicas"] if n != crashed and alive(n)]
     healer_stop.set()
+    stands = {}
+    for node in live:
+        try:
+            stands[node] = ev(node, "return tarn_info().stats.election_stands")
+        except Exception:  # not answering
+            pass
     record("checked", writes=writes[0], during_alter=after - before, write_errors=len(errors),
            error_codes=sorted({e[0] for e in errors}), mismatches=mismatches, unstable_reads=unstable,
-           mismatched_tries=tries, healed=healed, alter_retried=retried)
+           mismatched_tries=tries, healed=healed, alter_retried=retried, election_stands=stands)
     if mismatches:
         for node in live:
             try:
@@ -409,6 +419,8 @@ def main():
                 stats = repr(e)
             print("FAIL lazy online outbox:", node, "leader" if node in leaders else "follower", stats, flush=True)
         fail("the lazy index differs from the table", mismatches)
+    if healed:
+        fail(f"a shard found no leader for {HEAL_AFTER} s until the test promoted a replica (#254)", healed)
     c.close()
     print("RF3/fsync online lazy build survives an owned leader crash mid-scan; lazy equals strong", flush=True)
 
