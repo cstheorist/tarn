@@ -153,6 +153,9 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
                 token = number * 1000000 + worker_id * 100000 + seq
                 key = 0 if shape == 'hot' else worker_id
                 attempt = dict(token=token, key=key, worker=worker_id, outcome='unknown')
+                # Publish identity before any RPC. A worker still blocked at
+                # the bounded join must leave an unknown attempt in evidence.
+                records.append(attempt)
                 began = time.monotonic()
                 try:
                     query(c, 'BEGIN')
@@ -170,7 +173,6 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
                         cancel.set()
                 finally:
                     attempt['latency_seconds'] = time.monotonic() - began
-                    records.append(attempt)
             else:
                 raise AssertionError('bounded per-worker attempt cap reached before duration')
         except Exception as exc:
@@ -189,11 +191,14 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
         join_deadline = start[0] + args.seconds + 35
         for thread in threads:
             thread.join(max(0, join_deadline - time.monotonic()))
-    except Exception as exc:
+    except BaseException as exc:
+        # Preserve in-flight identities on an interrupted controller too.
         failures.append(repr(exc))
     finally:
         cancel.set()
     elapsed = time.monotonic() - (start[0] or sample_started)
+    # Freeze the failed sample as unknown even if a live worker settles later.
+    records = [dict(record) for record in records]
     attempt_path = output.parent / f'{output.stem}-sample-{number}.jsonl'
     attempt_path.write_text(''.join(json.dumps(r, sort_keys=True) + '\n' for r in sorted(records, key=lambda r: r['token'])))
     record = dict(number=number, shape=shape, profiled=profiled, warmup=warmup, clients=clients,
