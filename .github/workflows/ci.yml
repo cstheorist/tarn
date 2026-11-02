@@ -109,6 +109,8 @@ jobs:
           python-version: "3.12"
       - name: Install Python packages
         run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0
+      - name: READ COMMITTED profile accounting and runtime controls
+        run: python3 bench/rc_profile_test.py
       - name: Vinyl pressure scheduling and readback controls
         run: python3 tests/sql/vinylpressure_phase_test.py
       - name: Strong KV administrative transport privacy controls
