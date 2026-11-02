@@ -2215,9 +2215,11 @@ impl Cluster {
     /// Whether ALTER TABLE change `ch` of `def` builds its new indexes by
     /// copying the table (`ClusterConfig::index_build`): it must be one
     /// `alter::rebuild_eligible` takes, and every replica of every shard
-    /// must know the rebuild, since any of them may take over the job. A
-    /// replica that does not answer, or predates the rebuild, leaves the
-    /// change to build in place.
+    /// must know the rebuild, since any of them may take over the job; a
+    /// rebuild that changes the stored layout needs the replicas to know
+    /// that too (`alter::rebuild_changes_layout`). A replica that does not
+    /// answer, or predates what the change needs, leaves the change to build
+    /// in place.
     async fn copy_index_builds(&self, def: &TableDef, ch: &crate::alter::Change) -> bool {
         let wanted = match self.cfg.index_build {
             IndexBuild::InPlace => false,
@@ -2227,42 +2229,52 @@ impl Cluster {
         if !wanted || !crate::alter::rebuild_eligible(def, ch) {
             return false;
         }
+        let mut needed = vec!["tarn_engine_rebuild_capabilities"];
+        if crate::alter::rebuild_changes_layout(ch) {
+            needed.push("tarn_engine_rebuild_format_capabilities");
+        }
         for shard in self.live_shards() {
             for addr in self.shards[shard].replicas() {
-                let capable = async {
-                    self.reclaim_connections(false).await;
-                    let client = tarn_iproto::Client::connect(&self.opts(addr)).await.ok()?;
-                    let response = tokio::time::timeout(
-                        Duration::from_secs(5),
-                        client.call(0, "tarn_engine_rebuild_capabilities", &[0x90]),
-                    )
-                    .await
-                    .ok()?
-                    .ok()?;
-                    let data = response.data()?;
-                    let mut rd = Rd::new(&data);
-                    (|| -> SqlResult<bool> {
-                        Ok(rd.array()? == 1
-                            && rd.array()? == 2
-                            && rd.string()? == "ok"
-                            && matches!(rd.value()?, Value::Int(1) | Value::UInt(1))
-                            && rd.buf.is_empty())
-                    })()
-                    .ok()
-                }
-                .await;
-                if capable != Some(true) {
-                    tracing::info!(
-                        "ALTER TABLE {} builds its indexes in place: replica {} of shard {} cannot rebuild the table",
-                        def.space_name(),
-                        addr,
-                        self.shards[shard].id
-                    );
-                    return false;
+                for &func in &needed {
+                    if !self.replica_answers_v1(addr, func).await {
+                        tracing::info!(
+                            "ALTER TABLE {} builds its indexes in place: replica {} of shard {} does not answer {}",
+                            def.space_name(),
+                            addr,
+                            self.shards[shard].id,
+                            func
+                        );
+                        return false;
+                    }
                 }
             }
         }
         true
+    }
+
+    /// Whether the storage node at `addr` answers capability procedure
+    /// `func` with `{'ok', 1}` within five seconds.
+    async fn replica_answers_v1(&self, addr: &str, func: &str) -> bool {
+        let capable = async {
+            self.reclaim_connections(false).await;
+            let client = tarn_iproto::Client::connect(&self.opts(addr)).await.ok()?;
+            let response = tokio::time::timeout(Duration::from_secs(5), client.call(0, func, &[0x90]))
+                .await
+                .ok()?
+                .ok()?;
+            let data = response.data()?;
+            let mut rd = Rd::new(&data);
+            (|| -> SqlResult<bool> {
+                Ok(rd.array()? == 1
+                    && rd.array()? == 2
+                    && rd.string()? == "ok"
+                    && matches!(rd.value()?, Value::Int(1) | Value::UInt(1))
+                    && rd.buf.is_empty())
+            })()
+            .ok()
+        }
+        .await;
+        capable == Some(true)
     }
 
     /// Engine replacement changes physical identities. Every potential

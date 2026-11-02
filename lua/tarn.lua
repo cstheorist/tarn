@@ -3711,6 +3711,21 @@ local function scan_covers(kd, t, it, key, end_key, end_incl, reverse)
     return true
 end
 
+-- The primary index of the table a COUNT or reduce scans. A copy's cutover
+-- may have dropped the space while the read yielded (a replaced table's old
+-- space, lua/tarn_engine.lua). The read then fails as one holding the
+-- space's index handle does, with the space's NO_SUCH_SPACE: PG.read turns
+-- that into 1412 for a space a copy replaced (M.engine.translate_error),
+-- which the SQL server runs again with the new definition.
+function PG.scanned_primary(space_id)
+    local space = box.space[space_id]
+    if space == nil then
+        error(box.error.new{code = box.error.NO_SUCH_SPACE, space = space_id,
+            reason = "Space '" .. tostring(space_id) .. "' does not exist"})
+    end
+    return space.index[0]
+end
+
 local function count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude)
     local in_txn = box.is_in_txn()
     if not in_txn then fiber.set_slice(LONG_SCAN_SLICE) end   -- see PG.scan
@@ -3739,7 +3754,7 @@ local function count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse
     -- The stored versions of rows the caller wrote are not its to count.
     -- (In a stream these gets are reads MVCC tracks: a concurrent commit to
     -- such a row can only abort the caller earlier, as it writes the row.)
-    local pk = box.space[space_id].index[0]
+    local pk = PG.scanned_primary(space_id)
     for _, k in ipairs(exclude) do
         local t = pk:get(k)
         if t ~= nil and scan_covers(kd, t, it, key, end_key, end_incl, reverse) and preds_match(t, preds) then
@@ -3765,7 +3780,7 @@ end
 function PG.reduce_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude, aggs)
     local in_txn = box.is_in_txn()
     if not in_txn then fiber.set_slice(LONG_SCAN_SLICE) end
-    local pk, omitted = box.space[space_id].index[0], {}
+    local pk, omitted = PG.scanned_primary(space_id), {}
     local pkd = index_key_def(space_id, 0)
     for _, k in ipairs(exclude) do
         local t = pk:get(k)
@@ -8095,6 +8110,7 @@ BK.production_functions = {
         'tarn_engine_counter_alias',
         'tarn_engine_decision',
         'tarn_engine_rebuild_capabilities',
+        'tarn_engine_rebuild_format_capabilities',
         'tarn_estimate',
         'tarn_fence',
         'tarn_info',
@@ -8222,6 +8238,10 @@ function tarn_engine_capabilities() return {'ok', 1} end
 -- SQL server uses it for an ALTER's new indexes only when every replica
 -- answers, so that a node from before it never meets the descriptor.
 function tarn_engine_rebuild_capabilities() return {'ok', 1} end
+-- A rebuild that also changes the stored layout: the replacement takes the
+-- ALTER's format and the copy pads rows (a.format, a.pad). A node that
+-- answers only the call above would copy the old layout.
+function tarn_engine_rebuild_format_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()
     return M.engine.decision(name, old_id, new_id, ver, gen)

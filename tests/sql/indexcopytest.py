@@ -1,30 +1,39 @@
 #!/usr/bin/env python3
 """ALTER TABLE builds new secondary indexes on replicated shards by copying
-the table into a new space whose indexes exist before its rows (#267).
+the table into a new space whose indexes exist before its rows (#267), also
+when the same statement adds a column (#184).
 
 Run by tests/indexcopy.sh on 2 shards x 3 replicas with fsync. For a memtx
-and a vinyl table, while three sessions write:
+and a vinyl table, two ALTERs run while three sessions write:
 
   * one adds 1 to k in rows it alone touches;
   * one owns other rows of the table and keeps a model of them: it hands a
     row's c to another row of its tenant (so a later page can meet the first
     row's stale copy), swaps two rows' c by way of NULL, inserts, deletes
     and moves rows to a new primary key, keeping (tenant_id, c) unique;
-  * one inserts into a second table;
+  * one inserts into a second table.
 
-  * ADD INDEX with ADD UNIQUE INDEX on (tenant_id, c) succeeds and replaces
-    the table's space by way of the copy, and no replica's election term
-    changes meanwhile;
+The first ALTER adds an index and a unique index on (tenant_id, c), the
+second an integer column x and a case-insensitive string column s, with
+non-NULL defaults, and an index on each. For each:
+
+  * the change succeeds and replaces the table's space by way of the copy,
+    and no replica's election term changes meanwhile;
   * the writes go on during the change, and none fails;
   * the table holds every increment of k, and the second session's rows as
-    its model has them, also when read by the new unique index;
+    its model has them (after the first, also when read by the new unique
+    index; after the second, every row with the fills, found by the new
+    indexes, s's by its collation weight, and every stored row on every
+    replica holding every field);
   * every replica holds the same rows and the same indexes (digests of each
-    index's entries in order), and each index holds every row;
-  * the new unique index refuses a duplicate;
-  * a duplicate in a table fails ADD UNIQUE INDEX with 1062, from the copy,
-    and leaves that table as it was, with no copy left on any replica;
-  * an engine change, whose copy now has its indexes from the start too,
-    keeps the terms as they were.
+    index's entries in order), and each index holds every row.
+
+Then the new unique index refuses a duplicate; a duplicate in a table, and
+a new column's fill that rows share under a new unique index, each fail
+the change with 1062, from the copy, and leave that table as it was, with
+no copy left on any replica; a column renamed, then dropped, each with a
+new index, copies that table too; and an engine change, whose copy now has
+its indexes from the start too, keeps the terms as they were.
 
     indexcopytest.py --tarn HOST:PORT --cluster-dir DIR [--rows N]
 """
@@ -145,6 +154,17 @@ def main():
             return r and {phase = r.value.phase, rebuild = r.value.rebuild == true} or box.NULL
         """, [space, sid])
 
+    def short_rows(node, space):
+        """How many stored rows end before the space's last field: a copy
+        that pads must leave none, whatever SQL would read for them."""
+        return ev(node, """
+            require('fiber').set_slice({warn = 30, err = 120})
+            local sp = box.space[...]
+            local width, n = #sp:format(), 0
+            for _, t in sp:pairs() do if #t < width then n = n + 1 end end
+            return n
+        """, [space], timeout=60)
+
     def leftovers(node):
         return ev(node, """
             local out = {}
@@ -168,15 +188,17 @@ def main():
         for first in range(0, args.rows, 1000):
             rows = range(first, min(first + 1000, args.rows))
             q(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},{i % 97},{i})" for i in rows))
-        before = {g["id"]: shape(leader(g), space) for g in groups}
-        before_terms = terms()
 
-        stop, errors = threading.Event(), []
+        errors, bumps = [], [0]
         latencies = {"table": [], "model": [], "other": []}
         progress = {"table": 0, "model": 0, "other": 0}
-        bumps = [0]
-        # (tenant_id, id) -> [k, c] of the rows the model's writer owns
+        # (tenant_id, id) -> [k, c] of the rows the model's writer owns; it
+        # writes through both ALTERs below.
         model = {(i % TENANTS, i): [i % 97, i] for i in range(args.rows) if owned_by_model(i)}
+        ids = {tn: set() for tn in range(TENANTS)}
+        for tn, i in model:
+            ids[tn].add(i)
+        fresh = {"id": FRESH_ID, "c": FRESH_C, "other": (1 + (engine == "vinyl")) * 10**9}
 
         def timed(kind, conn, sql, params):
             began = time.monotonic()
@@ -185,9 +207,13 @@ def main():
             progress[kind] += 1
             return n
 
-        def bump_writer():
+        def new(what):
+            fresh[what] += 1
+            return fresh[what]
+
+        def bump_writer(stop):
             conn = connect(args.tarn, read_timeout=120)
-            rnd = random.Random(f"table-{engine}")
+            rnd = random.Random(f"table-{engine}-{len(latencies['table'])}")
             while not stop.is_set():
                 i = rnd.randrange(args.rows)
                 if owned_by_model(i):
@@ -200,17 +226,9 @@ def main():
                     time.sleep(0.05)
                 time.sleep(0.005)
 
-        def model_writer():
+        def model_writer(stop):
             conn = connect(args.tarn, read_timeout=120)
-            rnd = random.Random(f"model-{engine}")
-            fresh = {"id": FRESH_ID, "c": FRESH_C}
-            ids = {tn: set() for tn in range(TENANTS)}
-            for tn, i in model:
-                ids[tn].add(i)
-
-            def new(what):
-                fresh[what] += 1
-                return fresh[what]
+            rnd = random.Random(f"model-{engine}-{len(latencies['model'])}")
 
             def set_c(tn, i, value):
                 timed("model", conn, f"UPDATE {t} SET c = %s WHERE tenant_id = %s AND id = %s", (value, tn, i))
@@ -235,7 +253,8 @@ def main():
                         set_c(tn, a, y)
                     elif op < 0.75:
                         i, value = new("id"), new("c")
-                        timed("model", conn, f"INSERT INTO {t} VALUES (%s, %s, 0, %s)", (tn, i, value))
+                        timed("model", conn, f"INSERT INTO {t} (tenant_id, id, k, c) VALUES (%s, %s, 0, %s)",
+                              (tn, i, value))
                         model[(tn, i)] = [0, value]
                         ids[tn].add(i)
                     elif op < 0.9 and mine:
@@ -255,72 +274,86 @@ def main():
                     time.sleep(0.05)
                 time.sleep(0.005)
 
-        def other_writer():
+        def other_writer(stop):
             conn = connect(args.tarn, read_timeout=120)
-            n = 0
             while not stop.is_set():
-                n += 1
+                n = new("other")
                 try:
-                    timed("other", conn, "INSERT INTO w VALUES (%s, %s)", ((1 + (engine == "vinyl")) * 10**9 + n, n))
+                    timed("other", conn, "INSERT INTO w VALUES (%s, %s)", (n, n % 1000))
                 except pymysql.MySQLError as e:
                     errors.append(f"other: {e.args}")
                     time.sleep(0.05)
                 time.sleep(0.005)
 
-        threads = [threading.Thread(target=fn, daemon=True) for fn in (bump_writer, model_writer, other_writer)]
-        for th in threads:
-            th.start()
-        time.sleep(1)
-        at = dict(progress)
-        began = time.monotonic()
-        alter_error = None
-        try:
-            q(c, f"ALTER TABLE {t} ADD INDEX kk (k), ADD UNIQUE INDEX uc (tenant_id, c)")
-        except pymysql.MySQLError as e:
-            alter_error = e.args
-        took = time.monotonic() - began
-        during = {k: progress[k] - at[k] for k in progress}
-        time.sleep(1)
-        stop.set()
-        for th in threads:
-            th.join(30)
-        check(f"{engine}: ALTER TABLE adds both indexes", alter_error is None, alter_error)
-        print(f"  ({engine}: ALTER took {took:.2f} s; writes during it: {during}; longest write "
-              + ", ".join(f"{k} {max(v or [0]):.3f} s" for k, v in latencies.items()) + ")", flush=True)
-        check(f"{engine}: no replica changed its election term", terms() == before_terms,
-              {"before": before_terms, "after": terms()})
-        check(f"{engine}: writes went on during the change", all(n > 0 for n in during.values()), during)
-        check(f"{engine}: no write failed", not errors, errors[:5])
+        def online(sql, indexes):
+            """Run ALTER `sql` while the three sessions write, and check that it
+            copied the table on every shard, kept every term, let the writes go
+            on, and left replicas that agree, each index (among `indexes`)
+            holding every row."""
+            before = {g["id"]: shape(leader(g), space) for g in groups}
+            before_terms = terms()
+            stop, failed = threading.Event(), len(errors)
+            threads = [threading.Thread(target=fn, args=(stop,), daemon=True)
+                       for fn in (bump_writer, model_writer, other_writer)]
+            for th in threads:
+                th.start()
+            time.sleep(1)
+            at = dict(progress)
+            for v in latencies.values():
+                v.clear()
+            began = time.monotonic()
+            alter_error = None
+            try:
+                q(c, sql)
+            except pymysql.MySQLError as e:
+                alter_error = e.args
+            took = time.monotonic() - began
+            during = {k: progress[k] - at[k] for k in progress}
+            time.sleep(1)
+            stop.set()
+            for th in threads:
+                th.join(30)
+            check(f"{engine}: {sql}", alter_error is None, alter_error)
+            print(f"  ({engine}: ALTER took {took:.2f} s; writes during it: {during}; longest write "
+                  + ", ".join(f"{k} {max(v or [0]):.3f} s" for k, v in latencies.items()) + ")", flush=True)
+            check(f"{engine}: no replica changed its election term", terms() == before_terms,
+                  {"before": before_terms, "after": terms()})
+            check(f"{engine}: writes went on during the change", all(n > 0 for n in during.values()), during)
+            check(f"{engine}: no write failed", len(errors) == failed, errors[failed:failed + 5])
+            caught_up()
+            shapes = {node: shape(node, space) for node in nodes}
+            for g in groups:
+                first = shapes[g["replicas"][0]]
+                check(f"{engine}: shard {g['id']}'s table was replaced by its copy",
+                      first is not None and first["id"] != before[g["id"]]["id"] and first["engine"] == engine
+                      and engine_record(leader(g), space, before[g["id"]]["id"]) == {"phase": "published",
+                                                                                      "rebuild": True},
+                      {"before": before[g["id"]], "after": first})
+                check(f"{engine}: shard {g['id']}'s replicas hold the same rows and index entries",
+                      all(shapes[n] == first for n in g["replicas"]), {n: shapes[n] for n in g["replicas"]})
+                check(f"{engine}: each index of shard {g['id']} holds every row",
+                      first is not None and set(first["indexes"]) >= set(indexes)
+                      and all(ix["rows"] == first["rows"] for ix in first["indexes"].values()), first)
 
-        caught_up()
-        shapes = {node: shape(node, space) for node in nodes}
-        for g in groups:
-            first = shapes[g["replicas"][0]]
-            check(f"{engine}: shard {g['id']}'s table was replaced by its copy",
-                  first is not None and first["id"] != before[g["id"]]["id"] and first["engine"] == engine
-                  and engine_record(leader(g), space, before[g["id"]]["id"]) == {"phase": "published",
-                                                                                  "rebuild": True},
-                  {"before": before[g["id"]], "after": first})
-            check(f"{engine}: shard {g['id']}'s replicas hold the same rows and index entries",
-                  all(shapes[n] == first for n in g["replicas"]), {n: shapes[n] for n in g["replicas"]})
-            check(f"{engine}: each index of shard {g['id']} holds every row",
-                  first is not None and set(first["indexes"]) >= {"kk", "uc"}
-                  and all(ix["rows"] == first["rows"] for ix in first["indexes"].values())
-                  and first["indexes"]["uc"]["unique"], first)
+        def contents(columns):
+            """Check the table against the writers: the model's rows exactly,
+            and every increment of k in the others. Returns the rows."""
+            table = {(r[0], r[1]): list(r[2:]) for r in q(c, f"SELECT tenant_id, id, {columns} FROM {t}")}
+            mine = {key: v[:2] for key, v in table.items() if owned_by_model(key[1])}
+            differ = [(k, mine.get(k), model[k]) for k in model if mine.get(k) != model[k]][:5]
+            check(f"{engine}: the model's rows are as its writer left them",
+                  mine == model, {"differ": differ, "extra": [k for k in mine if k not in model][:5]})
+            base = sum(i % 97 for i in range(args.rows) if not owned_by_model(i))
+            got = sum(v[0] for key, v in table.items() if not owned_by_model(key[1]))
+            check(f"{engine}: the table holds every increment of k", got == base + bumps[0],
+                  {"sum": got, "want": base + bumps[0], "increments": bumps[0]})
+            others = sum(1 for i in range(args.rows) if not owned_by_model(i))
+            check(f"{engine}: the table has every row", len(table) == others + len(model),
+                  {"rows": len(table), "want": others + len(model)})
+            return table
 
-        table = {(r[0], r[1]): [r[2], r[3]] for r in q(c, f"SELECT tenant_id, id, k, c FROM {t}")}
-        mine = {key: v for key, v in table.items() if owned_by_model(key[1])}
-        missing = [k for k in model if mine.get(k) != model[k]][:5]
-        extra = [k for k in mine if k not in model][:5]
-        check(f"{engine}: the model's rows are as its writer left them",
-              mine == model, {"differ": [(k, mine.get(k), model[k]) for k in missing], "extra": extra})
-        base = sum(i % 97 for i in range(args.rows) if not owned_by_model(i))
-        got = sum(v[0] for key, v in table.items() if not owned_by_model(key[1]))
-        check(f"{engine}: the table holds every increment of k", got == base + bumps[0],
-              {"sum": got, "want": base + bumps[0], "increments": bumps[0]})
-        others = sum(1 for i in range(args.rows) if not owned_by_model(i))
-        check(f"{engine}: the table has every row", len(table) == others + len(model),
-              {"rows": len(table), "want": others + len(model)})
+        online(f"ALTER TABLE {t} ADD INDEX kk (k), ADD UNIQUE INDEX uc (tenant_id, c)", ("kk", "uc"))
+        contents("k, c")
         sample = random.Random(engine).sample(sorted(k for k, v in model.items() if v[1] is not None), 200)
         found = [q(c, f"SELECT id FROM {t} WHERE tenant_id = %s AND c = %s", (tn, model[(tn, i)][1]))
                  for tn, i in sample]
@@ -330,10 +363,31 @@ def main():
         dup_key = next(k for k, v in model.items() if v[1] is not None)
         dup = None
         try:
-            q(c, f"INSERT INTO {t} VALUES (%s, %s, 0, %s)", (dup_key[0], 3 * FRESH_ID, model[dup_key][1]))
+            q(c, f"INSERT INTO {t} (tenant_id, id, k, c) VALUES (%s, %s, 0, %s)",
+              (dup_key[0], 3 * FRESH_ID, model[dup_key][1]))
         except pymysql.MySQLError as e:
             dup = e.args[0]
         check(f"{engine}: the new unique index refuses a duplicate", dup == 1062, dup)
+
+        # Columns and indexes on them: the copy gives every row the columns'
+        # fills (and s's collation weight), those written during the copy
+        # too (in the table's old layout).
+        online(f"ALTER TABLE {t} ADD COLUMN x INT NOT NULL DEFAULT 7, "
+               f"ADD COLUMN s VARCHAR(10) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Ab', "
+               f"ADD INDEX kx (x, tenant_id), ADD INDEX ks (s)", ("kk", "uc", "kx", "ks"))
+        table = contents("k, c, x, s")
+        check(f"{engine}: every row has the new columns' fills",
+              all(v[2] == 7 and v[3] == "Ab" for v in table.values()),
+              [(k, v) for k, v in table.items() if v[2] != 7 or v[3] != "Ab"][:5])
+        by_index = q(c, f"SELECT COUNT(*) FROM {t} WHERE x = 7")[0][0]
+        check(f"{engine}: the index on the new column finds every row", by_index == len(table),
+              {"found": by_index, "rows": len(table)})
+        by_weight = q(c, f"SELECT COUNT(*) FROM {t} WHERE s = 'ab'")[0][0]
+        check(f"{engine}: the case-insensitive index finds every row by its fill's weight",
+              by_weight == len(table), {"found": by_weight, "rows": len(table)})
+        unpadded = {node: short_rows(node, space) for node in nodes}
+        check(f"{engine}: every stored row on every replica holds every field", all(n == 0 for n in unpadded.values()),
+              unpadded)
 
         # A duplicate the table holds fails the copy and leaves the table.
         d, dspace = f"d_{engine}", f"{DB}.d_{engine}"
@@ -341,23 +395,50 @@ def main():
              f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
         q(c, f"INSERT INTO {d} VALUES " + ",".join(f"({i % 8},{i},{i})" for i in range(2000))
              + ",(3,5000,11)")
-        d_before = {g["id"]: shape(leader(g), dspace) for g in groups}
-        refused = None
-        try:
-            q(c, f"ALTER TABLE {d} ADD UNIQUE INDEX uc (tenant_id, c)")
-        except pymysql.MySQLError as e:
-            refused = e.args[0]
-        check(f"{engine}: a duplicate in the table fails ADD UNIQUE INDEX with 1062", refused == 1062, refused)
-        caught_up()
-        records = {g["id"]: engine_record(leader(g), dspace) for g in groups}
-        check(f"{engine}: that change was a copy, aborted on every shard",
-              all(r == {"phase": "aborted", "rebuild": True} for r in records.values()), records)
-        d_after = {g["id"]: shape(leader(g), dspace) for g in groups}
-        check(f"{engine}: that table is as it was", d_after == d_before, {"before": d_before, "after": d_after})
-        left = {node: leftovers(node) for node in nodes}
-        check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
+        for alter, what in ((f"ALTER TABLE {d} ADD UNIQUE INDEX uc (tenant_id, c)", "a duplicate in the table"),
+                            (f"ALTER TABLE {d} ADD COLUMN z INT DEFAULT 1, ADD UNIQUE INDEX uz (tenant_id, z)",
+                             "a new column's fill shared by rows")):
+            d_before = {g["id"]: shape(leader(g), dspace) for g in groups}
+            refused = None
+            try:
+                q(c, alter)
+            except pymysql.MySQLError as e:
+                refused = e.args[0]
+            check(f"{engine}: {what} fails the change with 1062", refused == 1062, refused)
+            caught_up()
+            records = {g["id"]: engine_record(leader(g), dspace) for g in groups}
+            check(f"{engine}: that change was a copy, aborted on every shard",
+                  all(r == {"phase": "aborted", "rebuild": True} for r in records.values()), records)
+            d_after = {g["id"]: shape(leader(g), dspace) for g in groups}
+            check(f"{engine}: that table is as it was", d_after == d_before, {"before": d_before, "after": d_after})
+            left = {node: leftovers(node) for node in nodes}
+            check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
         q(c, f"INSERT INTO {d} VALUES (4, 6000, 6000)")
         check(f"{engine}: that table takes writes", q(c, f"SELECT COUNT(*) FROM {d}")[0][0] == 2002)
+
+        # A column renamed, then dropped, each with a new index: copies too.
+        for alter, what in ((f"ALTER TABLE {d} RENAME COLUMN c TO c2, ADD INDEX kc (c2)", "a renamed column"),
+                            (f"ALTER TABLE {d} DROP COLUMN c2, ADD INDEX kt (tenant_id, id)", "a dropped column")):
+            ids = {g["id"]: shape(leader(g), dspace)["id"] for g in groups}
+            failed = None
+            try:
+                q(c, alter)
+            except pymysql.MySQLError as e:
+                failed = e.args
+            check(f"{engine}: {what} with a new index", failed is None, failed)
+            caught_up()
+            records = {g["id"]: engine_record(leader(g), dspace, ids[g["id"]]) for g in groups}
+            check(f"{engine}: that change was a copy, published on every shard",
+                  all(r == {"phase": "published", "rebuild": True} for r in records.values()), records)
+            shapes = {node: shape(node, dspace) for node in nodes}
+            check(f"{engine}: the replicas agree on the copy, each index holding every row",
+                  all(shapes[n] == shapes[g["replicas"][0]] for g in groups for n in g["replicas"])
+                  and all(ix["rows"] == sh["rows"] for sh in shapes.values() for ix in sh["indexes"].values()),
+                  shapes)
+        columns = [r[0] for r in q(c, f"SHOW COLUMNS FROM {d}")]
+        check(f"{engine}: the table has the columns left, and its rows",
+              columns == ["tenant_id", "id"] and q(c, f"SELECT COUNT(*) FROM {d}")[0][0] == 2002,
+              {"columns": columns})
 
     # An engine change copies too, into a space that has its indexes first.
     before_terms = terms()

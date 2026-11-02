@@ -1,10 +1,12 @@
 -- Online physical-engine replacement. EngineCopy/EngineCutover model the
 -- protocol; the source remains authoritative until a confirmed job decision.
--- The same copy rebuilds a table in its own engine when an ALTER changes
--- its secondary indexes on a replicated cluster (issue #267): the
--- replacement gets every index while it is empty, so that followers apply
--- only DDL on an empty space and ordinary batches of rows, never a long
--- index build (tla/ShadowUnique.tla for its unique indexes).
+-- The same copy rebuilds a table in its own engine when an ALTER builds
+-- secondary indexes on a replicated cluster (issue #267): the replacement
+-- gets every index while it is empty, so that followers apply only DDL on
+-- an empty space and ordinary batches of rows, never a long index build
+-- (tla/ShadowUnique.tla for its unique indexes). When the ALTER also adds,
+-- renames or drops columns, the replacement takes the new format, and the
+-- copy pads each row it writes with the fills its indexes need.
 local fiber, clock, mp, uuid = require('fiber'), require('clock'), require('msgpack'), require('uuid')
 local M = {}
 local RC = {txn_isolation = 'read-confirmed'}
@@ -40,16 +42,36 @@ function M.new(c)
     end
     local function bound(a)
         local x = type(a) == 'table' and a.engine_change
-        -- A rebuild keeps the engine; an engine change changes it.
+        -- A rebuild keeps the engine; an engine change changes it. A rebuild
+        -- is `true`, or 'layout' when it also changes the stored layout:
+        -- storage from before layouts takes only `true`, and so refuses such
+        -- a job (every step, ABORT too) rather than copy the old layout.
         if type(x) ~= 'table' or type(a.def) ~= 'table'
            or type(x.old_id) ~= 'number' or type(a.def.id) ~= 'number'
            or x.old_id == a.def.id or type(x.old_name) ~= 'string'
            or (x.old_engine ~= 'memtx' and x.old_engine ~= 'vinyl')
            or (a.def.engine ~= 'memtx' and a.def.engine ~= 'vinyl')
-           or (x.old_engine == a.def.engine) ~= (x.rebuild == true) or a.def.name ~= x.old_name then
+           or (x.rebuild ~= nil and x.rebuild ~= true and x.rebuild ~= 'layout')
+           or (x.old_engine == a.def.engine) ~= (x.rebuild ~= nil) or a.def.name ~= x.old_name then
             fail(1210, 'Malformed engine-change descriptor')
         end
         return x
+    end
+    -- What a new job's descriptor may ask of the copy, checked when the job
+    -- starts its copy (not at ABORT, which must end a job however it was
+    -- refused): only a 'layout' rebuild changes the stored layout (format
+    -- and padding), and a rebuild neither checks rows nor renames the table.
+    local function admissible(x, a)
+        if x.rebuild ~= 'layout' and (not nilish(a.format) or not nilish(a.pad)) then
+            fail(1210, x.rebuild and 'A rebuild that changes the stored layout must say so'
+                or 'An engine change keeps the stored layout')
+        end
+        if x.rebuild ~= nil then
+            for _, ch in ipairs(type(a.checks) == 'table' and a.checks or {}) do
+                if type(ch) ~= 'table' or ch[3] ~= 'indexed' then fail(1210, 'An engine rebuild checks no rows') end
+            end
+            if not nilish(a.rename) then fail(1210, "An engine rebuild keeps the table's name") end
+        end
     end
     local function group(r, old)
         local out = {old and r.old_id or r.new_id}
@@ -123,11 +145,18 @@ function M.new(c)
         if #indexes == 0 or indexes[1].id ~= 0 then fail(1412, 'Engine source has no primary index') end
         return {format = sp:format(), indexes = indexes}
     end
-    -- A rebuild's native schema: the source's indexes, less the ones the
-    -- ALTER drops and under the names it gives, plus the ones it adds. The
-    -- primary index stays, so captured keys and copied rows share one key.
+    -- A rebuild's native schema: the ALTER's format if it changes one, and
+    -- the source's indexes, less the ones the ALTER drops and under the
+    -- names it gives, plus the ones it adds. The primary index stays, so
+    -- captured keys and copied rows share one key.
     local function rebuilt(sp, a)
         local s, drop, names, ids, out = snapshot(sp), {}, {}, {}, {}
+        if not nilish(a.format) then
+            if type(a.format) ~= 'table' or #a.format < #s.format then
+                fail(1210, 'Malformed engine-rebuild format')
+            end
+            s.format = a.format
+        end
         for _, id in ipairs(a.drop or {}) do drop[id] = true end
         for _, rn in ipairs(a.renames or {}) do names[rn[1]] = rn[2] end
         if drop[0] or type(a.builds) ~= 'table' or #a.builds == 0 then
@@ -150,6 +179,39 @@ function M.new(c)
         table.sort(out, function(p, q) return p.id < q.id end)
         s.indexes = out
         return s
+    end
+    -- A rebuild's padding (a.pad): the number of fields every stored row
+    -- has, then the fills of the fields after it, up to the new width. The
+    -- copy appends to each row it writes the fields the row lacks, as a
+    -- materializing PREPARE does in place (UIX.mat_rows in lua/tarn.lua): an
+    -- index on such a field would otherwise hold NULL where SQL reads the
+    -- field's fill.
+    local function padding(a)
+        local p = a.pad
+        if nilish(p) then return box.NULL end
+        if type(p) ~= 'table' or type(p[1]) ~= 'number' or p[1] < 1 or p[1] % 1 ~= 0 or #p < 2
+           or p[1] + #p - 1 < (tonumber(a.old_width) or 0) then
+            fail(1210, 'Malformed engine-rebuild padding')
+        end
+        for i = 2, #p do
+            if type(p[i]) == 'nil' then fail(1210, 'Malformed engine-rebuild padding') end
+        end
+        return p
+    end
+    -- What the copy writes for a source row: the row, padded to the record's
+    -- padding if it has one.
+    local function shaper(r)
+        local p = r.pad
+        if nilish(p) then return function(tuple) return tuple end end
+        local base, width = p[1], p[1] + #p - 1
+        return function(tuple)
+            local n = #tuple
+            if n >= width then return tuple end
+            if n < base then fail(1210, 'Stored tuple is shorter than ALTER padding base') end
+            local row = tuple:totable()
+            for f = n + 1, width do row[f] = p[f - base + 1] end
+            return box.tuple.new(row)
+        end
     end
     -- Unique secondary indexes of the replacement, by id.
     local function uniques(sp)
@@ -380,7 +442,9 @@ function M.new(c)
         end
         return sp
     end
-    local function start(name, a, gen, deadline)
+    -- (`aborting`: ABORT records a job it finds no record of, as a
+    -- tombstone that stale BUILDs meet, without the copy's schema.)
+    local function start(name, a, gen, deadline, aborting)
         local x = bound(a)
         local r = read(function() return record(x.old_id) end)
         if r ~= nil and r.ver == a.ver and r.new_id == a.def.id then
@@ -403,6 +467,12 @@ function M.new(c)
         end
         if r ~= nil and (r.ver >= a.ver or not terminal(r.phase)) then fail(1412, 'A different engine job owns the source') end
         local sp = check_source(a)
+        if not aborting then admissible(x, a) end
+        local schema, pad = box.NULL, box.NULL
+        if not aborting then
+            schema = x.rebuild ~= nil and rebuilt(sp, a) or snapshot(sp)
+            pad = x.rebuild ~= nil and padding(a) or box.NULL
+        end
         local old_aux, new_aux, old_uix = {}, {}, {}
         for _, id in ipairs(a.uix_drop or {}) do old_aux[#old_aux + 1], old_uix[#old_uix + 1] = id, id end
         for _, id in ipairs(a.lazy_drop or {}) do old_aux[#old_aux + 1] = id end
@@ -412,7 +482,7 @@ function M.new(c)
             new_id = a.def.id, engine = a.def.engine, ver = a.ver, gen = gen, phase = 'resetting',
             shadow_name = '_tarn_engine_' .. x.old_id .. '_' .. a.def.id,
             retired_name = '_tarn_engine_old_' .. x.old_id .. '_' .. a.def.id,
-            schema = x.rebuild and rebuilt(sp, a) or snapshot(sp), rebuild = x.rebuild == true,
+            schema = schema, rebuild = x.rebuild ~= nil, pad = pad,
             cursor = box.NULL, copied = 0, capture = '',
             old_aux = old_aux, new_aux = new_aux, old_uix = old_uix}
         transaction(function() replace_record(r) end)
@@ -504,8 +574,9 @@ function M.new(c)
                         local v = owned(a, gen, {copying = true})
                         if not capture_valid(t) or E.tracks[x.old_id] ~= t then fail(1213, 'Engine capture was lost') end
                         local shadow = box.space[v.new_id]
-                        local unique, pk = uniques(shadow), c.key_def(shadow.id, 0)
-                        for _, tuple in ipairs(rows) do
+                        local unique, pk, shape = uniques(shadow), c.key_def(shadow.id, 0), shaper(v)
+                        for _, source_row in ipairs(rows) do
+                            local tuple = shape(source_row)
                             -- A copied row that holds one of this row's
                             -- unique keys: if a write to it began since
                             -- capture did, its copy may be stale and leaves
@@ -584,8 +655,9 @@ function M.new(c)
             transaction(function()
                 owned(a, gen, {preparing = true})
                 local target = box.space[r.new_id]
-                local unique = uniques(target)
-                for _, row in ipairs(final) do
+                local unique, shape = uniques(target), shaper(r)
+                for _, confirmed in ipairs(final) do
+                    local row = shape(confirmed)
                     local other, ix = holder(target, unique, row)
                     if other ~= nil then duplicate(ix) end
                     target:replace(row)
@@ -689,7 +761,7 @@ function M.new(c)
             return {'ok'}
         end
         central(name, a, gen, 'abort')
-        r = start(name, a, gen, deadline)
+        r = start(name, a, gen, deadline, true)
         if r.phase == 'applying' then fail(1412, 'Engine publication already began') end
         update(a, gen, nil, function(v) v.phase = 'aborting' end)
         cut(deadline)
