@@ -147,7 +147,7 @@ out" in its log) and strict fencing makes it resign. The followers stand
 after four times `replication_timeout`, but the leader refuses their votes
 until they have applied the build. The shard has no leader until a follower
 finishes and an election completes. An ALTER TABLE or engine change caught
-in this sends its APPLY to that shard again, for up to a minute, and only
+in this sends its steps to that shard again, for up to a minute, and only
 then reports 1180 ("did not finish on every shard ...; it completes in the
 background"). Writes to the shard fail or end with an unknown outcome
 meanwhile. On a 2-CPU test host the followers took that long for 200,000
@@ -158,7 +158,17 @@ large tables on replicated shards for quiet periods. Raising
 `replication_timeout` with `box.cfg` on a running replica set does not
 help: an applier already waiting with the old timeout gives up when its
 peer's relay switches to the new heartbeat interval, and that alone made a
-leader resign in a test.
+leader resign in a test. A change that builds several indexes waits, before
+each further build, until a quorum of the replica set has applied the
+previous ones, and a build commits only on a node that is still writable
+once it has built: a build that a leader started before resigning would
+otherwise commit on it alone, splitting it from its replica set
+("Split-Brain discovered" on the others; issue #271). A leader that
+resigns meanwhile refuses the build, and the next leader goes on with the
+indexes left. A replica that shows "Split-Brain discovered" in its
+upstream status (`box.info.replication`) after a schema change, as any
+replica can after a leader change cut it off while a DDL row committed,
+needs to be bootstrapped again from the replica set.
 
 Start every replica of a new shard before sending it traffic. Tarantool 3.9
 stops a joining replica ("can't initialize storage: timed out") when its

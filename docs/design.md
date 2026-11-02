@@ -1644,16 +1644,17 @@ APPLY or ABORT is sent. Its SQL server touches it every few seconds; every SQL s
 `ddl_job_stale` (30 s, `cluster.json`) at startup and every 10 s, takes one
 over, and resumes its recorded phase. A job without a decision reruns
 preparation and any global index fill before deciding; `abort` runs ABORT
-everywhere, and `apply` only goes forward. A shard that refuses APPLY for
-a transient reason gets it again, with a growing pause, for up to a minute:
-a transaction conflict can roll back a DDL statement of it, and a
-replicated shard can be left without a leader for a while, as when its
-leader resigns while the followers apply an index build (issue #267); the
-new leader may still be applying that build ("the space is already being
-modified"). A shard none of whose replicas answers is down rather than
-between leaders, and fails the step at once. The decision is recorded on
-the first shard the same way. A statement whose job is still unfinished, or
-undecided, then reports the outcome as unknown (1180).
+everywhere, and `apply` only goes forward. A shard that refuses BUILD,
+PREPARE or APPLY for a transient reason gets it again, with a growing
+pause, for up to a minute: a transaction conflict can roll back a DDL
+statement of it, and a replicated shard can be left without a leader for a
+while, as when its leader resigns while the followers apply an index build
+(issue #267); the new leader may still be applying that build ("the space
+is already being modified"), and goes on with the indexes left to build. A
+shard none of whose replicas answers is down rather than between leaders,
+and fails the step at once. The decision is recorded on the first shard the
+same way. A statement whose job is still unfinished, or undecided, then
+reports the outcome as unknown (1180).
 
 Writes wait (in the SQL server: the statement is retried, up to the lock
 wait timeout) from the moment PREPARE raises the fence until the servers
@@ -1787,10 +1788,24 @@ applying the build can stop behind one for good (issues #263 and #254).
 There, writes to the table wait for the build however long it takes (it is
 not bounded by `tarn.cfg.alter_check_rows`), and the shard's other
 synchronous writes go one at a time. Each follower then builds the index
-again in its applier, which acknowledges nothing until it finishes, so the
-shard's synchronous writes wait for the first follower to finish. A build
-that takes the followers more than twice `replication_timeout` makes the
-leader resign under strict fencing (issue #267). Checking existing rows (a narrower
+again in its applier, which acknowledges nothing until it finishes, so
+the shard's synchronous writes wait for the first follower to finish. A
+build that takes the followers more than twice `replication_timeout`
+makes the leader resign under strict fencing (issue #267). A build the
+leader had started would still commit on it after it resigned, since
+Tarantool checks that a node is writable only as a statement starts: an
+asynchronous DDL row the replica set never gets, which splits the old
+leader from it (issue #271). So before each further build the leader
+waits until a quorum of the replica set has applied what it wrote, and
+each build runs in a transaction that commits only if the node is still
+writable once it has built, with no yield in between. A leader that
+resigns while it waits or builds refuses the build (ER_READONLY) and
+writes nothing, and the next leader goes on with the indexes left
+(`tla/ReplicatedBuildFence.tla`). A follower that does not get the DDL row
+before the shard's next election still refuses it if the new leader lacks
+it, as for any schema change: Tarantool writes DDL asynchronously. And
+issue #267 makes this likelier, since a node elected while it applies a
+build writes the row after its PROMOTE. Checking existing rows (a narrower
 type, `NOT NULL`) still happens behind the fence, and is refused above
 `tarn.cfg.alter_check_rows` rows per shard.
 
@@ -2335,6 +2350,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BoundedMoveReclaim | violates NoPartialReads | 2396 | 5335 | 9 | 00s | 9 |
 | Bug_BoundedMoveSnapshot | violates NoPartialReads | 5673 | 15579 | 18 | 00s | 17 |
 | Bug_BoundedMoveVisibility | violates NoPartialReads | 4773 | 12545 | 13 | 00s | 13 |
+| Bug_BuildFenceNoCommitCheck | violates NoSplit | 102 | 169 | 6 | 01s | 6 |
+| Bug_BuildFenceNoQuorumWait | violates NoSplit | 2754 | 7059 | 11 | 02s | 11 |
 | Bug_ClockBootstrapJoin | violates NoInitialCheckpointBlock | 5 | 5 | 3 | 00s | 3 |
 | Bug_ClockBootstrapMarker | violates PolicyAfterMarker | 9 | 14 | 4 | 00s | 4 |
 | Bug_ClusterBackupDrain | violates NoLostAcknowledgement | 40367 | 182089 | 12 | 00s | 12 |
@@ -2633,6 +2650,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | RecovReaders | no errors | 28258 | 135451 | 17 | 06s |  |
 | Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 14s |  |
 | Recov_GC | no errors | 1136892 | 8123071 | 23 | 02min 26s |  |
+| ReplicatedBuildFence | no errors | 135018 | 406180 | 29 | 26s |  |
 | ReplicatedVinylBuild | no errors | 18694 | 28734 | 20 | 01s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
@@ -2647,6 +2665,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | StrongStreamCertificate | no errors | 24180 | 76876 | 19 | 00s |  |
 | StrongStreamCompletion | no errors | 3369 | 7585 | 19 | 00s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 598 | 1108 | 7 | 01s | 7 |
+| Tradeoff_BuildFenceRowCutOff | violates NoSplit | 83 | 208 | 6 | 01s | 6 |
 | Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3110 | 9575 | 9 | 02s | 9 |
 | TypedRead | no errors | 99328 | 870400 | 6 | 00s |  |
 | Uniq | no errors | 657499 | 5210697 | 22 | 01min 29s |  |

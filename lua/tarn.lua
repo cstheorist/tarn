@@ -5607,15 +5607,83 @@ end
 -- DDL included, reaches the WAL only once the ones before it are confirmed.
 -- Writes go on meanwhile, one in flight at a time. Builds may overlap: the
 -- last one to finish restores the limit.
-local SERIAL_SYNC = {depth = 0}
+--
+-- A replica set's followers apply each build in their applier, which
+-- acknowledges nothing until it ends (issue #267). One that takes more than
+-- twice replication_timeout makes the leader resign, and a build the leader
+-- started before it resigned still committed on it afterwards: Tarantool
+-- checks that a node is writable only when a statement starts, and the
+-- build's DDL row is asynchronous. That row never reached the replica set,
+-- which a new leader then served without it; the followers refused it later
+-- ("Split-Brain discovered"), and the old leader kept an index nobody else
+-- had (issue #271). Two things prevent this:
+--  - Before each build, the leader waits until a quorum of the replica set
+--    has applied what it wrote. Otherwise it could build, and commit, the
+--    next index while every follower still applies the one before, and they
+--    could elect one of themselves meanwhile, which then refuses the row. A
+--    follower that has finished keeps the leader's quorum while it builds;
+--    if it resigns meanwhile, the build does not start (ER_READONLY).
+--  - The build runs in a transaction that commits only if the node is still
+--    writable once it has built, with no yield between the check and the
+--    commit (M.build_while_writable). A leader that resigned meanwhile rolls
+--    it back and refuses it (ER_READONLY).
+-- Either way the shard's next leader goes on from there. Still possible
+-- (tla/ReplicatedBuildFence.tla), as for any DDL row, which Tarantool
+-- writes asynchronously: a follower that does not get a build's row before
+-- the shard's next election, cut off from the leader or restarting, refuses
+-- it later if the new leader lacks it. Issue #267 makes that likelier: a
+-- node elected while it applies a build writes the row after its PROMOTE.
+-- (quorum_wait: seconds, as a schema change's own timeout)
+local SERIAL_SYNC = {depth = 0, quorum_wait = 50}
+-- (tests: replaces box.info.replication, box.info.ro and the quorum)
+M.quorum_view = nil
+function M.quorum_applied(timeout)
+    local id, lsn = box.info.id, box.info.lsn
+    local deadline = clock.monotonic() + timeout
+    while true do
+        local view = M.quorum_view and M.quorum_view()
+            or {replication = box.info.replication, ro = box.info.ro, quorum = box.info.synchro.quorum}
+        if view.ro then box.error(box.error.READONLY) end
+        local need = math.max(0, (view.quorum or 1) - 1)
+        local applied = 0
+        for _, r in pairs(view.replication) do
+            local v = r.id ~= id and r.downstream and r.downstream.vclock
+            if v and (v[id] or 0) >= lsn then applied = applied + 1 end
+        end
+        if applied >= need then return end
+        if clock.monotonic() >= deadline then
+            error(box.error.new{code = box.error.TRANSACTION_CONFLICT,
+                                reason = 'the replicas still apply an earlier index build'})
+        end
+        fiber.sleep(0.05)
+    end
+end
+function M.build_while_writable(sp, name, opts)
+    box.begin()
+    local ok, res = pcall(sp.create_index, sp, name, opts)
+    if ok then
+        -- (From here to the commit, no yield: Tarantool would abort the
+        -- transaction, which may yield only while the index builds.)
+        local view = M.quorum_view and M.quorum_view()
+        local ro = view == nil and box.info.ro or (view ~= nil and view.ro)
+        if ro then ok, res = false, box.error.new(box.error.READONLY) end
+    end
+    if not ok then
+        box.rollback()
+        error(res, 0)
+    end
+    box.commit()
+    return res
+end
 local function build_native_index(sp, name, opts)
     if sp.engine ~= 'vinyl' or not (M.cfg.sync or sp.is_sync) then return sp:create_index(name, opts) end
+    M.quorum_applied(SERIAL_SYNC.quorum_wait)
     if SERIAL_SYNC.depth == 0 then
         SERIAL_SYNC.saved = box.cfg.replication_synchro_queue_max_size
         box.cfg{replication_synchro_queue_max_size = 1}
     end
     SERIAL_SYNC.depth = SERIAL_SYNC.depth + 1
-    local ok, res = pcall(sp.create_index, sp, name, opts)
+    local ok, res = pcall(M.build_while_writable, sp, name, opts)
     SERIAL_SYNC.depth = SERIAL_SYNC.depth - 1
     if SERIAL_SYNC.depth == 0 then
         box.cfg{replication_synchro_queue_max_size = SERIAL_SYNC.saved}
@@ -5641,6 +5709,10 @@ local function build_indexes(sp, builds)
                 if type(err) == 'cdata' and err.code == box.error.TUPLE_FOUND then
                     return {'duplicate', 1062, "Duplicate entry for key '" .. b[2] .. "'"}
                 end
+                -- A leader that resigned (build_native_index): the step is
+                -- refused as a whole, as by any other write on a replica,
+                -- and sent to the shard's next leader.
+                if type(err) == 'cdata' and err.code == box.error.READONLY then error(err) end
                 return failure(err)
             end
         end
