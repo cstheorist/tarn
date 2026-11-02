@@ -1,0 +1,174 @@
+[
+  {
+    "hypothesis": "guards",
+    "engine": "vinyl",
+    "native": "enabled",
+    "source": "b1e7ce88358e15437fdf82d10b2a0e961513ee0d",
+    "run_id": "41532314628",
+    "totals": {
+      "ok": 340331,
+      "attempts": 340331
+    },
+    "measured_totals": {
+      "ok": 283743,
+      "attempts": 283743
+    },
+    "native_deltas": {
+      "all": {
+        "validations": 0,
+        "writes": 0,
+        "ready": 0,
+        "commits": 0,
+        "commits_to_lua": 0,
+        "writes_to_lua": 0,
+        "to_lua": 0,
+        "fallbacks.validate.freshness": 0,
+        "served": 0,
+        "validations_to_lua": 0,
+        "": 0
+      },
+      "measured": {
+        "validations": 0,
+        "writes": 0,
+        "ready": 0,
+        "commits": 0,
+        "commits_to_lua": 0,
+        "writes_to_lua": 0,
+        "to_lua": 0,
+        "fallbacks.validate.freshness": 0,
+        "served": 0,
+        "validations_to_lua": 0,
+        "": 0
+      }
+    },
+    "changed_files": [
+      "lua/tarn.lua",
+      "lua/tarn_fresh.lua"
+    ],
+    "node_logs_checked": 60
+  },
+  {
+    "hypothesis": "guards",
+    "engine": "memtx",
+    "native": "disabled",
+    "source": "b1e7ce88358e15437fdf82d10b2a0e961513ee0d",
+    "run_id": "41532314628",
+    "totals": {
+      "ok": 355308,
+      "attempts": 355308
+    },
+    "measured_totals": {
+      "ok": 296160,
+      "attempts": 296160
+    },
+    "native_deltas": {
+      "all": {
+        "": 0
+      },
+      "measured": {
+        "": 0
+      }
+    },
+    "changed_files": [
+      "lua/tarn.lua",
+      "lua/tarn_fresh.lua"
+    ],
+    "node_logs_checked": 60
+  },
+  {
+    "hypothesis": "guards",
+    "engine": "vinyl",
+    "native": "disabled",
+    "source": "b1e7ce88358e15437fdf82d10b2a0e961513ee0d",
+    "run_id": "41532314628",
+    "totals": {
+      "ok": 340242,
+      "attempts": 340242
+    },
+    "measured_totals": {
+      "ok": 283290,
+      "attempts": 283290
+    },
+    "native_deltas": {
+      "all": {
+        "": 0
+      },
+      "measured": {
+        "": 0
+      }
+    },
+    "changed_files": [
+      "lua/tarn.lua",
+      "lua/tarn_fresh.lua"
+    ],
+    "node_logs_checked": 60
+  },
+  {
+    "hypothesis": "guards",
+    "engine": "memtx",
+    "native": "enabled",
+    "source": "b1e7ce88358e15437fdf82d10b2a0e961513ee0d",
+    "run_id": "41532314628",
+    "totals": {
+      "ok": 361445,
+      "attempts": 361445
+    },
+    "measured_totals": {
+      "ok": 301331,
+      "attempts": 301331
+    },
+    "native_deltas": {
+      "all": {
+        "validations": 0,
+        "writes": 0,
+        "ready": 0,
+        "fallbacks.write.stale_locks": 0,
+        "commits": 0,
+        "commits_to_lua": 0,
+        "writes_to_lua": 0,
+        "to_lua": 0,
+        "fallbacks.validate.freshness": 0,
+        "served": 0,
+        "validations_to_lua": 0,
+        "": 0,
+        "fallbacks.read.page": 0
+      },
+      "measured": {
+        "validations": 0,
+        "writes": 0,
+        "ready": 0,
+        "fallbacks.write.stale_locks": 0,
+        "commits": 0,
+        "commits_to_lua": 0,
+        "writes_to_lua": 0,
+        "to_lua": 0,
+        "fallbacks.validate.freshness": 0,
+        "served": 0,
+        "validations_to_lua": 0,
+        "": 0,
+        "fallbacks.read.page": 0
+      }
+    },
+    "changed_files": [
+      "lua/tarn.lua",
+      "lua/tarn_fresh.lua"
+    ],
+    "node_logs_checked": 60
+  }
+]
+guards
+uncontended ratios {"goodput": {"median": 1.0197714797740196, "minimum": 0.9915017165158603, "maximum": 1.0567650935775197}, "lua_bytes": {"median": 0.8759466390325149, "minimum": 0.8715363886352698, "maximum": 0.9104275341515655}, "tx_cpu_us": {"median": 0.993723166625432, "minimum": 0.9620492447792854, "maximum": 0.9987878649106211}, "process_cpu_us": {"median": 0.9972629935339913, "minimum": 0.9827992880116201, "maximum": 1.0038084894560593}, "p50_ms": {"median": 0.9977534814687596, "minimum": 0.9828559460272459, "maximum": 1.005354564423212}, "p99_ms": {"median": 0.9784779582886112, "minimum": 0.8021060001491989, "maximum": 1.125765776968176}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+unrelated ratios {"goodput": {"median": 1.0171596955610422, "minimum": 0.9741435147323485, "maximum": 1.0635920396221759}, "lua_bytes": {"median": 0.8722660070567663, "minimum": 0.8683120970293252, "maximum": 0.8779340555945762}, "tx_cpu_us": {"median": 0.9753379904402365, "minimum": 0.9343345891974028, "maximum": 0.9973804561403331}, "process_cpu_us": {"median": 0.9834522832059622, "minimum": 0.9621931984261953, "maximum": 0.9995956992318712}, "p50_ms": {"median": 0.989529059158113, "minimum": 0.958220333132094, "maximum": 1.0068948770477413}, "p99_ms": {"median": 0.9733672195075332, "minimum": 0.8215972837301392, "maximum": 1.067449973844338}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+hot ratios {"goodput": {"median": 1.0170203434589837, "minimum": 0.9783872523509746, "maximum": 1.0541774325037718}, "lua_bytes": {"median": 0.8811596292806153, "minimum": 0.87465974380396, "maximum": 0.8855994591774808}, "tx_cpu_us": {"median": 0.999508027030963, "minimum": 0.9615528983950723, "maximum": 1.0130453502359171}, "process_cpu_us": {"median": 0.9996612474745548, "minimum": 0.9797644396134544, "maximum": 1.0089477447442907}, "p50_ms": {"median": 0.9870432537673185, "minimum": 0.9801688760543406, "maximum": 1.017110852034319}, "p99_ms": {"median": 0.9446857442270692, "minimum": 0.8244964084146283, "maximum": 1.2175485772539072}} wait delta {"row_waits": {"median": 2.427846027441838e-06, "minimum": -3.2718006023335633e-06, "maximum": 7.9010000639812e-06}, "commit_waits": {"median": 2.427846027441838e-06, "minimum": -3.2718006023335633e-06, "maximum": 7.9010000639812e-06}}
+guards
+uncontended ratios {"goodput": {"median": 1.0076607849738546, "minimum": 0.9881505187089286, "maximum": 1.0489491441761838}, "lua_bytes": {"median": 0.8710166222327123, "minimum": 0.863890914307378, "maximum": 0.8768912860547031}, "tx_cpu_us": {"median": 0.9958136814010455, "minimum": 0.9908023420588695, "maximum": 1.0021343756968257}, "process_cpu_us": {"median": 0.9983697334711629, "minimum": 0.9961006992078595, "maximum": 1.0030754427801216}, "p50_ms": {"median": 1.0004315820792828, "minimum": 0.9917094671556203, "maximum": 1.003881202384556}, "p99_ms": {"median": 1.0026004284185652, "minimum": 0.9599638923096959, "maximum": 1.02899061629701}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+unrelated ratios {"goodput": {"median": 1.0313309792314644, "minimum": 1.001042497491127, "maximum": 1.0564918237585936}, "lua_bytes": {"median": 0.8733032812774408, "minimum": 0.8688370080184118, "maximum": 0.8784001098607612}, "tx_cpu_us": {"median": 0.9705594201058625, "minimum": 0.9441914959311034, "maximum": 0.9825574975361662}, "process_cpu_us": {"median": 0.9787349334803724, "minimum": 0.957778792422388, "maximum": 0.9981980874803562}, "p50_ms": {"median": 0.975545764085663, "minimum": 0.9627024660016591, "maximum": 0.9998827725159884}, "p99_ms": {"median": 0.9513106240408037, "minimum": 0.8353325064521682, "maximum": 0.9788406174838998}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+hot ratios {"goodput": {"median": 1.0146011489040136, "minimum": 1.0055562448885977, "maximum": 1.0958460847020524}, "lua_bytes": {"median": 0.8804881045564829, "minimum": 0.8768677778870272, "maximum": 0.8816891369019898}, "tx_cpu_us": {"median": 0.9846090421877148, "minimum": 0.9211900819608778, "maximum": 0.9920101776744659}, "process_cpu_us": {"median": 0.9868029126025714, "minimum": 0.9363528531065942, "maximum": 0.9993825819793235}, "p50_ms": {"median": 0.9875520155202644, "minimum": 0.9250965544125624, "maximum": 0.9980817297950246}, "p99_ms": {"median": 0.9715646976967027, "minimum": 0.7730379090310728, "maximum": 0.9897932464587623}} wait delta {"row_waits": {"median": 2.048143291188964e-06, "minimum": 7.728996491707107e-07, "maximum": 1.3392773920206658e-05}, "commit_waits": {"median": 2.048143291188964e-06, "minimum": 7.728996491707107e-07, "maximum": 1.3392773920206658e-05}}
+guards
+uncontended ratios {"goodput": {"median": 1.027480347721251, "minimum": 0.9554953626373704, "maximum": 1.0820139276253797}, "lua_bytes": {"median": 0.8742330811092028, "minimum": 0.8573206259484326, "maximum": 0.8866062672017768}, "tx_cpu_us": {"median": 0.9841944275402619, "minimum": 0.9611614594418992, "maximum": 0.9948111543200443}, "process_cpu_us": {"median": 0.9973974436732923, "minimum": 0.9802328283718988, "maximum": 1.001981247322977}, "p50_ms": {"median": 0.9907262711529227, "minimum": 0.9589722606316259, "maximum": 1.0481621059765434}, "p99_ms": {"median": 0.9660272809682514, "minimum": 0.9263550641510633, "maximum": 1.0447318003866521}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+unrelated ratios {"goodput": {"median": 1.0128160029133884, "minimum": 0.9797665999372658, "maximum": 1.0716712704251963}, "lua_bytes": {"median": 0.8768093493467661, "minimum": 0.86095116664498, "maximum": 0.8958895838183031}, "tx_cpu_us": {"median": 0.9773830925793177, "minimum": 0.9451242209850589, "maximum": 0.9952611725015426}, "process_cpu_us": {"median": 0.9883639195431739, "minimum": 0.9658946948920467, "maximum": 0.9990649367257933}, "p50_ms": {"median": 0.9924736118974139, "minimum": 0.9414574908793191, "maximum": 1.0214590768145198}, "p99_ms": {"median": 0.9830454015886716, "minimum": 0.9176087044501217, "maximum": 0.9949069584709527}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+hot ratios {"goodput": {"median": 0.9997070549806731, "minimum": 0.9788818144061807, "maximum": 1.044696794073701}, "lua_bytes": {"median": 0.883106286283758, "minimum": 0.8706541844496325, "maximum": 0.9016200971081966}, "tx_cpu_us": {"median": 0.9988070016660839, "minimum": 0.9683935119955853, "maximum": 1.0177862209778414}, "process_cpu_us": {"median": 1.0000395836453702, "minimum": 0.9841923586484541, "maximum": 1.011931868561729}, "p50_ms": {"median": 0.9963974121604006, "minimum": 0.9552229141929118, "maximum": 1.023785906337767}, "p99_ms": {"median": 0.9877643986807859, "minimum": 0.9551565578947547, "maximum": 1.0183946383059206}} wait delta {"row_waits": {"median": -8.91067132302581e-08, "minimum": -3.1701142789719583e-06, "maximum": 6.521553218008513e-06}, "commit_waits": {"median": -8.91067132302581e-08, "minimum": -3.1701142789719583e-06, "maximum": 6.521553218008513e-06}}
+guards
+uncontended ratios {"goodput": {"median": 1.0083785007708805, "minimum": 0.9843246883316079, "maximum": 1.0737012805466892}, "lua_bytes": {"median": 0.8699584276353789, "minimum": 0.863181865713019, "maximum": 0.8713627233454908}, "tx_cpu_us": {"median": 0.9802569388576025, "minimum": 0.9755215651982803, "maximum": 0.9872143244041202}, "process_cpu_us": {"median": 0.9909848572676568, "minimum": 0.9874083946558648, "maximum": 0.997981400524764}, "p50_ms": {"median": 0.9956562471927034, "minimum": 0.9913767312850725, "maximum": 1.0082751440414293}, "p99_ms": {"median": 0.9875283568553883, "minimum": 0.971806955682456, "maximum": 1.0171766515141654}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+unrelated ratios {"goodput": {"median": 1.0237763281767174, "minimum": 1.015280370840753, "maximum": 1.0441210424873604}, "lua_bytes": {"median": 0.8733359054287955, "minimum": 0.8649670790541224, "maximum": 0.8749981440349619}, "tx_cpu_us": {"median": 0.964043218749466, "minimum": 0.9427654487786432, "maximum": 0.971206817005762}, "process_cpu_us": {"median": 0.9777144325447106, "minimum": 0.9657944883512358, "maximum": 0.9843265657371282}, "p50_ms": {"median": 0.981715393539278, "minimum": 0.9661242806319026, "maximum": 0.9859102716691751}, "p99_ms": {"median": 0.9374662184701928, "minimum": 0.9193070491960447, "maximum": 0.9587055166716627}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+hot ratios {"goodput": {"median": 1.0025216688630092, "minimum": 1.0005639807934594, "maximum": 1.0139928409249859}, "lua_bytes": {"median": 0.8801641061727946, "minimum": 0.8722038898653871, "maximum": 0.8835487604539228}, "tx_cpu_us": {"median": 0.9804190359736628, "minimum": 0.9741524807969913, "maximum": 0.9885426543636651}, "process_cpu_us": {"median": 0.9929598262386095, "minimum": 0.9898882220021141, "maximum": 0.9953207934170498}, "p50_ms": {"median": 0.9958277211882441, "minimum": 0.9855411455565526, "maximum": 1.0054318454425413}, "p99_ms": {"median": 0.9833528940763249, "minimum": 0.9673759683303744, "maximum": 1.0026107087544516}} wait delta {"row_waits": {"median": 3.7824068155334345e-07, "minimum": 3.899073031110589e-08, "maximum": 1.9771277250946184e-06}, "commit_waits": {"median": 3.7824068155334345e-07, "minimum": 3.899073031110589e-08, "maximum": 1.9771277250946184e-06}}

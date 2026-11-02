@@ -1,0 +1,54 @@
+[
+  {
+    "hypothesis": "guards",
+    "engine": "vinyl",
+    "native": "enabled",
+    "source": "51075aa861999ea16b9a1dd63ceebd8a3222049d",
+    "run_id": "41536728436",
+    "totals": {
+      "ok": 428149,
+      "attempts": 428149
+    },
+    "measured_totals": {
+      "ok": 358218,
+      "attempts": 358218
+    },
+    "native_deltas": {
+      "all": {
+        "validations": 0,
+        "ready": 0,
+        "writes": 0,
+        "commits_to_lua": 0,
+        "served": 0,
+        "to_lua": 0,
+        "writes_to_lua": 0,
+        "validations_to_lua": 0,
+        "commits": 0,
+        "fallbacks.validate.freshness": 0,
+        "": 0
+      },
+      "measured": {
+        "validations": 0,
+        "ready": 0,
+        "writes": 0,
+        "commits_to_lua": 0,
+        "served": 0,
+        "to_lua": 0,
+        "writes_to_lua": 0,
+        "validations_to_lua": 0,
+        "commits": 0,
+        "fallbacks.validate.freshness": 0,
+        "": 0
+      }
+    },
+    "changed_files": [
+      "lua/tarn.lua",
+      "lua/tarn_fresh.lua"
+    ],
+    "node_logs_checked": 60
+  }
+]
+guards
+uncontended ratios {"goodput": {"median": 1.001158902852959, "minimum": 0.9085260651658872, "maximum": 1.2616703374748335}, "lua_bytes": {"median": 0.8664004031793828, "minimum": 0.8559724384786792, "maximum": 0.8723668916770316}, "tx_cpu_us": {"median": 1.0005213577184295, "minimum": 0.9131164159728643, "maximum": 1.0651158689942553}, "process_cpu_us": {"median": 0.99392592092835, "minimum": 0.9521634814933296, "maximum": 1.0610552302646437}, "p50_ms": {"median": 0.9920935399446347, "minimum": 0.9640979461594001, "maximum": 1.0441677765372552}, "p99_ms": {"median": 0.9821655448228757, "minimum": 0.1691456918567107, "maximum": 3.5185406831077257}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+unrelated ratios {"goodput": {"median": 1.0096275739852196, "minimum": 0.9078171183607926, "maximum": 1.109285789705797}, "lua_bytes": {"median": 0.8714358249020572, "minimum": 0.8667808441176336, "maximum": 0.876385737204571}, "tx_cpu_us": {"median": 0.9689572357803636, "minimum": 0.9145834519877937, "maximum": 1.0203707601357836}, "process_cpu_us": {"median": 0.9816777391120952, "minimum": 0.947918904126665, "maximum": 1.0333083039164308}, "p50_ms": {"median": 0.9906418475620942, "minimum": 0.9599155653208868, "maximum": 1.0391356606874043}, "p99_ms": {"median": 0.9974953047771571, "minimum": 0.9011775408469473, "maximum": 2.9074953204452343}} wait delta {"row_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}, "commit_waits": {"median": 0.0, "minimum": 0.0, "maximum": 0.0}}
+hot ratios {"goodput": {"median": 0.975915379785478, "minimum": 0.8683362640667757, "maximum": 1.0893620263159272}, "lua_bytes": {"median": 0.8771741163515505, "minimum": 0.8734307357933662, "maximum": 0.8816261963401006}, "tx_cpu_us": {"median": 0.9666246189424997, "minimum": 0.9468172407761465, "maximum": 1.0405171543960803}, "process_cpu_us": {"median": 0.9702761939007892, "minimum": 0.9639915820173329, "maximum": 1.0371953499316464}, "p50_ms": {"median": 0.9841430820732664, "minimum": 0.9770848233104479, "maximum": 1.028434200293562}, "p99_ms": {"median": 1.0251839637221467, "minimum": 0.5751132033017103, "maximum": 5.146678170345678}} wait delta {"row_waits": {"median": -2.796811155003631e-06, "minimum": -1.625666493498823e-05, "maximum": 1.02757276044807e-05}, "commit_waits": {"median": -2.796811155003631e-06, "minimum": -1.625666493498823e-05, "maximum": 1.02757276044807e-05}}

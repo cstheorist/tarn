@@ -3,3 +3,7 @@
 *.cfg linguist-language=TLA
 tla/out/*.out linguist-generated=true
 bench/results*.csv linguist-generated=true
+bench/rc-evidence/**/manifest.json linguist-generated=true
+bench/rc-evidence/**/results.json linguist-generated=true
+bench/rc-evidence/**/log-context.json linguist-generated=true
+bench/rc_guard_results.csv linguist-generated=true
