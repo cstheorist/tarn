@@ -16,9 +16,10 @@ import statistics
 import subprocess
 import time
 
-from rc_profile import DB, connect, evaluate, query, sample, sha
+from rc_profile import DB, connect, evaluate, query, sample as sql_sample, sha
 import rc_guard_candidate
 import rc_confirm_candidate
+import rc_direct
 
 ROOT = Path(__file__).resolve().parents[1]
 SHAPES = ('uncontended', 'unrelated', 'hot')
@@ -115,10 +116,12 @@ def main():
     parser.add_argument('--engine', choices=('memtx', 'vinyl'), required=True)
     parser.add_argument('--native', choices=('enabled', 'disabled'), required=True)
     parser.add_argument('--hypothesis', choices=tuple(VARIANTS), required=True)
+    parser.add_argument('--driver', choices=('sql', 'direct'), default='sql')
     parser.add_argument('--seconds', type=float, default=15)
     parser.add_argument('--base-port', type=int, default=17300)
     parser.add_argument('--sql-port', type=int, default=17400)
     args = parser.parse_args()
+    sample = sql_sample if args.driver == 'sql' else rc_direct.sample
     assert 5 <= args.seconds <= 15
     args.bin = args.bin.resolve()
     args.out = args.out.resolve()
@@ -134,11 +137,14 @@ def main():
                TARN_VINYL_CACHE_MB='0', TARN_CHECK_LOCKS='', TARN_CHECK_YIELDS='')
     receipt = dict(schema=2, complete=False, sessions=[], scope='matched checks-off RF3/fsync cost pilot',
                    hypothesis=args.hypothesis, variants=variants,
+                   driver=args.driver,
                    measured_seconds=args.seconds, warmup_seconds=3,
                    source=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                    source_dirty=bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)),
                    binary_sha256=sha(args.bin), native_sha256=sha(native), harness_sha256=sha(__file__),
                    worker_sha256=sha(ROOT / 'bench/rc_profile.py'), work_directory=str(work),
+                   direct_adapter_sha256=sha(ROOT / 'bench/rc_direct.py'),
+                   direct_driver_sha256=sha(ROOT / 'bench/rc_direct.lua'),
                    host=platform.platform(), engine=args.engine, native=args.native,
                    environment={k: env[k] for k in ('TARN_NATIVE', 'TARN_VINYL_CACHE_MB',
                                                      'TARN_CHECK_LOCKS', 'TARN_CHECK_YIELDS')},

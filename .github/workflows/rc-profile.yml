@@ -12,6 +12,11 @@ on:
         description: Run both engines and native configurations
         type: boolean
         default: false
+      driver:
+        description: Matched client driver (separate studies)
+        type: choice
+        options: [sql, direct]
+        default: sql
 
 permissions:
   contents: read
@@ -37,6 +42,7 @@ jobs:
           python3 bench/rc_profile_test.py
           python3 bench/rc_guard_candidate_test.py
           python3 bench/rc_confirm_candidate_test.py
+          python3 bench/rc_direct_test.py
       - name: Companion safety and sensitivity models
         run: |
           curl -fsSL -o /tmp/rc-cost-tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
@@ -109,12 +115,13 @@ jobs:
           df -h > /tmp/rc-cost-results/disk-before.txt
           python3 bench/rc_cost_compare.py --bin /tmp/rc186-build/tarn-server --out /tmp/rc-cost-results/paired \
             --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' \
-            --hypothesis '${{ inputs.hypothesis }}' --seconds 15 --base-port 17300 --sql-port 17400
+            --hypothesis '${{ inputs.hypothesis }}' --driver '${{ inputs.driver }}' \
+            --seconds 15 --base-port 17300 --sql-port 17400
       - name: Retain complete and failed evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: rc-cost-${{ inputs.hypothesis }}-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
+          name: rc-cost-${{ inputs.hypothesis }}-${{ inputs.driver }}-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
           path: |
             /tmp/rc-cost-results
             /tmp/rc186-build/source.txt
