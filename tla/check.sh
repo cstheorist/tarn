@@ -107,6 +107,7 @@ Bug_KVClippedComplete Bug_KVMissingClaim Bug_KVFalseAtomic"
 DEFAULT="$DEFAULT ReplicatedVinylBuild Bug_VinylBuildBesidePending Bug_VinylBuildDDLAheadOfConfirm"
 DEFAULT="$DEFAULT ReplicatedBuildFence Bug_BuildFenceNoQuorumWait Bug_BuildFenceNoCommitCheck Tradeoff_BuildFenceRowCutOff"
 DEFAULT="$DEFAULT ShadowUnique Bug_ShadowUniqueFailOnDirtyHolder Bug_ShadowUniqueEvictClean Bug_ShadowUniqueTailInPlace"
+DEFAULT="$DEFAULT PlanGuardScalar PlanGuardBatch Bug_PlanGuardSkipSpace Bug_PlanGuardYield"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

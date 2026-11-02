@@ -144,6 +144,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Final planned-write freshness checks inspect replication mode once per
+  nonyielding guard, reducing repeated allocation while still checking every
+  control and planned space. Independent space checks remain current
+  ([#186](https://github.com/cstheorist/tarn/issues/186)).
+
 - On a cluster with replicated shards, an `ALTER TABLE` or `CREATE INDEX`
   that adds secondary indexes no longer stalls the shard or makes its
   leader resign. Each follower used to build the new index on the populated

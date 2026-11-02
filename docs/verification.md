@@ -1670,6 +1670,15 @@ version and owned process/cleanup records in CI artifacts and job logs.
 These are runtime controls outside the models below; no production
 behavior, ABI, verified body or protocol transition changes.
 
+`PlanGuardBatch.tla` checks the smaller final planned-space guard (#186).
+Its two-space scalar and batched configurations make the same decision;
+omitting a space check or retaining mode through a yield violates
+`NoUnsafeAcceptance`. This finite Boolean model assumes an atomic guard and
+abstracts runtime properties. It does not prove Lua cannot yield, exact error
+ordering, quorum implementation, or the commit protocol; the focused live
+guard tests and existing commit/fault suites cover those implementation
+boundaries.
+
 `StrongReadFreshness.tla` refines the replica-freshness premise that the
 commit model's atomic failover does not express. Three replicas retain
 their own observed term, writable role, WAL evidence and settled effects.
