@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Negative controls for exact benchmark accounting, including equal sums."""
 import unittest
-from rc_profile import diagnostic, reconcile
+from rc_profile import diagnostic, reconcile, require_production_flags
 
 
 class Accounting(unittest.TestCase):
@@ -32,6 +32,21 @@ class Accounting(unittest.TestCase):
         audit = diagnostic(record, 'readback', lambda: reconcile(self.records, self.counters, [(1, 0)]))
         self.assertTrue(audit['exact_ledger'])
         self.assertEqual(record['diagnostic_errors'][0]['stage'], 'cpu')
+
+
+class RuntimeFlags(unittest.TestCase):
+    def test_effective_production_flags(self):
+        require_production_flags({'test_flags': {'check_locks': False, 'check_yields': False}})
+
+    def test_instrumented_or_missing_runtime_is_rejected(self):
+        for name in ('check_locks', 'check_yields'):
+            for value in (True, '0', 0, None):
+                with self.subTest(name=name, value=value), self.assertRaises(AssertionError):
+                    flags = {'check_locks': False, 'check_yields': False}
+                    flags[name] = value
+                    require_production_flags({'test_flags': flags})
+        with self.assertRaises(AssertionError):
+            require_production_flags({})
 
 
 if __name__ == '__main__':

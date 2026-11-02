@@ -83,8 +83,9 @@ jobs:
           TARN_NATIVE: ${{ matrix.native == 'enabled' && '/tmp/rc186-build/libtarn_storage.so' || '0' }}
           TARN_BIN: /tmp/rc186-build/tarn-server
           TARN_VINYL_CACHE_MB: '0'
-          TARN_CHECK_LOCKS: '0'
-          TARN_CHECK_YIELDS: '0'
+          # storage.lua treats every nonempty value, including '0', as true.
+          TARN_CHECK_LOCKS: ''
+          TARN_CHECK_YIELDS: ''
         run: |
           tarantool bench/rc_guest_profile_test.lua
           tarantool --version > /tmp/rc186-results/tarantool.txt
