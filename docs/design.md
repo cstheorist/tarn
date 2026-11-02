@@ -1780,7 +1780,11 @@ vinyl build can miss a write still waiting for its quorum, and a replica
 applying the build can stop behind one for good (issues #263 and #254).
 There, writes to the table wait for the build however long it takes (it is
 not bounded by `tarn.cfg.alter_check_rows`), and the shard's other
-synchronous writes go one at a time. Checking existing rows (a narrower
+synchronous writes go one at a time. Each follower then builds the index
+again in its applier, which acknowledges nothing until it finishes, so the
+shard's synchronous writes wait for the first follower to finish. A build
+that takes the followers more than twice `replication_timeout` makes the
+leader resign under strict fencing (issue #267). Checking existing rows (a narrower
 type, `NOT NULL`) still happens behind the fence, and is refused above
 `tarn.cfg.alter_check_rows` rows per shard.
 
@@ -2678,7 +2682,10 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   are refused. Dropped columns retain their fields (no space is reclaimed).
   Writes wait during PREPARE and, on memtx or on a replicated shard's
   vinyl table, index building, which no row limit bounds; an unreplicated
-  shard's vinyl indexes build before that wait. Checking or materializing existing rows
+  shard's vinyl indexes build before that wait. On a replicated shard the
+  followers' builds also hold the shard's other writes, and a build that
+  takes them more than about a second makes the leader resign (#267).
+  Checking or materializing existing rows
   (a narrower type, `NOT NULL`, indexed fills) is refused above
   `tarn.cfg.alter_check_rows` rows per shard. Engine changes use a separate
   full-table copy with a final write/read fence (§2.11), require capacity

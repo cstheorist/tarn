@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `bench/online_lazy_build.py` measures index builds on replicated shards.
+  `--index plain` adds an ordinary index, and `--other-rate` inserts into
+  another table meanwhile. Each run records the shards' leader changes, and
+  an ALTER that returned 1180 and completed in the background. On 2 shards
+  × 3 replicas with fsync, builds that took the followers more than about a
+  second made the shards' leaders resign: a follower builds the index in
+  its applier and acknowledges nothing until it finishes
+  ([#267](https://github.com/cstheorist/tarn/issues/267)). The results are
+  in `bench/results_build_wait_rf3_*.json`, and the docs describe the
+  limitation ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
 - `tests/sql/resourcefaults.py` checks the SQL resource budgets alongside
   storage continuations, client disconnects and slow readers, reading back
   what each failure left. `tests/resources.sh` runs it, and CI runs that

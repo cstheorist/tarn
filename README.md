@@ -36,7 +36,9 @@ read them as **key/value**.
   Vinyl index builds run online on unreplicated shards. On a replicated
   shard they run behind the table's write fence, as memtx builds do, and
   the shard's other synchronous writes go one at a time meanwhile (#263,
-  #254). Indexed instant defaults and lazy-index bootstrap use bounded
+  #254). The followers then build the index again, and a build that takes
+  them more than about a second makes the leader resign (#267). Indexed
+  instant defaults and lazy-index bootstrap use bounded
   write fences while reads remain available.
   [Online engine changes](docs/operations.md#online-engine-changes) copy a
   table between memtx and vinyl while writes continue, then fence it for
