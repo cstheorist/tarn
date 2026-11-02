@@ -6,7 +6,10 @@
 -- an empty space and ordinary batches of rows, never a long index build
 -- (tla/ShadowUnique.tla for its unique indexes). When the ALTER also adds,
 -- renames or drops columns, the replacement takes the new format, and the
--- copy pads each row it writes with the fills its indexes need.
+-- copy pads each row it writes with the fills its indexes need. A rebuild
+-- keeps the table's global index spaces as they are: their entries hold
+-- keys and primary keys, which the copy keeps, and both definitions write
+-- them. Publication only renames them after the new space's id.
 local fiber, clock, mp, uuid = require('fiber'), require('clock'), require('msgpack'), require('uuid')
 local M = {}
 local RC = {txn_isolation = 'read-confirmed'}
@@ -43,26 +46,31 @@ function M.new(c)
     local function bound(a)
         local x = type(a) == 'table' and a.engine_change
         -- A rebuild keeps the engine; an engine change changes it. A rebuild
-        -- is `true`, or 'layout' when it also changes the stored layout:
-        -- storage from before layouts takes only `true`, and so refuses such
-        -- a job (every step, ABORT too) rather than copy the old layout.
+        -- is `true`; 'layout' when it also changes the stored layout; 'aux'
+        -- when it keeps the table's global index spaces (and may change the
+        -- layout too). Storage from before one of them refuses such a job
+        -- (every step, ABORT too) rather than copy the old layout, or leave
+        -- the kept spaces under names it no longer finds them by.
         if type(x) ~= 'table' or type(a.def) ~= 'table'
            or type(x.old_id) ~= 'number' or type(a.def.id) ~= 'number'
            or x.old_id == a.def.id or type(x.old_name) ~= 'string'
            or (x.old_engine ~= 'memtx' and x.old_engine ~= 'vinyl')
            or (a.def.engine ~= 'memtx' and a.def.engine ~= 'vinyl')
-           or (x.rebuild ~= nil and x.rebuild ~= true and x.rebuild ~= 'layout')
+           or (x.rebuild ~= nil and x.rebuild ~= true and x.rebuild ~= 'layout' and x.rebuild ~= 'aux')
            or (x.old_engine == a.def.engine) ~= (x.rebuild ~= nil) or a.def.name ~= x.old_name then
             fail(1210, 'Malformed engine-change descriptor')
         end
         return x
     end
+    local function none(v) return nilish(v) or (type(v) == 'table' and next(v) == nil) end
     -- What a new job's descriptor may ask of the copy, checked when the job
     -- starts its copy (not at ABORT, which must end a job however it was
-    -- refused): only a 'layout' rebuild changes the stored layout (format
-    -- and padding), and a rebuild neither checks rows nor renames the table.
+    -- refused): only a 'layout' or 'aux' rebuild changes the stored layout
+    -- (format and padding). A rebuild neither checks rows nor renames the
+    -- table; it makes and drops no global index and has no lazy one, and
+    -- only an 'aux' rebuild has global indexes, which it keeps.
     local function admissible(x, a)
-        if x.rebuild ~= 'layout' and (not nilish(a.format) or not nilish(a.pad)) then
+        if x.rebuild ~= 'layout' and x.rebuild ~= 'aux' and (not nilish(a.format) or not nilish(a.pad)) then
             fail(1210, x.rebuild and 'A rebuild that changes the stored layout must say so'
                 or 'An engine change keeps the stored layout')
         end
@@ -71,7 +79,36 @@ function M.new(c)
                 if type(ch) ~= 'table' or ch[3] ~= 'indexed' then fail(1210, 'An engine rebuild checks no rows') end
             end
             if not nilish(a.rename) then fail(1210, "An engine rebuild keeps the table's name") end
+            if not none(a.uix) or not none(a.uix_drop) or not none(a.lazy_drop) or not none(a.def.lazy) then
+                fail(1210, 'An engine rebuild makes and drops no global index, and has no lazy one')
+            end
+            if x.rebuild ~= 'aux' and (not none(a.def.uix) or #c.uix_spaces(x.old_id) > 0) then
+                fail(1210, 'A rebuild that keeps global indexes must say so')
+            end
         end
+    end
+    -- The global index spaces an 'aux' rebuild keeps: every one of the
+    -- source's, as the new definition names them, after the new space.
+    -- {id, old_name, new_name} each, which APPLY renames. The index id in a
+    -- name may change: an index on a column made nullable gets a new id
+    -- (alter.rs), and such a change made in place left the space under the
+    -- old one.
+    local function kept_globals(x, a)
+        local have, n, out, taken = {}, 0, {}, {}
+        for _, sp in ipairs(c.uix_spaces(x.old_id)) do have[sp.id], n = sp.name, n + 1 end
+        local old_tag, new_tag = '^' .. c.uix_prefix .. x.old_id .. '_%d+$', '^' .. c.uix_prefix .. a.def.id .. '_%d+$'
+        for _, u in ipairs(type(a.def.uix) == 'table' and a.def.uix or {}) do
+            local name = type(u) == 'table' and have[u.id]
+            local new = name and type(u.name) == 'string' and u.name
+            local other = new and box.space[new]
+            if not name or not name:match(old_tag) or not new or not new:match(new_tag) or taken[new]
+               or (other ~= nil and other.id ~= u.id) then
+                fail(1210, 'Malformed kept global index')
+            end
+            out[#out + 1], have[u.id], taken[new] = {id = u.id, old_name = name, new_name = new}, nil, true
+        end
+        if #out ~= n then fail(1210, 'A rebuild keeps every global index of its table') end
+        return out
     end
     local function group(r, old)
         local out = {old and r.old_id or r.new_id}
@@ -468,10 +505,11 @@ function M.new(c)
         if r ~= nil and (r.ver >= a.ver or not terminal(r.phase)) then fail(1412, 'A different engine job owns the source') end
         local sp = check_source(a)
         if not aborting then admissible(x, a) end
-        local schema, pad = box.NULL, box.NULL
+        local schema, pad, kept = box.NULL, box.NULL, {}
         if not aborting then
             schema = x.rebuild ~= nil and rebuilt(sp, a) or snapshot(sp)
             pad = x.rebuild ~= nil and padding(a) or box.NULL
+            if x.rebuild == 'aux' then kept = kept_globals(x, a) end
         end
         local old_aux, new_aux, old_uix = {}, {}, {}
         for _, id in ipairs(a.uix_drop or {}) do old_aux[#old_aux + 1], old_uix[#old_uix + 1] = id, id end
@@ -482,7 +520,7 @@ function M.new(c)
             new_id = a.def.id, engine = a.def.engine, ver = a.ver, gen = gen, phase = 'resetting',
             shadow_name = '_tarn_engine_' .. x.old_id .. '_' .. a.def.id,
             retired_name = '_tarn_engine_old_' .. x.old_id .. '_' .. a.def.id,
-            schema = schema, rebuild = x.rebuild ~= nil, pad = pad,
+            schema = schema, rebuild = x.rebuild ~= nil, pad = pad, kept_uix = kept,
             cursor = box.NULL, copied = 0, capture = '',
             old_aux = old_aux, new_aux = new_aux, old_uix = old_uix}
         transaction(function() replace_record(r) end)
@@ -734,6 +772,17 @@ function M.new(c)
         if old ~= nil and old.name == r.old_name then old:rename(r.retired_name) end
         if target.name == r.shadow_name then target:rename(r.old_name) end
         if target.name ~= r.old_name then fail(1412, 'Engine replacement name changed') end
+        c.hook('engine_renamed')
+        -- The global index spaces a rebuild keeps are named after the space
+        -- that has the table's name, by which the storage finds them
+        -- (UIX.spaces in lua/tarn.lua, which until the catalog below names
+        -- that space finds them through the catalog too). Their contents
+        -- stay, so their readers are not doomed: both definitions write them.
+        for _, k in ipairs(r.kept_uix or {}) do
+            local u = box.space[k.id]
+            if u ~= nil and u.name == k.old_name then u:rename(k.new_name) end
+            if u == nil or u.name ~= k.new_name then fail(1412, 'Kept global index identity changed') end
+        end
         for _, sid in ipairs(group(r, true)) do c.doom(sid) end
         c.hook('engine_publish')
         transaction(function()
