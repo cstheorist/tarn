@@ -548,6 +548,10 @@ impl Shard {
             }
         }
         let mut last_err = String::from("no replicas configured");
+        // A replica that answers but is read-only, reported in preference to
+        // one that does not: the shard is most likely between leaders, which
+        // a repeatable step waits out (`retry_transient`).
+        let mut read_only: Option<String> = None;
         for addr in &self.replicas {
             cluster.reclaim_connections(completion).await;
             // Pool growth is optional. A hard cap must not reject work that
@@ -596,6 +600,7 @@ impl Shard {
                 .unwrap_or(true);
             if ro {
                 last_err = format!("{} is read-only", addr);
+                read_only.get_or_insert_with(|| last_err.clone());
                 continue;
             }
             if !admitted {
@@ -631,7 +636,11 @@ impl Shard {
         let error = SqlError::new(
             2003,
             "HY000",
-            format!("shard {} has no reachable leader ({})", self.id, last_err),
+            format!(
+                "shard {} has no reachable leader ({})",
+                self.id,
+                read_only.unwrap_or(last_err)
+            ),
         );
         *self.discover_failure.lock() = Some((Instant::now(), error.clone()));
         Err(error)
@@ -807,11 +816,11 @@ const DEADLOCK_MIN_WAIT: Duration = Duration::from_millis(50);
 const APPLY_RETRY: Duration = Duration::from_secs(60);
 
 /// Run `attempt` again while it fails with a transient refusal
-/// (`crate::lazy::online_transient`: a transaction conflict, no leader yet,
-/// a lost connection, a transaction a new leader rolled back, storage
-/// admission), until `limit` has passed since the first refusal. It waits
-/// `backoff` first, then twice as long each time, up to 32 times `backoff`.
-/// Only for steps that may be repeated.
+/// (`step_transient`: a transaction conflict, no leader yet, a lost
+/// connection, a transaction a new leader rolled back, storage admission),
+/// until `limit` has passed since the first refusal. It waits `backoff`
+/// first, then twice as long each time, up to 32 times `backoff`. Only for
+/// steps that may be repeated.
 pub(crate) async fn retry_transient<T, F, Fut>(limit: Duration, backoff: Duration, mut attempt: F) -> SqlResult<T>
 where
     F: FnMut() -> Fut,
@@ -820,13 +829,22 @@ where
     let (mut since, mut wait) = (None, backoff);
     loop {
         match attempt().await {
-            Err(e) if crate::lazy::online_transient(&e) && since.get_or_insert_with(Instant::now).elapsed() < limit => {
+            Err(e) if step_transient(&e) && since.get_or_insert_with(Instant::now).elapsed() < limit => {
                 tokio::time::sleep(wait).await;
                 wait = wait.saturating_mul(2).min(backoff.saturating_mul(32));
             }
             r => return r,
         }
     }
+}
+
+/// A refusal that `retry_transient` waits out: `crate::lazy::online_transient`,
+/// except no leader on a shard none of whose replicas answers (2003 without
+/// a read-only one, which `Shard::discover` reports first). Such a shard is
+/// down rather than between leaders: the step fails at once, and a server
+/// finishes the job once the shard is back.
+fn step_transient(e: &SqlError) -> bool {
+    crate::lazy::online_transient(e) && !(e.code == 2003 && !e.message.contains(" is read-only)"))
 }
 
 /// A pending row-lock wait, as its shard reports it (`tarn_lock_waits`).

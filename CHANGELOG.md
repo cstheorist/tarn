@@ -154,8 +154,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   decision was read as a takeover. Both are now sent again on every
   transient refusal (a conflict, no leader yet, a lost connection, a
   transaction a new leader rolled back, a new leader still applying the
-  build, storage admission) for up to a minute. Both may be repeated
-  ([#267](https://github.com/cstheorist/tarn/issues/267)).
+  build, storage admission) for up to a minute, except to a shard none of
+  whose replicas answers, which is down and fails at once as before. Both
+  may be repeated ([#267](https://github.com/cstheorist/tarn/issues/267)).
 
 - Inside a transaction, a read of a shard it had already read no longer
   asks for 4096 rows in one page whatever their size. Such a read (a scan,

@@ -1650,10 +1650,10 @@ a transaction conflict can roll back a DDL statement of it, and a
 replicated shard can be left without a leader for a while, as when its
 leader resigns while the followers apply an index build (issue #267); the
 new leader may still be applying that build ("the space is already being
-modified"). The
-decision is recorded on the first shard the same way. A statement whose job
-is still unfinished, or undecided, then reports the outcome as unknown
-(1180).
+modified"). A shard none of whose replicas answers is down rather than
+between leaders, and fails the step at once. The decision is recorded on
+the first shard the same way. A statement whose job is still unfinished, or
+undecided, then reports the outcome as unknown (1180).
 
 Writes wait (in the SQL server: the statement is retried, up to the lock
 wait timeout) from the moment PREPARE raises the fence until the servers

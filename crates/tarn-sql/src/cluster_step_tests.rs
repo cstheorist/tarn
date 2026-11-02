@@ -1,5 +1,6 @@
 //! Schema-change steps that may be repeated (APPLY) are sent again after a
-//! transient refusal, for a bounded time, and only then.
+//! transient refusal, for a bounded time, and only then; not to a shard
+//! that is down.
 use super::*;
 
 use std::sync::atomic::AtomicU32;
@@ -69,12 +70,36 @@ async fn a_leader_change_is_ridden_out() {
 
 #[tokio::test]
 async fn refusals_past_the_limit_are_reported() {
-    let refusals = vec![SqlError::new(2003, "HY000", "shard 1 has no reachable leader"); 1000];
+    let refusals = vec![
+        SqlError::new(
+            2003,
+            "HY000",
+            "shard 1 has no reachable leader (127.0.0.1:3313 is read-only)"
+        );
+        1000
+    ];
     let started = Instant::now();
     let (r, attempts) = run(&refusals, Duration::from_millis(50)).await;
     assert_eq!(r.unwrap_err().code, 2003);
     assert!(attempts > 1 && attempts < 1000, "{attempts} attempts");
     assert!(started.elapsed() >= Duration::from_millis(50));
+}
+
+/// A shard none of whose replicas answers is down, not between leaders: the
+/// step fails at once (after a lost connection, at the next attempt), and a
+/// server finishes the job once the shard is back.
+#[tokio::test]
+async fn a_shard_that_is_down_fails_at_once() {
+    let down = SqlError::new(
+        2003,
+        "HY000",
+        "shard 2 has no reachable leader (127.0.0.1:3821: tarantool i/o error: Connection refused (os error 111))",
+    );
+    let (r, attempts) = run(std::slice::from_ref(&down), LIMIT).await;
+    assert_eq!((r.unwrap_err().code, attempts), (2003, 1));
+    let lost = SqlError::new(2013, "HY000", "Lost connection to storage");
+    let (r, attempts) = run(&[lost, down], LIMIT).await;
+    assert_eq!((r.unwrap_err().code, attempts), (2003, 2));
 }
 
 #[tokio::test]
