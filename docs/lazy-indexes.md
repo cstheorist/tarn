@@ -339,8 +339,9 @@ Once the followers took more than about a second, each shard's leader
 resigned (its relays to the followers timed out), and writes failed until
 a new leader was elected. In earlier runs with 200,000 rows per shard, the
 ALTER itself returned 1180 and completed in the background twice of two on
-vinyl and once of two on memtx. In every run, each shard's new index held
-exactly its rows.
+vinyl and once of two on memtx; its APPLY is now sent again for up to a
+minute instead. In every run, each shard's new index held exactly its
+rows.
 
 Other changes build the index behind PREPARE's fence: an index on a column
 the ALTER adds or retypes, a backfill, an engine change, and any change on
