@@ -316,6 +316,32 @@ shard. The leaders' RSS went from 171-184 MB to 427-454 MB on vinyl, and
 from 155-159 MB to 916-1,081 MB on memtx, where the index's entries are
 in memory.
 
+**On replicated shards.** The same script with `--index plain`, and a
+second session inserting 100 rows a second into another table, ran on 2
+shards × 3 replicas with `wal_mode = 'fsync'`. All six storage nodes, the
+SQL server and the client shared one 2-CPU host. Results are in
+`bench/results_build_wait_rf3_*.json`. A replicated shard builds the index
+behind the fence on either engine. Each follower then builds it again in
+its applier, which acknowledges nothing until it finishes (issue #267).
+
+| Engine | Rows per shard | ALTER | Longest write to the table | Longest write to the other table | Leader changes |
+|---|---:|---:|---:|---:|---|
+| vinyl | 50,000 | 0.85 s | 0.91 s | 0.27 s | none |
+| vinyl | 100,000 | 1.98 s | 2.04 s | 0.97 s | none |
+| vinyl | 200,000 | 7.14 s | 0.23 s, 1 of 4 refused | 0.20 s, 108 of 279 refused | both shards |
+| memtx | 50,000 | 0.45 s | 0.44 s | 0.22 s | none |
+| memtx | 100,000 | 0.82 s | 0.82 s | 0.59 s | none |
+| memtx | 200,000 | 3.30 s | 3.30 s | 2.57 s | both shards |
+
+Writes to the table wait for the whole ALTER. Writes to the other table
+wait while the followers build, since they cannot reach their quorum.
+Once the followers took more than about a second, each shard's leader
+resigned (its relays to the followers timed out), and writes failed until
+a new leader was elected. In earlier runs with 200,000 rows per shard, the
+ALTER itself returned 1180 and completed in the background twice of two on
+vinyl and once of two on memtx. In every run, each shard's new index held
+exactly its rows.
+
 Other changes build the index behind PREPARE's fence: an index on a column
 the ALTER adds or retypes, a backfill, an engine change, and any change on
 storage nodes from before #184. That build can pause writes while it scans

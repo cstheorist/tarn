@@ -1,0 +1,119 @@
+{
+  "issue": 184,
+  "date": "2026-11-02T00:16:31+00:00",
+  "source": "176d3485e259933f82f1e857c3b75a884d38b52b",
+  "dirty": true,
+  "tarn_server_sha256": "434793f40cd67e180d0d4d5a326fb21b910335ccec5364fd7e8fca6daad638de",
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f5",
+  "host": {
+    "cpus": 2,
+    "machine": "x86_64",
+    "kernel": "6.18.44-fc-v185"
+  },
+  "engine": "memtx",
+  "index": "plain",
+  "shards": 2,
+  "replicas_per_shard": 3,
+  "rows_per_shard": 50000,
+  "alter_check_rows": 1000000,
+  "writer_rate": 200.0,
+  "other_rate": 100.0,
+  "load_s": 14.5,
+  "load_vinyl_refusals": 0,
+  "alter_s": 0.45,
+  "alter_error": null,
+  "published_s": null,
+  "leader_changes": [
+    0,
+    0
+  ],
+  "build_rows_per_s": 220661,
+  "writes": {
+    "before": {
+      "writes": 1919,
+      "errors": 0,
+      "p50_ms": 2.779369000109,
+      "p99_ms": 8.915030000025581,
+      "max_ms": 78.7373079997451
+    },
+    "during": {
+      "writes": 5,
+      "errors": 0,
+      "p50_ms": 4.427115999988018,
+      "p99_ms": 437.0904430002156,
+      "max_ms": 437.0904430002156
+    },
+    "after": {
+      "writes": 945,
+      "errors": 0,
+      "p50_ms": 2.8375500000947795,
+      "p99_ms": 10.98030100001779,
+      "max_ms": 67.7469160000328
+    }
+  },
+  "other_writes": {
+    "before": {
+      "writes": 984,
+      "errors": 0,
+      "p50_ms": 3.0419009999604896,
+      "p99_ms": 8.85854800026209,
+      "max_ms": 76.37272800002393
+    },
+    "during": {
+      "writes": 11,
+      "errors": 0,
+      "p50_ms": 11.797741999998834,
+      "p99_ms": 216.89157599985265,
+      "max_ms": 216.89157599985265
+    },
+    "after": {
+      "writes": 493,
+      "errors": 0,
+      "p50_ms": 3.0797049998909642,
+      "p99_ms": 7.968580000124348,
+      "max_ms": 70.20266800009267
+    }
+  },
+  "nodes_before": [
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 51560,
+      "term": 2,
+      "engine": "memtx",
+      "wal_bytes": 3229261,
+      "rss": 75890688
+    },
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 48440,
+      "term": 2,
+      "engine": "memtx",
+      "wal_bytes": 3008153,
+      "rss": 77058048
+    }
+  ],
+  "nodes_after": [
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 51560,
+      "term": 2,
+      "engine": "memtx",
+      "wal_bytes": 3490515,
+      "rss": 93675520
+    },
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 48440,
+      "term": 2,
+      "engine": "memtx",
+      "wal_bytes": 3252121,
+      "rss": 91512832
+    }
+  ],
+  "checked_rows": 100000,
+  "mismatched_keys": []
+}

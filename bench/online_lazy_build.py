@@ -3,6 +3,14 @@
 
   python3 bench/online_lazy_build.py --tarn HOST:PORT --kv LEADER,LEADER
         [--rows-per-shard 1200000] [--rate 200] [--engine vinyl] [--out RESULTS]
+        [--index lazy|plain] [--any-size] [--other-rate 0]
+
+--index plain adds an ordinary secondary index instead (no lazy checks; each
+shard's new index is counted against its rows). --any-size allows tables
+below alter_check_rows. --other-rate adds a second session inserting into
+another table (u) at that rate: on a replicated shard, a vinyl build behind
+the fence makes the shard's other synchronous writes go one at a time
+(#264), and they wait while the followers apply the build (#267).
 
 Needs the Python `tarantool` connector for its storage probes.
 
@@ -16,7 +24,10 @@ changes the indexed key). It records:
 - every write's latency, before, during and after the ALTER; the longest
   write during it bounds the time writes waited behind its fences;
 - each shard leader's RSS, its WAL bytes, its rows and the new index's
-  entries (vinyl counts are estimates);
+  entries (vinyl counts are estimates), and its election term: a shard
+  whose leader resigned during the ALTER (#267) counts a leader change;
+- an ALTER that returned 1180 and completed in the background (its error,
+  and when SHOW INDEX first listed the index);
 - after the deliveries drain, whether the index's live entries are exactly
   the table's rows (a count and two order-independent digests over every
   shard), and whether lazy reads return what strong reads return for the
@@ -87,7 +98,8 @@ for _, t in box.space._tarn_catalog:pairs() do
     if t.name == ... and box.space[t.name] then rows = box.space[t.name]:len() end
 end
 return {rss = rss, wal_bytes = wal, lazy_entries = entries, rows = rows,
-        check_rows = tarn.cfg.alter_check_rows, engine = box.space[...] and box.space[...].engine}
+        check_rows = tarn.cfg.alter_check_rows, engine = box.space[...] and box.space[...].engine,
+        term = box.info.election.term, ro = box.info.ro}
 """
 
 
@@ -169,6 +181,9 @@ def main():
     ap.add_argument("--engine", choices=("memtx", "vinyl"), default="vinyl")
     ap.add_argument("--before", type=float, default=10, help="seconds of writes before the ALTER")
     ap.add_argument("--out", help="results file (bench/results_online_lazy_build_ENGINE.json)")
+    ap.add_argument("--index", choices=("lazy", "plain"), default="lazy")
+    ap.add_argument("--any-size", action="store_true", help="allow shards below alter_check_rows")
+    ap.add_argument("--other-rate", type=float, default=0, help="writes per second to another table, u")
     args = ap.parse_args()
     args.out = args.out or os.path.join(HERE, f"results_online_lazy_build_{args.engine}.json")
     nodes = args.kv.split(",")
@@ -180,6 +195,9 @@ def main():
     c = connect(args.tarn)
     q(c, "CREATE TABLE t (tenant_id INT NOT NULL,id INT NOT NULL,k INT,n INT,v VARCHAR(16),"
          f"PRIMARY KEY(tenant_id,id)) PARTITION BY KEY(tenant_id) ENGINE={args.engine}")
+    if args.other_rate:
+        q(c, "CREATE TABLE u (tenant_id INT NOT NULL,id INT NOT NULL,n INT,"
+             f"PRIMARY KEY(tenant_id,id)) PARTITION BY KEY(tenant_id) ENGINE={args.engine}")
     total = args.rows_per_shard * shards
     started = time.monotonic()
     batch, refusals = 500, 0
@@ -203,10 +221,30 @@ def main():
     load_s = time.monotonic() - started
     before_state = nodes_state(nodes)
     print(f"loaded {total} rows in {load_s:.0f} s; per shard: {[s['rows'] for s in before_state]}", flush=True)
-    assert all(s["rows"] > s["check_rows"] for s in before_state), ("each shard must exceed alter_check_rows",
-                                                                    before_state)
+    assert args.any_size or all(s["rows"] > s["check_rows"] for s in before_state), (
+        "each shard must exceed alter_check_rows", before_state)
+    replicas = ev(nodes[0], "local n = 0 for _ in pairs(box.info.replication) do n = n + 1 end return n", [])
 
-    samples, stop = [], threading.Event()
+    samples, other, stop = [], [], threading.Event()
+    alter_error = None
+
+    def other_writer():
+        # Inserts into u, a table the ALTER doesn't touch.
+        period, i = 1 / args.other_rate, 0
+        with connect(args.tarn, read_timeout=120) as w:
+            nxt = time.monotonic()
+            while not stop.is_set():
+                i += 1
+                t0 = time.monotonic()
+                try:
+                    q(w, "INSERT INTO u VALUES (%s,%s,0)", (i % 997, i))
+                    ok = True
+                except pymysql.MySQLError:
+                    ok = False
+                t1 = time.monotonic()
+                other.append((t0, (t1 - t0) * 1000, ok))
+                nxt = max(nxt + period, t1)
+                time.sleep(max(0, nxt - time.monotonic()))
 
     def writer():
         rnd = random.Random(184)
@@ -226,22 +264,43 @@ def main():
                 nxt = max(nxt + period, t1)
                 time.sleep(max(0, nxt - time.monotonic()))
 
-    thread = threading.Thread(target=writer)
-    thread.start()
+    threads = [threading.Thread(target=writer)]
+    if args.other_rate:
+        threads.append(threading.Thread(target=other_writer))
+    for th in threads:
+        th.start()
     try:
         time.sleep(args.before)
         alter_begin = time.monotonic()
-        q(c, "ALTER TABLE t ADD INDEX lk(k,n,id) COMMENT 'tarn:lazy'")
+        try:
+            q(c, "ALTER TABLE t ADD INDEX lk(k,n,id)" + (" COMMENT 'tarn:lazy'" if args.index == "lazy" else ""))
+        except pymysql.MySQLError as e:
+            # A replicated shard's leader can resign while its followers
+            # apply the build (#267): the ALTER reports 1180, and a SQL
+            # server finishes it in the background.
+            if e.args[0] != 1180 or "completes in the background" not in str(e.args[1]):
+                raise
+            alter_error = f"{e.args[0]}: {e.args[1]}"
         alter_end = time.monotonic()
         time.sleep(5)
     finally:
         stop.set()
-        thread.join()
+        for th in threads:
+            th.join()
     alter_s = alter_end - alter_begin
-    print(f"ALTER returned after {alter_s:.1f} s", flush=True)
-    wait_empty(nodes, timeout=600)
+    print(f"ALTER returned after {alter_s:.1f} s{': ' + alter_error if alter_error else ''}", flush=True)
+    published_s = None
+    if alter_error:
+        published_s = wait_published(c, timeout=600) - alter_begin
+        print(f"the index was published {published_s:.1f} s after the ALTER began", flush=True)
+    if args.index == "lazy":
+        wait_empty(nodes, timeout=600)
     after_state = nodes_state(nodes)
 
+    if args.index == "plain":
+        return finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
+                      samples, other, alter_begin, alter_end, replicas, alter_error=alter_error,
+                      published_s=published_s)
     # Exact: the index's live entries are the table's rows, on all shards.
     digests = [ev(n, DIGEST, [f"{DB}.t"]) for n in nodes]
     rows = [sum(d["rows"][i] for d in digests) % (2 ** 32 if i else 2 ** 63) for i in range(3)]
@@ -259,11 +318,46 @@ def main():
         lazy = q(c, sql)
         if lazy != strong:
             mismatched.append({"k": k, "strong": len(strong), "lazy": len(lazy)})
-    phases = {
-        "before": summary([x for x in samples if x[0] < alter_begin]),
-        "during": summary([x for x in samples if alter_begin <= x[0] < alter_end]),
-        "after": summary([x for x in samples if x[0] >= alter_end]),
-    }
+    return finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
+                  samples, other, alter_begin, alter_end, replicas, checked, mismatched,
+                  alter_error=alter_error, published_s=published_s)
+
+
+def wait_published(c, timeout):
+    """When SHOW INDEX first lists lk (monotonic clock), polling each second."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            if any(row[2] == "lk" for row in q(c, "SHOW INDEX FROM t")):
+                return time.monotonic()
+        except pymysql.MySQLError:
+            pass
+        assert time.monotonic() < deadline, "the ALTER did not complete in the background"
+        time.sleep(1)
+
+
+# Each shard's new plain index holds as many entries as the table has rows.
+PLAIN_COUNT = """
+local sp = box.space[...]
+local idx = sp.index.lk
+return {rows = sp.index[0]:count(), entries = idx and idx:count() or box.NULL}
+"""
+
+
+def finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
+           samples, other, alter_begin, alter_end, replicas, checked=None, mismatched=None,
+           alter_error=None, published_s=None):
+    if mismatched is None:
+        counts = [ev(n, PLAIN_COUNT, [f"{DB}.t"]) for n in nodes]
+        mismatched = [c for c in counts if c["entries"] != c["rows"]]
+        checked = sum(c["rows"] for c in counts)
+
+    def phases(xs):
+        return {
+            "before": summary([x for x in xs if x[0] < alter_begin]),
+            "during": summary([x for x in xs if alter_begin <= x[0] < alter_end]),
+            "after": summary([x for x in xs if x[0] >= alter_end]),
+        }
     server = os.environ.get("TARN_BIN", os.path.join(ROOT, "target", "release", "tarn-server"))
     result = {
         "issue": 184,
@@ -275,20 +369,26 @@ def main():
         "tarantool": subprocess.run([os.environ.get("TARANTOOL", "tarantool"), "--version"],
                                     capture_output=True, text=True).stdout.splitlines()[0],
         "host": {"cpus": os.cpu_count(), "machine": platform.machine(), "kernel": platform.release()},
-        "engine": args.engine, "shards": shards, "rows_per_shard": args.rows_per_shard,
+        "engine": args.engine, "index": args.index, "shards": shards, "replicas_per_shard": replicas,
+        "rows_per_shard": args.rows_per_shard,
         "alter_check_rows": before_state[0]["check_rows"], "writer_rate": args.rate,
+        "other_rate": args.other_rate,
         "load_s": round(load_s, 1), "load_vinyl_refusals": refusals, "alter_s": round(alter_s, 2),
-        "build_rows_per_s": round(total / alter_s), "writes": phases,
+        "alter_error": alter_error, "published_s": round(published_s, 1) if published_s is not None else None,
+        "leader_changes": [a["term"] - b["term"] for a, b in zip(after_state, before_state)],
+        "build_rows_per_s": round(total / alter_s), "writes": phases(samples),
+        "other_writes": phases(other) if args.other_rate else None,
         "nodes_before": before_state, "nodes_after": after_state,
         "checked_rows": checked, "mismatched_keys": mismatched,
     }
     with open(args.out, "w") as f:
         json.dump(result, f, indent=2)
         f.write("\n")
-    print(json.dumps({k: result[k] for k in ("engine", "rows_per_shard", "alter_s", "build_rows_per_s", "writes",
-                                             "checked_rows", "mismatched_keys")}, indent=1), flush=True)
+    print(json.dumps({k: result[k] for k in ("engine", "index", "replicas_per_shard", "rows_per_shard", "alter_s",
+                                             "alter_error", "published_s", "leader_changes", "build_rows_per_s", "writes", "other_writes", "checked_rows",
+                                             "mismatched_keys")}, indent=1), flush=True)
     assert not mismatched, mismatched
-    assert phases["during"]["writes"] > 0, "no write completed during the ALTER"
+    assert result["writes"]["during"]["writes"] > 0, "no write completed during the ALTER"
 
 
 if __name__ == "__main__":

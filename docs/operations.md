@@ -137,6 +137,28 @@ index, its leader lets one synchronous transaction at a time reach the WAL
 down for the length of the build. Don't call `create_index` on a populated
 vinyl space of a replicated shard by hand while the shard takes writes.
 
+A follower also acknowledges nothing while it applies an index build, on
+either engine (issue #267). It builds the new index in its applier fiber,
+which handles nothing else from the leader until the build ends: no rows,
+no heartbeats, no votes. While both followers build, no synchronous write
+on the shard reaches its quorum. If the build takes them more than twice
+`replication_timeout` (1 s), the leader's relays to them time out ("timed
+out" in its log) and strict fencing makes it resign. The followers stand
+after four times `replication_timeout`, but the leader refuses their votes
+until they have applied the build. The shard has no leader until a follower
+finishes and an election completes. An ALTER TABLE or engine change caught in this can report 1180
+("did not finish on every shard ...; it completes in the background"), and
+writes to the shard fail or end with an unknown outcome meanwhile. On a
+2-CPU test host the followers took that long for 200,000 rows per shard
+(see the measurements in
+[lazy indexes](lazy-indexes.md#bootstrap-ddl-and-native-writes)), and
+dedicated hosts only move the threshold. Schedule index builds and engine
+changes of large tables on replicated shards for quiet periods. Raising
+`replication_timeout` with `box.cfg` on a running replica set does not
+help: an applier already waiting with the old timeout gives up when its
+peer's relay switches to the new heartbeat interval, and that alone made a
+leader resign in a test.
+
 Start every replica of a new shard before sending it traffic. Tarantool 3.9
 stops a joining replica ("can't initialize storage: timed out") when its
 first checkpoint waits longer than `replication_synchro_timeout` for the
