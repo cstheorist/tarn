@@ -134,6 +134,7 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
         profile_bounds = []
     cpus_before = {str(pid): cpu(pid) for pid in pids}
     records, failures = [], []
+    admission = threading.Lock()
     clients = 1 if shape == 'uncontended' else 8
     start = [None]
     barrier = threading.Barrier(clients + 1, timeout=20,
@@ -148,14 +149,15 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
             query(c, 'SET SESSION innodb_lock_wait_timeout=1')
             barrier.wait()
             for seq in range(1, 50001):
-                if cancel.is_set() or time.monotonic() >= start[0] + args.seconds:
-                    break
-                token = number * 1000000 + worker_id * 100000 + seq
-                key = 0 if shape == 'hot' else worker_id
-                attempt = dict(token=token, key=key, worker=worker_id, outcome='unknown')
-                # Publish identity before any RPC. A worker still blocked at
-                # the bounded join must leave an unknown attempt in evidence.
-                records.append(attempt)
+                with admission:
+                    if cancel.is_set() or time.monotonic() >= start[0] + args.seconds:
+                        break
+                    token = number * 1000000 + worker_id * 100000 + seq
+                    key = 0 if shape == 'hot' else worker_id
+                    attempt = dict(token=token, key=key, worker=worker_id, outcome='unknown')
+                    # Publish identity before any RPC. A worker still blocked at
+                    # the bounded join must leave an unknown attempt in evidence.
+                    records.append(attempt)
                 began = time.monotonic()
                 try:
                     query(c, 'BEGIN')
@@ -198,9 +200,11 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
         cancel.set()
     elapsed = time.monotonic() - (start[0] or sample_started)
     # Freeze the failed sample as unknown even if a live worker settles later.
-    records = [dict(record) for record in records]
+    with admission:
+        cancel.set()
+        frozen_records = [dict(record) for record in records]
     attempt_path = output.parent / f'{output.stem}-sample-{number}.jsonl'
-    attempt_path.write_text(''.join(json.dumps(r, sort_keys=True) + '\n' for r in sorted(records, key=lambda r: r['token'])))
+    attempt_path.write_text(''.join(json.dumps(r, sort_keys=True) + '\n' for r in sorted(frozen_records, key=lambda r: r['token'])))
     record = dict(number=number, shape=shape, profiled=profiled, warmup=warmup, clients=clients,
                   scheduled_seconds=args.seconds, elapsed_seconds=elapsed,
                   before=before, cpu_before=cpus_before, profile_bounds=profile_bounds,
@@ -224,7 +228,7 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
     output.write_text(json.dumps(evidence, indent=2) + '\n')
     assert not record['workers_live'], 'workers did not settle; readback is not final'
     if record['readback'] is not None:
-        record.update(reconcile(records, record['readback']['counters'], record['readback']['ledger']))
+        record.update(reconcile(frozen_records, record['readback']['counters'], record['readback']['ledger']))
     assert not failures and not record.get('diagnostic_errors'), record
     if profiled:
         assert sum(r['result']['samples'] for r in record['profile']) > 0, 'no profiler samples'
@@ -232,7 +236,7 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
     assert record['acknowledged'] > 0
     record['goodput_per_second'] = record['acknowledged'] / elapsed
     record['latency'] = {outcome: {f'p{int(p * 100)}': percentile(
-        [r['latency_seconds'] for r in records if r['outcome'] == outcome], p) for p in (.5, .99)}
+        [r['latency_seconds'] for r in frozen_records if r['outcome'] == outcome], p) for p in (.5, .99)}
         for outcome in ('ok', 'refused', 'unknown')}
     record['deltas'] = []
     for row in after:
