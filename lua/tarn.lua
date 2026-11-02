@@ -5628,11 +5628,15 @@ end
 --    commit (M.build_while_writable). A leader that resigned meanwhile rolls
 --    it back and refuses it (ER_READONLY).
 -- Either way the shard's next leader goes on from there. Still possible
--- (tla/ReplicatedBuildFence.tla), as for any DDL row, which Tarantool
--- writes asynchronously: a follower that does not get a build's row before
--- the shard's next election, cut off from the leader or restarting, refuses
--- it later if the new leader lacks it. Issue #267 makes that likelier: a
--- node elected while it applies a build writes the row after its PROMOTE.
+-- (tla/ReplicatedBuildFence.tla): a follower that does not get a build's
+-- row before the shard's next election, cut off from the leader or
+-- restarting, refuses it later if the new leader lacks it. The row is
+-- asynchronous, Tarantool's default for DDL
+-- (compat.box_consider_system_spaces_synchronous = 'old'): a synchronous
+-- build would have to reach a quorum within replication_synchro_timeout,
+-- and followers acknowledge it only once they have built it. Issue #267
+-- makes that likelier: a node elected while it applies a build writes the
+-- row after its PROMOTE.
 -- (quorum_wait: seconds, as a schema change's own timeout)
 local SERIAL_SYNC = {depth = 0, quorum_wait = 50}
 -- (tests: replaces box.info.replication, box.info.ro and the quorum)

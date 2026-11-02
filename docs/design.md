@@ -1803,11 +1803,13 @@ resigns while it waits or builds refuses the build (ER_READONLY) and
 writes nothing, and the next leader goes on with the indexes left
 (`tla/ReplicatedBuildFence.tla`). A follower that does not get the DDL row
 before the shard's next election still refuses it if the new leader lacks
-it, as for any schema change: Tarantool writes DDL asynchronously. And
-issue #267 makes this likelier, since a node elected while it applies a
-build writes the row after its PROMOTE. Checking existing rows (a narrower
-type, `NOT NULL`) still happens behind the fence, and is refused above
-`tarn.cfg.alter_check_rows` rows per shard.
+it, because the row is asynchronous. That is Tarantool's default for DDL,
+and Tarn keeps it: a synchronous build would have to reach a quorum within
+`replication_synchro_timeout`, and followers acknowledge it only once they
+have built it. Issue #267 makes this likelier, since a node elected while
+it applies a build writes the row after its PROMOTE. Checking existing
+rows (a narrower type, `NOT NULL`) still happens behind the fence, and is
+refused above `tarn.cfg.alter_check_rows` rows per shard.
 
 **Online engine changes.** A separate `ALTER TABLE ... ENGINE=memtx` or
 `ENGINE=vinyl` creates an owned shadow with a fresh space ID. The source
