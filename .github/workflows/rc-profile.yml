@@ -8,6 +8,11 @@ on:
         type: choice
         options: [guards, confirmation]
         default: guards
+      pilot_engine:
+        description: Engine when full matrix is disabled
+        type: choice
+        options: [memtx, vinyl]
+        default: memtx
       full_matrix:
         description: Run both engines and native configurations
         type: boolean
@@ -75,7 +80,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        engine: ${{ fromJSON(inputs.full_matrix && '["memtx","vinyl"]' || '["memtx"]') }}
+        engine: ${{ fromJSON(inputs.full_matrix && '["memtx","vinyl"]' || inputs.pilot_engine == 'vinyl' && '["vinyl"]' || '["memtx"]') }}
         native: ${{ fromJSON(inputs.full_matrix && '["enabled","disabled"]' || '["enabled"]') }}
     steps:
       - uses: actions/checkout@v7
