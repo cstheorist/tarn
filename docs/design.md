@@ -1802,7 +1802,8 @@ indexes copies the table instead, through the engine change's copy below,
 in the table's own engine. That takes new indexes with drops and renames of
 others, and columns the same statement adds, renames or drops, but no
 change that checks existing rows against a new type, of the primary key or
-of the table's name, and no global or lazy index. The new space gets every
+of the table's name, that makes or drops a global index, or of a table
+with lazy indexes. The new space gets every
 index, and the new format, while it is empty, and the rows reach it in
 ordinary batches, which followers apply and acknowledge at once. When an
 index needs a field that older rows lack (an instant-added column's
@@ -1815,8 +1816,10 @@ the change is published, and writes every row once more through the WAL
 and replication. `index_build` in `cluster.json` decides: `auto` (the
 default) copies on a cluster with replicated shards, `copy` always does,
 and `in_place` never does. A replica that does not answer
-`tarn_engine_rebuild_capabilities`, or for a change of the stored layout
-`tarn_engine_rebuild_format_capabilities`, makes the change build in place.
+`tarn_engine_rebuild_capabilities`, for a change of the stored layout
+`tarn_engine_rebuild_format_capabilities`, or for a table with global
+indexes `tarn_engine_rebuild_aux_capabilities`, makes the change build in
+place.
 
 Built in place on a replicated shard, writes to the table wait for the
 build however long it takes (it is not bounded by
@@ -1887,6 +1890,27 @@ the stored layout, and a rebuild neither checks rows against a new type nor
 renames the table; a descriptor that asks otherwise is refused before any
 copy begins. ABORT checks none of that, so a refused job still ends: it
 leaves a tombstone, which a late BUILD of the job meets.
+
+A rebuild keeps the table's global unique indexes (issue #184), where an
+engine change makes new ones and fills them behind its fence. Their
+entries hold the key and the row's primary key, which the copy keeps, so
+both definitions write the same spaces, each fenced with the table's
+definition: the old one's writes are refused from PREPARE on, and readers
+of these spaces need no dooming at publication. A global index space is
+named after the space of its table (`_tarn_uix_<space id>_<index id>`),
+by which the storage finds it for DROP, TRUNCATE, drains and bucket moves
+(`UIX.spaces`), so APPLY renames the kept ones after the new space once it
+has the table's name, repeatably by ID, before the catalog names it; in
+between, `UIX.spaces` finds them through the catalog entry of the table
+whose name the space has (`EngineCutover`: `KeptFound`). Such a rebuild
+says so (`rebuild = 'aux'`): storage from before it refuses the job at
+every step, rather than leave the spaces under names nothing finds them by.
+It must keep every global index of the table, each under the name the new
+definition gives it after the new space, which no other space has (the
+index id in a name may change: an index on a column made nullable gets a
+new id), and make or drop none. A descriptor that asks otherwise, or has a
+lazy index, and a rebuild of a table with global indexes that does not say
+so, are refused before the copy begins.
 
 The global job's confirmed APPLY decision precedes native renames and
 catalog publication. Recovery uses the explicit old/new IDs even if a
@@ -2447,17 +2471,20 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineCopyStaleBatch | violates PreparedImage | 11291 | 38236 | 17 | 01s | 17 |
 | Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 6372 | 19884 | 13 | 01s | 13 |
 | Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 288 | 568 | 6 | 00s | 6 |
-| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 235 | 742 | 10 | 00s | 10 |
-| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 322 | 977 | 11 | 00s | 11 |
-| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 214 | 703 | 10 | 00s | 10 |
-| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 173 | 522 | 8 | 00s | 8 |
-| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 3 | 3 | 2 | 00s | 2 |
-| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 4 | 4 | 2 | 00s | 2 |
-| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 214 | 703 | 10 | 00s | 10 |
-| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 198 | 547 | 7 | 00s | 7 |
-| Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 241 | 726 | 9 | 00s | 9 |
-| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 318 | 965 | 12 | 00s | 12 |
-| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 216 | 707 | 10 | 00s | 10 |
+| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 285 | 883 | 11 | 01s | 11 |
+| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 384 | 1169 | 12 | 01s | 12 |
+| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 231 | 765 | 11 | 01s | 11 |
+| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 173 | 522 | 8 | 01s | 8 |
+| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 3 | 3 | 2 | 01s | 2 |
+| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 4 | 4 | 2 | 01s | 2 |
+| Bug_EngineCutoverKeptByNameOnly | violates KeptFound | 171 | 520 | 8 | 01s | 8 |
+| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 231 | 765 | 11 | 01s | 11 |
+| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 266 | 796 | 8 | 01s | 8 |
+| Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 308 | 945 | 10 | 01s | 10 |
+| Bug_EngineCutoverPublishBeforeKeptRename | violates KeptNamedAfterCatalog | 195 | 627 | 9 | 01s | 9 |
+| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 349 | 1067 | 13 | 01s | 13 |
+| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 233 | 769 | 11 | 01s | 11 |
+| Bug_EngineCutoverRetireKept | violates KeptAlive | 228 | 762 | 11 | 01s | 11 |
 | Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FairnessPrefix | violates BoundedWait | 1281 | 1281 | 6 | 00s | 6 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
@@ -2652,7 +2679,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
 | EngineBuildReentry | no errors | 1500 | 2946 | 14 | 00s |  |
 | EngineCopy | no errors | 9667 | 34257 | 20 | 01s |  |
-| EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
+| EngineCutover | no errors | 1012 | 4603 | 22 | 01s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |
@@ -2777,10 +2804,10 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   replicated shards, a change that builds secondary indexes, with columns
   added, renamed or dropped, copies the table instead (§2.11), and needs
   room for a second copy of it. Other changes that build indexes on a
-  replicated shard (with a type change, or on a table with global or lazy
-  indexes) still build in place, where the followers' builds also hold the
-  shard's other writes, and a build that takes them more than about a
-  second makes the leader resign (#267).
+  replicated shard (with a type change, a new or dropped global index, or
+  on a table with lazy indexes) still build in place, where the followers'
+  builds also hold the shard's other writes, and a build that takes them
+  more than about a second makes the leader resign (#267).
   Checking or materializing existing rows
   (a narrower type, `NOT NULL`, indexed fills) is refused above
   `tarn.cfg.alter_check_rows` rows per shard. Engine changes use a separate

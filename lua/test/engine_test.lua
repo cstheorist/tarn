@@ -21,8 +21,8 @@ tarn.init{shard_id = 1, peers = {}, sync = true, test_hooks = true, check_yields
 
 local pass, fail, sequence = 0, 0, 88000
 local jobs, workers, streams = {}, {}, {}
-local hooks = {'engine_copy', 'engine_tail', 'engine_prepared', 'engine_publish', 'engine_published', 'write', 'scan',
-    'reduce_scan'}
+local hooks = {'engine_copy', 'engine_tail', 'engine_prepared', 'engine_renamed', 'engine_publish', 'engine_published',
+    'write', 'scan', 'reduce_scan'}
 local function ok(r) assert(type(r) == 'table' and r[1] == 'ok', json.encode(r)); return r end
 local function wait(label, fn, seconds)
     local until_ = fiber.clock() + (seconds or 5)
@@ -154,9 +154,18 @@ local function begin_job(t)
 end
 local function decide(t, value) return ok(tarn_job_phase(t.owner, value)) end
 local function end_job(t) ok(tarn_job_end(t.owner)); jobs[t.owner] = nil end
-local function change(t, writes)
-    return tarn_autocommit(writes, {fence = {t.old_id, t.old_ver}})
+-- Vinyl admission refuses a write while dump or compaction catches up
+-- ('throttled', to retry after the delay it hints): the copy's tests write
+-- many vinyl tables into a small vinyl_memory.
+local function write(writes, fence)
+    local deadline = fiber.clock() + 30
+    repeat
+        local r = tarn_autocommit(writes, {fence = fence})
+        if type(r) ~= 'table' or r[1] ~= 'throttled' or fiber.clock() > deadline then return r end
+        fiber.sleep(math.max(tonumber(r[4]) or 50, 10) / 1000)
+    until false
 end
+local function change(t, writes) return write(writes, {t.old_id, t.old_ver}) end
 local function create(engine, tag, count, with_uix)
     local sid, new_sid = id(), id()
     local old_uid, new_uid
@@ -661,6 +670,233 @@ local function exercise_layout(engine)
     check(label('a BUILD after that ABORT meets its tombstone'), stale[1] ~= 'ok' and stale[2] == 1412, stale)
 end
 
+-- A rebuild of a table with a global unique index (issue #184), which it
+-- keeps (rebuild = 'aux'): the index's space, on v (u, 7), keeps its id and
+-- its entries, which both definitions write, and is renamed after the new
+-- space as the copy is published. The ALTER adds a unique index on c, and
+-- with a `fill` a column e (field 5) and an index on it, which pads rows.
+local function rebuild_aux(engine, tag, count, fill)
+    local t = create(engine, tag, count, true)
+    end_job(t) -- (create's job changes the engine)
+    local nd = table.deepcopy(t.def)
+    nd.id, nd.ver = t.new_id, 1
+    nd.json = json.encode{space_id = t.new_id, ver = 1, engine = engine, marker = 'kept'}
+    local c_part = {field = 4, type = 'integer', is_nullable = true}
+    nd.indexes[#nd.indexes + 1] = {name = 'c_u', unique = true, parts = {c_part}}
+    nd.uix[1].name = '_tarn_uix_' .. t.new_id .. '_7'
+    t.uix_old, t.uix_new = t.def.uix[1].name, nd.uix[1].name
+    t.args = {ver = 1, timeout = 5, def = nd, uix = {}, uix_drop = {}, lazy_drop = {},
+        builds = {{12, 'c_u', true, {c_part}}}, drop = {}, renames = {},
+        engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = 'aux'}}
+    if fill ~= nil then
+        local e_part = {field = 5, type = 'integer', is_nullable = true}
+        nd.format[5] = {name = 'e', type = 'integer', is_nullable = true}
+        nd.indexes[#nd.indexes + 1] = {name = 'e_idx', unique = false, parts = {e_part}}
+        t.args.builds[2] = {13, 'e_idx', false, {e_part}}
+        t.args.format, t.args.old_width, t.args.materialize = nd.format, 4, true
+        t.args.pad, t.args.checks = {3, box.NULL, fill}, {{5, 'e', 'indexed', box.NULL, box.NULL, fill}}
+    end
+    begin_job(t)
+    return t
+end
+-- A second such rebuild of t once it was published: from t's new space to
+-- another, adding v_b (20).
+local function rebuild_again(t)
+    local u = {name = t.name, old_id = t.new_id, new_id = id(), old_ver = t.args.ver, gen = 1,
+        owner = 'engine-test-' .. t.new_id .. '-again', expected = t.expected, old_uid = t.old_uid}
+    local nd = table.deepcopy(t.args.def)
+    nd.id, nd.ver = u.new_id, t.args.ver + 1
+    nd.json = json.encode{space_id = u.new_id, ver = nd.ver, engine = nd.engine, marker = 'again'}
+    local parts = {{field = 2, type = 'integer'}, {field = 3, type = 'unsigned'}}
+    nd.indexes[#nd.indexes + 1] = {name = 'v_b', unique = false, parts = parts}
+    nd.uix[1].name = '_tarn_uix_' .. u.new_id .. '_7'
+    u.uix_old, u.uix_new = t.uix_new, nd.uix[1].name
+    u.args = {ver = nd.ver, timeout = 5, def = nd, uix = {}, uix_drop = {}, lazy_drop = {},
+        builds = {{20, 'v_b', false, parts}}, drop = {}, renames = {},
+        engine_change = {old_id = u.old_id, old_ver = t.args.ver, old_engine = nd.engine, old_name = t.name,
+            rebuild = 'aux'}}
+    begin_job(u)
+    return u
+end
+-- The entries t's rows give its global index: {v, id, bucket_id}.
+local function entries(t)
+    local out = {}
+    for _, row in ipairs(wanted(t)) do out[#out + 1] = {row[2], row[1], row[3]} end
+    table.sort(out, function(a, b) return a[1] < b[1] end)
+    return out
+end
+-- t's table in this shard's schema export: {catalog id, id of the space with
+-- its name, ids of its global index spaces}.
+local function exported(t)
+    for _, x in ipairs(ok(tarn_schema_export())[2]) do
+        if x.name == t.name then
+            local ids = {}
+            for _, u in ipairs(x.uix) do ids[#ids + 1] = u.id end
+            table.sort(ids)
+            return {x.def.id, x.space.id, ids}
+        end
+    end
+    return false
+end
+-- A job the copy refuses that leaves the global index as it was too.
+local function aux_refused(t, label)
+    refused_then_aborted(t, label)
+    check(label .. ' (the global index too)', box.space[t.old_uid].name == t.uix_old
+        and same(rows(t.old_uid), entries(t)), {box.space[t.old_uid].name})
+end
+
+local function exercise_aux(engine)
+    local label = function(s) return engine .. ' rebuild keeping a global index: ' .. s end
+    local t = rebuild_aux(engine, 'aux', 260)
+    local uid = t.old_uid
+    hook('engine_copy', 'hold')
+    local building = spawn(function() return call('build', t) end)
+    hook('engine_copy', 'reached')
+    check(label('the copy makes no global index space of its own'),
+        box.space[t.new_id] ~= nil and box.space[t.new_id].index.c_u ~= nil and box.space[t.uix_new] == nil
+        and box.space[uid].name == t.uix_old, {box.space[uid].name})
+    -- Writes go on through the global index: a row comes in, one takes a
+    -- new unique value, one goes, and a duplicate fails (the entry of a row
+    -- another shard would hold).
+    ok(change(t, {{'insert', t.old_id, {1001, 10010, 1}}, {'insert', uid, {10010, 1001, 1}}}))
+    t.expected[1001] = {1001, 10010, 1}
+    ok(change(t, {{'update', t.old_id, {4}, {{'=', 2, 40040}}}, {'delete', uid, {40}},
+        {'insert', uid, {40040, 4, 1}}}))
+    t.expected[4][2] = 40040
+    ok(change(t, {{'delete', t.old_id, {6}}, {'delete', uid, {60}}})); t.expected[6] = nil
+    local dup = change(t, {{'insert', uid, {10010, 1002, 1}}})
+    check(label('the global index refuses a duplicate during the copy'),
+        dup[1] ~= 'ok' and dup[2] == 1062 and tostring(dup[3]):find("'10010' for key 'u'") ~= nil
+        and box.space[uid]:get{10010}[2] == 1001, dup)
+    hook('engine_copy', 'release'); ok(result(building))
+    ok(call('prepare', t))
+    check(label('PREPARED holds every row, and the global index, in its own space, every entry'),
+        phase(t).phase == 'prepared' and exact(t, t.new_id) and same(rows(uid), entries(t))
+        and box.space[t.uix_new] == nil and #phase(t).kept_uix == 1, difference(t, t.new_id))
+    local stale = change(t, {{'insert', uid, {99, 99, 1}}})
+    check(label('behind the fence it refuses writes made with the old definition'),
+        stale[1] == 'error' and stale[2] == 1412 and box.space[uid]:get{99} == nil, stale)
+    decide(t, 'apply')
+    -- Interrupted once the copy has the table's name: until the catalog
+    -- names the copy, the catalog finds the index under its old name.
+    hook('engine_renamed', 'hold')
+    local applying = spawn(function() return call('apply', t) end)
+    hook('engine_renamed', 'reached')
+    check(label('with the old name, it is the table\'s still once the copy has the table\'s name'),
+        box.space[t.name].id == t.new_id and box.space[uid].name == t.uix_old
+        and box.space._tarn_catalog:get{t.name}.def.id == t.old_id
+        and same(exported(t), {t.old_id, t.new_id, {uid}}), exported(t))
+    interrupt(applying, 'engine_renamed')
+    hook('engine_publish', 'hold')
+    applying = spawn(function() return call('apply', t) end)
+    hook('engine_publish', 'reached')
+    check(label('APPLY again renames it after the copy, before the catalog names the copy'),
+        box.space[uid].name == t.uix_new and box.space._tarn_catalog:get{t.name}.def.id == t.old_id
+        and same(exported(t), {t.old_id, t.new_id, {uid}}), exported(t))
+    interrupt(applying, 'engine_publish')
+    ok(call('apply', t)); end_job(t)
+    check(label('the published table keeps the index\'s space, id and entries, under the new name'),
+        clean(t) and exact(t, t.new_id) and box.space[uid] ~= nil and box.space[uid].name == t.uix_new
+        and same(rows(uid), entries(t)) and box.space[t.uix_old] == nil
+        and same(exported(t), {t.new_id, t.new_id, {uid}}), {exported(t), box.space[uid] and box.space[uid].name})
+    local old = write({{'insert', uid, {99, 99, 1}}}, {t.old_id, 0})
+    local new = write({{'insert', t.new_id, {2001, 20010, 1}}, {'insert', uid, {20010, 2001, 1}}},
+        {t.new_id, t.args.ver})
+    local twice = write({{'insert', uid, {20010, 2002, 1}}, {'insert', t.new_id, {2002, 20010, 1}}},
+        {t.new_id, t.args.ver})
+    check(label('then it refuses the old definition\'s writes, takes the new one\'s, and refuses a duplicate'),
+        old[1] == 'error' and old[2] == 1412 and new[1] == 'ok' and twice[1] == 'duplicate' and twice[2] == 1062
+        and box.space[uid]:get{20010}[2] == 2001 and box.space[uid]:get{99} == nil, {old, new, twice})
+    ok(tarn_drop_table(t.name))
+    check(label('DROP TABLE drops it with the table'), box.space[uid] == nil and box.space[t.new_id] == nil)
+
+    -- The same rebuild adding a column with a fill and an index on it: rows
+    -- are padded, and the global index stays as it was.
+    local wide = rebuild_aux(engine, 'aux_layout', 40, 7)
+    ok(call('build', wide)); ok(call('prepare', wide)); decide(wide, 'apply'); ok(call('apply', wide)); end_job(wide)
+    check(label('a rebuild that also pads rows keeps the index as it was'),
+        clean(wide) and same(rows(wide.new_id), padded(wide, 7)) and box.space[wide.name].index.e_idx:count{7} == 40
+        and box.space[wide.old_uid].name == wide.uix_new and same(rows(wide.old_uid), entries(wide)),
+        difference(wide, wide.new_id))
+    local again = rebuild_again(wide)
+    ok(call('build', again)); ok(call('prepare', again)); decide(again, 'apply'); ok(call('apply', again))
+    end_job(again)
+    check(label('a second rebuild names the index after its own copy'),
+        clean(again) and box.space[again.name].index.v_b:count() == 40 and box.space[again.old_uid].name == again.uix_new
+        and same(rows(again.old_uid), entries(wide)) and same(exported(again), {again.new_id, again.new_id, {again.old_uid}}),
+        {box.space[again.old_uid].name, exported(again)})
+
+    -- An index on a column made nullable gets a new id (alter.rs), so the
+    -- new definition names the kept space after it: the copy renames the
+    -- space so, and so it does a space an older change left under another
+    -- index id.
+    local renumbered = rebuild_aux(engine, 'aux_renumbered', 20)
+    renumbered.args.drop = {7}
+    renumbered.args.builds[2] = {16, 'u', true, {{field = 2, type = 'integer'}}}
+    renumbered.args.def.uix[1].name = '_tarn_uix_' .. renumbered.new_id .. '_16'
+    local drifted = rebuild_aux(engine, 'aux_drifted', 20)
+    box.space[drifted.old_uid]:rename('_tarn_uix_' .. drifted.old_id .. '_5')
+    for _, t2 in ipairs({renumbered, drifted}) do
+        ok(call('build', t2)); ok(call('prepare', t2)); decide(t2, 'apply'); ok(call('apply', t2)); end_job(t2)
+    end
+    check(label('the index takes the name the new definition gives it, whatever its index id'),
+        clean(renumbered) and box.space[renumbered.old_uid].name == renumbered.args.def.uix[1].name
+        and box.space[renumbered.name].index.u.id == 16 and same(rows(renumbered.old_uid), entries(renumbered))
+        and clean(drifted) and box.space[drifted.old_uid].name == drifted.uix_new
+        and same(rows(drifted.old_uid), entries(drifted)),
+        {box.space[renumbered.old_uid].name, box.space[drifted.old_uid].name})
+
+    local aborted = rebuild_aux(engine, 'aux_abort', 20)
+    ok(call('build', aborted)); ok(call('prepare', aborted))
+    decide(aborted, 'abort'); ok(call('abort', aborted)); end_job(aborted)
+    local resumed = change(aborted, {{'insert', aborted.old_id, {3001, 30010, 1}},
+        {'insert', aborted.old_uid, {30010, 3001, 1}}})
+    if resumed[1] == 'ok' then aborted.expected[3001] = {3001, 30010, 1} end
+    check(label('ABORT leaves it under its name, with every entry, and writes go on'),
+        box.space[aborted.new_id] == nil and box.space[aborted.name].id == aborted.old_id
+        and box.space[aborted.old_uid].name == aborted.uix_old and resumed[1] == 'ok'
+        and same(rows(aborted.old_uid), entries(aborted)), resumed)
+
+    -- Descriptors the copy refuses before any shadow exists.
+    local made = rebuild_aux(engine, 'aux_new', 4)
+    made.args.uix = {table.deepcopy(made.args.def.uix[1])}
+    made.args.uix[1].id, made.args.uix[1].name = id(), '_tarn_uix_' .. made.new_id .. '_12'
+    aux_refused(made, label('a rebuild that would make a global index is refused, and aborts'))
+    local dropped = rebuild_aux(engine, 'aux_drop', 4)
+    dropped.args.uix_drop = {dropped.old_uid}
+    aux_refused(dropped, label('a rebuild that would drop a global index is refused, and aborts'))
+    local left = rebuild_aux(engine, 'aux_left', 4)
+    left.args.def.uix = nil
+    aux_refused(left, label('a rebuild that would leave a global index out is refused, and aborts'))
+    local other = rebuild_aux(engine, 'aux_other', 4)
+    other.args.def.uix[1].id = other.old_id
+    aux_refused(other, label('a rebuild that would keep a space that is not the table\'s index is refused, and aborts'))
+    local named = rebuild_aux(engine, 'aux_named', 4)
+    named.args.def.uix[1].name = named.uix_old
+    aux_refused(named, label('a rebuild that would keep the old name is refused, and aborts'))
+    -- (ABORT checks the lazy generations it retires: this one has none.)
+    local lazy = rebuild_aux(engine, 'aux_lazy', 4)
+    lazy.args.def.lazy = {{gen = id()}}
+    local refused = call('build', lazy)
+    lazy.args.def.lazy = {}
+    decide(lazy, 'abort'); ok(call('abort', lazy)); end_job(lazy)
+    check(label('a rebuild with a lazy index is refused'),
+        refused[1] ~= 'ok' and refused[2] == 1210 and box.space[lazy.new_id] == nil, refused)
+    local unsaid = rebuild_aux(engine, 'aux_unsaid', 4)
+    unsaid.args.engine_change.rebuild = true
+    aux_refused(unsaid, label('a rebuild that keeps a global index without saying so is refused, and aborts'))
+    for _, say in ipairs({true, 'layout'}) do
+        local omitted = rebuild_aux(engine, 'aux_omitted_' .. tostring(say), 4)
+        omitted.args.engine_change.rebuild, omitted.args.def.uix = say, nil
+        aux_refused(omitted, label('a rebuild (' .. tostring(say) .. ') of a table with a global index that '
+            .. 'leaves it out is refused, and aborts'))
+    end
+    local taken = rebuild_aux(engine, 'aux_taken', 4)
+    local squatter = box.schema.space.create(taken.uix_new, {engine = engine})
+    aux_refused(taken, label('a rebuild that would rename the index to a name a space has is refused, and aborts'))
+    squatter:drop()
+end
+
 local function exercise(engine)
     local label = function(s) return engine .. ': ' .. s end
     local t = create(engine, 'online', 260)
@@ -965,9 +1201,12 @@ local yes, err = xpcall(function()
     assert(mp.encode(tarn_engine_rebuild_capabilities()) == mp.encode({'ok', 1}), 'rebuild capability required')
     assert(mp.encode(tarn_engine_rebuild_format_capabilities()) == mp.encode({'ok', 1}),
         'layout rebuild capability required')
+    assert(mp.encode(tarn_engine_rebuild_aux_capabilities()) == mp.encode({'ok', 1}),
+        'global-index rebuild capability required')
     exercise('memtx'); exercise('vinyl')
     exercise_rebuild('memtx'); exercise_rebuild('vinyl')
     exercise_layout('memtx'); exercise_layout('vinyl')
+    exercise_aux('memtx'); exercise_aux('vinyl')
 end, debug.traceback)
 cleanup()
 if native ~= nil and native ~= '0' then

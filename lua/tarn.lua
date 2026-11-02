@@ -1768,12 +1768,25 @@ function UIX.dup(sp, tuple)
     return string.format("Duplicate entry '%s' for key '%s'", table.concat(parts, '-'), sp.index[0].name)
 end
 
--- The global index spaces of table space `sid`.
+-- The global index spaces of table space `sid`: the spaces named after it,
+-- and those the catalog entry of the table it has the name of lists. A
+-- rebuild keeps a table's global index spaces and renames them after its
+-- new space as it publishes (lua/tarn_engine.lua E.apply): after the new
+-- space took the table's name, and before the catalog names it, only the
+-- catalog finds them.
 function UIX.spaces(sid)
-    local out, tag = {}, UIX.prefix .. sid .. '_'
+    local out, seen, tag = {}, {}, UIX.prefix .. sid .. '_'
     for _, s in box.space._space.index.name:pairs({tag}, {iterator = 'GE'}) do
         if s.name:sub(1, #tag) ~= tag then break end
-        if s.name:sub(#tag + 1):match('^%d+$') then out[#out + 1] = box.space[s.id] end
+        if s.name:sub(#tag + 1):match('^%d+$') then out[#out + 1], seen[s.id] = box.space[s.id], true end
+    end
+    local sp = box.space[sid]
+    local t = sp ~= nil and box.space._tarn_catalog:get{sp.name}
+    for _, u in ipairs(t and type(t.def.uix) == 'table' and t.def.uix or {}) do
+        local x = type(u) == 'table' and box.space[u.id]
+        if x and not seen[x.id] and x.name:sub(1, #UIX.prefix) == UIX.prefix then
+            out[#out + 1], seen[x.id] = x, true
+        end
     end
     return out
 end
@@ -8109,6 +8122,7 @@ BK.production_functions = {
         'tarn_engine_capabilities',
         'tarn_engine_counter_alias',
         'tarn_engine_decision',
+        'tarn_engine_rebuild_aux_capabilities',
         'tarn_engine_rebuild_capabilities',
         'tarn_engine_rebuild_format_capabilities',
         'tarn_estimate',
@@ -8220,7 +8234,7 @@ M.engine = require('tarn_engine').new{
     cfg = M.cfg, bk = BK, writable = writable, failure = failure, atomic = atomic,
     key_def = index_key_def, serial = UIX.serial_sid, drain = drain, wait_commits = wait_commits,
     lazy = M.lazy, create_space = create_space, create_index = build_native_index,
-    call = on_shard, hook = yield_point,
+    uix_spaces = UIX.spaces, uix_prefix = UIX.prefix, call = on_shard, hook = yield_point,
     doom = doom_readers, exclude = BK.ns_engine, invalidate_defs = invalidate_key_defs,
     refresh = function() M.stale_fences(); fence_fresh() end,
     mark = function() return {lua = INFLIGHT_SEQ, native = BK.ns ~= nil and BK.ns.commit_seq or nil} end,
@@ -8242,6 +8256,9 @@ function tarn_engine_rebuild_capabilities() return {'ok', 1} end
 -- ALTER's format and the copy pads rows (a.format, a.pad). A node that
 -- answers only the call above would copy the old layout.
 function tarn_engine_rebuild_format_capabilities() return {'ok', 1} end
+-- A rebuild of a table with global unique indexes, which keeps their spaces
+-- (rebuild = 'aux'). A node that answers only the calls above refuses it.
+function tarn_engine_rebuild_aux_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()
     return M.engine.decision(name, old_id, new_id, ver, gen)

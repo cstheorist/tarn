@@ -1898,15 +1898,22 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
 /// which acknowledges nothing until it finishes: the shard's synchronous
 /// writes wait, and past twice `replication_timeout` the leader resigns
 /// (issue #267). The rebuild takes changes that build secondary indexes --
-/// new ones, with drops and renames of others -- of a table without global
-/// or lazy indexes, also when the same statement adds, renames or drops
+/// new ones, with drops and renames of others -- of a table without lazy
+/// indexes, also when the same statement adds, renames or drops
 /// columns: the new space takes the new format, and the copy pads every row
 /// it writes with the fills its indexes need (`pad`), which PREPARE would
 /// otherwise materialize behind the fence. It keeps the primary key and the
 /// table's name, and leaves to the in-place path a change that checks
-/// existing rows against a new type.
+/// existing rows against a new type. A table's global unique indexes are
+/// kept as they are (`rebuild_keeps_globals`), when the change adds, drops
+/// and changes none of them; a table with lazy indexes builds in place.
 pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
-    let local = |t: &TableDef| t.globals.is_empty() && t.indexes.iter().all(|i| i.global.is_none() && i.lazy.is_none());
+    let no_lazy = |t: &TableDef| t.indexes.iter().all(|i| i.lazy.is_none());
+    let kept = |t: &TableDef| {
+        let mut ids: Vec<u32> = t.indexes.iter().filter_map(|i| i.global).collect();
+        ids.sort_unstable();
+        ids
+    };
     ch.changed
         && ch.engine_change.is_none()
         && !ch.builds.is_empty()
@@ -1919,8 +1926,18 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         && ch.lazy_drop.is_empty()
         && ch.def.engine == def.engine
         && ch.def.space_id == def.space_id
-        && local(def)
-        && local(&ch.def)
+        && no_lazy(def)
+        && no_lazy(&ch.def)
+        && ch.uix_new.is_empty()
+        && !kept(&ch.def).contains(&0)
+        && kept(def) == kept(&ch.def)
+}
+
+/// Whether a rebuild of a table with definition `def` keeps global unique
+/// indexes: their spaces stay, under the new base's names, and the storage
+/// must know such rebuilds (`tarn_engine_rebuild_aux_capabilities`).
+pub fn rebuild_keeps_globals(def: &TableDef) -> bool {
+    def.indexes.iter().any(|i| i.global.is_some())
 }
 
 /// Whether a rebuild of change `ch` changes the stored layout: the new
@@ -2023,9 +2040,12 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
             .str(engine.old_engine.name())
             .str("old_name")
             .str(&engine.old_name);
-        // A rebuild that changes the stored layout says so: storage that
-        // predates layouts takes only `true`, and refuses it.
-        if engine.rebuild && rebuild_changes_layout(ch) {
+        // A rebuild that keeps global indexes, or changes the stored layout,
+        // says so: storage that predates either refuses a value it does not
+        // know ('aux' may change the layout too).
+        if engine.rebuild && rebuild_keeps_globals(&ch.def) {
+            m.str("rebuild").str("aux");
+        } else if engine.rebuild && rebuild_changes_layout(ch) {
             m.str("rebuild").str("layout");
         } else if engine.rebuild {
             m.str("rebuild").bool(true);
@@ -2492,6 +2512,100 @@ mod tests {
         let ch = alter(&added, &cat, "ALTER TABLE t ADD INDEX kn (n)").unwrap();
         assert!(ch.format.is_none() && ch.pad.is_some() && ch.materialize);
         assert!(rebuild_eligible(&added, &ch) && rebuild_changes_layout(&ch));
+    }
+
+    #[test]
+    fn rebuild_keeps_global_indexes() {
+        // A unique key without the shard key has a global index (issue #14).
+        let (mut def, _) = table(
+            "CREATE TABLE t (tenant_id INT, id INT, a INT, b INT, PRIMARY KEY (tenant_id, id), \
+             UNIQUE KEY ua (a)) PARTITION BY KEY(tenant_id)",
+        );
+        let ua = def.indexes.iter().position(|i| i.name == "ua").unwrap();
+        def.indexes[ua].global = Some(600);
+        def.resolve_globals().unwrap();
+        let cat = Catalog::new(1, vec!["db".into(), "other".into()], vec![def.clone()]);
+        let eligible = |sql: &str| rebuild_eligible(&def, &alter(&def, &cat, sql).unwrap());
+        // New local indexes, also with new columns, keep it as it is.
+        assert!(eligible("ALTER TABLE t ADD INDEX kb (b)"));
+        assert!(eligible("ALTER TABLE t ADD UNIQUE INDEX ub (tenant_id, b)"));
+        assert!(eligible("ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)"));
+        // One that makes or drops a global index builds in place.
+        assert!(!eligible("ALTER TABLE t ADD UNIQUE INDEX ub (b)"));
+        assert!(!eligible("ALTER TABLE t DROP INDEX ua, ADD INDEX kb (b)"));
+        // As Cluster::alter_table sets the rebuild up: a new space, whose
+        // definition names the kept global index after it.
+        let mut ch = alter(&def, &cat, "ALTER TABLE t ADD INDEX kb (b)").unwrap();
+        assert!(rebuild_keeps_globals(&ch.def) && !rebuild_changes_layout(&ch));
+        assert!(!rebuild_keeps_globals(&table(T).0));
+        ch.engine_change = Some(EngineChange {
+            old_id: def.space_id,
+            old_ver: def.ver,
+            old_engine: def.engine,
+            old_name: def.space_name(),
+            rebuild: true,
+        });
+        ch.def.space_id = 700;
+        ch.def.resolve_globals().unwrap();
+        let args = lua_args(&ch, 7, 5.0);
+        let mut rd = Rd::new(&args);
+        let mut fields = std::collections::HashMap::new();
+        for _ in 0..rd.map().unwrap() {
+            let k = rd.string().unwrap().to_string();
+            fields.insert(k, rd.raw_value().unwrap().to_vec());
+        }
+        let mut rebuild = None;
+        let mut rd = Rd::new(&fields["engine_change"]);
+        for _ in 0..rd.map().unwrap() {
+            if rd.string().unwrap() == "rebuild" {
+                rebuild = Some(rd.string().unwrap().to_string());
+            } else {
+                rd.skip().unwrap();
+            }
+        }
+        assert_eq!(rebuild.as_deref(), Some("aux"));
+        assert_eq!(Rd::new(&fields["uix"]).array().unwrap(), 0);
+        assert_eq!(Rd::new(&fields["uix_drop"]).array().unwrap(), 0);
+        let mut kept = Vec::new();
+        let mut rd = Rd::new(&fields["def"]);
+        for _ in 0..rd.map().unwrap() {
+            if rd.string().unwrap() != "uix" {
+                rd.skip().unwrap();
+                continue;
+            }
+            for _ in 0..rd.array().unwrap() {
+                let (mut name, mut id) = (String::new(), None);
+                for _ in 0..rd.map().unwrap() {
+                    match rd.string().unwrap().as_str() {
+                        "name" => name = rd.string().unwrap().to_string(),
+                        "id" => id = rd.value().unwrap().as_i64(),
+                        _ => rd.skip().unwrap(),
+                    }
+                }
+                kept.push((name, id));
+            }
+        }
+        let n = def.indexes[ua].id;
+        assert_eq!(kept, vec![(format!("_tarn_uix_700_{n}"), Some(600))]);
+
+        // Making the key's column nullable gives its index a new id, so the
+        // kept space is named after that id: the storage renames it so.
+        let (mut nn, _) = table(
+            "CREATE TABLE t (tenant_id INT, id INT, a INT NOT NULL, PRIMARY KEY (tenant_id, id), \
+             UNIQUE KEY ua (a)) PARTITION BY KEY(tenant_id)",
+        );
+        let ua = nn.indexes.iter().position(|i| i.name == "ua").unwrap();
+        nn.indexes[ua].global = Some(600);
+        nn.resolve_globals().unwrap();
+        let ncat = Catalog::new(1, vec!["db".into(), "other".into()], vec![nn.clone()]);
+        let mut ch = alter(&nn, &ncat, "ALTER TABLE t MODIFY a INT NULL").unwrap();
+        assert!(rebuild_eligible(&nn, &ch));
+        let renumbered = ch.def.indexes.iter().find(|i| i.name == "ua").unwrap();
+        assert!(renumbered.id != nn.indexes[ua].id && renumbered.global == Some(600));
+        let id = renumbered.id;
+        ch.def.space_id = 700;
+        ch.def.resolve_globals().unwrap();
+        assert_eq!(ch.def.globals[0].table.name, format!("_tarn_uix_700_{id}"));
     }
 
     #[test]

@@ -32,8 +32,21 @@ Then the new unique index refuses a duplicate; a duplicate in a table, and
 a new column's fill that rows share under a new unique index, each fail
 the change with 1062, from the copy, and leave that table as it was, with
 no copy left on any replica; a column renamed, then dropped, each with a
-new index, copies that table too; and an engine change, whose copy now has
-its indexes from the start too, keeps the terms as they were.
+new index, copies that table too.
+
+A table whose unique key lacks the shard key has a global index, a space
+of its own sharded by the key (#14). An ALTER that adds a column with a
+fill and two indexes copies it too, and so does one that makes the key's
+column nullable (which gives its index a new id), while a session hands
+unique values from row to row, inserts, deletes and moves rows to new
+primary keys, and tries duplicates on the other shard (#184). After each,
+the global index's space stays, by id, named after the copy and the
+index's id, on every replica, with one entry per row; it finds every row
+and refuses another shard's duplicate. A TRUNCATE empties it, and DROP
+TABLE drops it.
+
+Last, an engine change, whose copy now has its indexes from the start too,
+keeps the terms as they were.
 
     indexcopytest.py --tarn HOST:PORT --cluster-dir DIR [--rows N]
 """
@@ -173,6 +186,210 @@ def main():
             end
             return out
         """)
+
+    def globals_of(node, space):
+        """The global index spaces named after the table's space on node:
+        {name: {id, rows, digest of its entries in order}}."""
+        return ev(node, """
+            require('fiber').set_slice({warn = 30, err = 120})
+            local crc, mp = require('digest').crc32, require('msgpack')
+            local sp, out = box.space[...], {}
+            if sp == nil then return out end
+            local tag = '_tarn_uix_' .. sp.id .. '_'
+            for _, s in box.space._space.index.name:pairs({tag}, {iterator = 'GE'}) do
+                if s.name:sub(1, #tag) ~= tag then break end
+                local h, n = crc.new(), 0
+                for _, e in box.space[s.id]:pairs() do h:update(mp.encode(e:totable())); n = n + 1 end
+                out[s.name] = {id = s.id, rows = n, digest = h:result()}
+            end
+            return out
+        """, [space], timeout=60) or {}   # (none comes back as an empty list)
+
+    def uix_name(node, space, index):
+        """The name of the global index space of index `index` of the table:
+        after its space and the index's id in it."""
+        return ev(node, """
+            local sp, name = box.space[select(1, ...)], select(2, ...)
+            return '_tarn_uix_' .. sp.id .. '_' .. sp.index[name].id
+        """, [space, index])
+
+    def named_after(node, sid):
+        """Global index spaces still named after space id sid."""
+        return ev(node, """
+            local tag, out = '_tarn_uix_' .. ... .. '_', {}
+            for _, s in box.space._space.index.name:pairs({tag}, {iterator = 'GE'}) do
+                if s.name:sub(1, #tag) ~= tag then break end
+                out[#out + 1] = s.name
+            end
+            return out
+        """, [sid])
+
+    def globally_unique(engine):
+        """A unique key without the shard key has a global index: a space of
+        its own, sharded by the key (#14). An ALTER that adds a column with a
+        fill and indexes copies the table, and keeps that space, its id and
+        its entries, renamed after the copy (#184), while a session moves
+        unique values between rows and rows to new primary keys. So does one
+        that makes the key's column nullable, which gives its index a new
+        id, after which the space is named too."""
+        g, gspace = f"g_{engine}", f"{DB}.g_{engine}"
+        n = 20000
+        q(c, f"CREATE TABLE {g} (tenant_id INT, id INT, u INT NOT NULL, k INT, PRIMARY KEY (tenant_id, id), "
+             f"UNIQUE KEY uu (u)) ENGINE={engine} PARTITION BY KEY(tenant_id)")
+        for first in range(0, n, 1000):
+            q(c, f"INSERT INTO {g} VALUES " + ",".join(f"({i % TENANTS},{i},{i},{i % 97})"
+                                                     for i in range(first, first + 1000)))
+        model = {(i % TENANTS, i): i for i in range(n)}
+        fresh = {"id": 2 * FRESH_ID, "u": 3 * FRESH_C}
+        # A tenant whose rows another shard holds: a duplicate there meets
+        # no local unique index, only the global one.
+        home = {}
+        for gi, g_ in enumerate(groups):
+            for tn in ev(leader(g_), """
+                local sp, out = box.space[...], {}
+                for tn = 0, 63 do
+                    if sp.index[0]:select({tn}, {limit = 1})[1] ~= nil then out[#out + 1] = tn end
+                end
+                return out
+            """, [gspace]):
+                home[tn] = gi
+
+        def other(tn):
+            return next(x for x in range(TENANTS) if x in home and home[x] != home[tn])
+        errors, refused, writes = [], [0], [0]
+
+        def new(what):
+            fresh[what] += 1
+            return fresh[what]
+
+        def writer(stop):
+            conn = connect(args.tarn, read_timeout=120)
+            rnd = random.Random(f"global-{engine}")
+            while not stop.is_set():
+                keys = sorted(model)
+                op = rnd.random()
+                try:
+                    if op < 0.3:
+                        # a gives its unique value to b, which may live on
+                        # another shard than a's entry
+                        a, b = rnd.sample(keys, 2)
+                        x = model[a]
+                        q(conn, f"UPDATE {g} SET u = %s WHERE tenant_id = %s AND id = %s", (new("u"), *a))
+                        model[a] = fresh["u"]
+                        q(conn, f"UPDATE {g} SET u = %s WHERE tenant_id = %s AND id = %s", (x, *b))
+                        model[b] = x
+                    elif op < 0.5:
+                        tn, i = rnd.randrange(TENANTS), new("id")
+                        q(conn, f"INSERT INTO {g} (tenant_id, id, u, k) VALUES (%s, %s, %s, 0)", (tn, i, new("u")))
+                        model[(tn, i)] = fresh["u"]
+                    elif op < 0.65:
+                        a = rnd.choice(keys)
+                        q(conn, f"DELETE FROM {g} WHERE tenant_id = %s AND id = %s", a)
+                        del model[a]
+                    elif op < 0.8:
+                        # the row moves to a new primary key, which its entry holds
+                        a, j = rnd.choice(keys), new("id")
+                        q(conn, f"UPDATE {g} SET id = %s WHERE tenant_id = %s AND id = %s", (j, *a))
+                        model[(a[0], j)] = model.pop(a)
+                    else:
+                        # a row on another shard with a value a row holds
+                        a = rnd.choice(keys)
+                        try:
+                            q(conn, f"INSERT INTO {g} (tenant_id, id, u, k) VALUES (%s, %s, %s, 0)",
+                              (other(a[0]), new("id"), model[a]))
+                            errors.append(f"duplicate of {a}'s {model[a]} went in")
+                        except pymysql.MySQLError as e:
+                            if e.args[0] != 1062:
+                                raise
+                            refused[0] += 1
+                    writes[0] += 1
+                except pymysql.MySQLError as e:
+                    errors.append(f"global: {e.args}")
+                    time.sleep(0.05)
+                time.sleep(0.003)
+
+        kept = {g_["id"]: {v["id"] for v in globals_of(leader(g_), gspace).values()} for g_ in groups}
+        check(f"{engine}: a unique key without the shard key has one global index space per shard",
+              all(len(v) == 1 for v in kept.values()) and len({frozenset(v) for v in kept.values()}) == 1, kept)
+        # The second ALTER makes the key's column nullable, which gives its
+        # index a new id, after which the copy renames the kept space too.
+        for round_, sql in enumerate((f"ALTER TABLE {g} ADD COLUMN x INT NOT NULL DEFAULT 5, ADD INDEX kk (k), "
+                                      f"ADD INDEX kx (x)",
+                                      f"ALTER TABLE {g} MODIFY u INT NULL")):
+            before = {g_["id"]: shape(leader(g_), gspace)["id"] for g_ in groups}
+            before_terms, refused_before = terms(), refused[0]
+            stop = threading.Event()
+            th = threading.Thread(target=writer, args=(stop,), daemon=True)
+            th.start()
+            time.sleep(1)
+            at = writes[0]
+            alter_error, began = None, time.monotonic()
+            try:
+                q(c, sql)
+            except pymysql.MySQLError as e:
+                alter_error = e.args
+            during = writes[0] - at
+            print(f"  ({engine}: ALTER took {time.monotonic() - began:.2f} s; writes during it: {during})",
+                  flush=True)
+            time.sleep(1)
+            stop.set()
+            th.join(30)
+            check(f"{engine}: {sql}", alter_error is None, alter_error)
+            check(f"{engine}: writes went on through the global index during it, and none failed",
+                  during > 0 and not errors and refused[0] > refused_before,
+                  {"during": during, "errors": errors[:5], "duplicates refused": refused[0] - refused_before})
+            check(f"{engine}: no replica changed its election term", terms() == before_terms,
+                  {"before": before_terms, "after": terms()})
+            caught_up()
+            after = {g_["id"]: shape(leader(g_), gspace)["id"] for g_ in groups}
+            records = {g_["id"]: engine_record(leader(g_), gspace, before[g_["id"]]) for g_ in groups}
+            check(f"{engine}: that change was a copy, published on every shard",
+                  all(after[s] != before[s] for s in after)
+                  and all(r == {"phase": "published", "rebuild": True} for r in records.values()), records)
+            rows = {(r[0], r[1]): (r[2], r[3]) for r in q(c, f"SELECT tenant_id, id, u, x FROM {g}")}
+            check(f"{engine}: the table holds the model's rows, each with the fill",
+                  {k: v[0] for k, v in rows.items()} == model and all(v[1] == 5 for v in rows.values()),
+                  {"rows": len(rows), "model": len(model),
+                   "differ": [k for k in model if rows.get(k, (None,))[0] != model[k]][:5]})
+            sample = random.Random(f"g-{engine}-{round_}").sample(sorted(model), 300)
+            found = [q(c, f"SELECT tenant_id, id FROM {g} WHERE u = %s", (model[k],)) for k in sample]
+            check(f"{engine}: the global index finds rows by their unique value",
+                  all(f == (k,) for f, k in zip(found, sample)),
+                  [(k, f) for k, f in zip(sample, found) if f != (k,)][:5])
+            dup = None
+            try:
+                a = sample[0]
+                q(c, f"INSERT INTO {g} (tenant_id, id, u, k) VALUES (%s, %s, %s, 0)",
+                  (other(a[0]), 4 * FRESH_ID + round_, model[a]))
+            except pymysql.MySQLError as e:
+                dup = e.args[0]
+            check(f"{engine}: the global index refuses another shard's duplicate", dup == 1062, dup)
+            spaces = {node: globals_of(node, gspace) for node in nodes}
+            names = {node: uix_name(node, gspace, "uu") for node in nodes}
+            stale = {node: named_after(node, before[g_["id"]]) for g_ in groups for node in g_["replicas"]}
+            check(f"{engine}: each replica keeps the global index's space, by id, named after the copy and the "
+                  f"index's id there",
+                  all({v["id"] for v in spaces[node].values()} == kept[g_["id"]] for g_ in groups
+                      for node in g_["replicas"])
+                  and all(set(spaces[node]) == {names[node]} for node in nodes) and not any(stale.values()),
+                  {"spaces": spaces, "names": names, "named after the old space": stale})
+            check(f"{engine}: replicas agree on its entries, which are one per row",
+                  all(spaces[node] == spaces[g_["replicas"][0]] for g_ in groups for node in g_["replicas"])
+                  and sum(v["rows"] for g_ in groups for v in spaces[g_["replicas"][0]].values()) == len(model),
+                  {"entries": {g_["id"]: spaces[g_["replicas"][0]] for g_ in groups}, "rows": len(model)})
+            left = {node: leftovers(node) for node in nodes}
+            check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
+        q(c, f"TRUNCATE TABLE {g}")
+        q(c, f"INSERT INTO {g} (tenant_id, id, u, k) VALUES (1, 1, %s, 0)", (model[sample[1]],))
+        caught_up()
+        emptied = {node: sum(v["rows"] for v in globals_of(node, gspace).values()) for node in nodes}
+        check(f"{engine}: TRUNCATE empties the kept space too, which then takes a value it held",
+              sum(emptied[g_["replicas"][0]] for g_ in groups) == 1, emptied)
+        q(c, f"DROP TABLE {g}")
+        caught_up()
+        uid = next(iter(kept[groups[0]["id"]]))
+        gone = {node: ev(node, "return box.space[...] ~= nil", [uid]) for node in nodes}
+        check(f"{engine}: DROP TABLE drops the kept space with the table", not any(gone.values()), gone)
 
     c = connect(args.tarn, db=None)
     q(c, f"DROP DATABASE IF EXISTS {DB}")
@@ -439,6 +656,8 @@ def main():
         check(f"{engine}: the table has the columns left, and its rows",
               columns == ["tenant_id", "id"] and q(c, f"SELECT COUNT(*) FROM {d}")[0][0] == 2002,
               {"columns": columns})
+
+        globally_unique(engine)
 
     # An engine change copies too, into a space that has its indexes first.
     before_terms = terms()

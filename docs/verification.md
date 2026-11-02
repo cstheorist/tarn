@@ -1341,6 +1341,22 @@ a distinct auxiliary-only reader, and `BugAuxStreamOmitted` removes just
 its dooming guard. PREPARE holds and publication watermarks must cover
 all old strong auxiliary IDs as well as the old base ID.
 
+A rebuild in the table's own engine keeps the table's global index spaces
+instead (`rebuild = 'aux'`, issue #184): their entries hold keys and
+primary keys, which the copy keeps, and both definitions write them, so
+publication neither dooms their readers nor retires them. Their writes
+carry the table's definition fence, which refuses the old definition's
+from PREPARE on. They are named after the space with the table's name,
+and APPLY renames them after the new space once it has that name, before
+the catalog names it, repeatably by ID. In between a lookup by name
+(`UIX.spaces`) misses them, so it also takes the spaces that the catalog
+entry of the table lists, found by the name of the space it is given.
+`KeptFound` says that a lookup through the space with the table's name
+finds them throughout publication, `KeptNamedAfterCatalog` that they are
+named after the space the catalog names once it names the new one, and
+`KeptAlive` that cleanup never drops them; `BugKeptByNameOnly`,
+`BugPublishBeforeKeptRename` and `BugRetireKept` each break one.
+
 Implementation refinement obligations remain explicit:
 
 * Capture must cover every actual source mutation before its commit;
@@ -1379,7 +1395,8 @@ Implementation refinement obligations remain explicit:
   premise; the models do not prove Rust dispatch/error-code matching.
 * Fresh global/lazy target identities must be complete and READY before
   publication. Existing global-fill/lazy bootstrap proofs are reused,
-  not reimplemented here. Preserve source bucket counters and
+  not reimplemented here. Kept global index spaces need no READY: the
+  rebuild requires that it makes and drops none, and keeps every one. Preserve source bucket counters and
   reservation/outbox obligations or explicitly rotate/retire them without
   losing a pending obligation. READY and retirement are durable facts,
   not an inference from a missing old space. The logical auto/row-ID
@@ -1394,7 +1411,7 @@ long when many were.
 
 The independent [protocol suite](../lua/test/engine_test.lua) exercises
 both directions with the native module loaded and with native disabled:
-156 and 154 checks respectively, including the same-engine rebuilds of
+220 and 218 checks respectively, including the same-engine rebuilds of
 issue #267 (below) and rebuilds that change columns (issue #184):
 - the shadow takes the new format, the whole of it;
 - rows copied from pages and in the final pass, rows written during the
@@ -1410,8 +1427,30 @@ issue #267 (below) and rebuilds that change columns (issue #184):
 - a COUNT held at its scan, and an aggregate that scans again, across the
   publication that drops the old space fail with 1412, not a storage error.
 
+It also runs rebuilds that keep a table's global unique index (issue #184),
+on both engines:
+- the copy makes no index space of its own, and writes go on through the
+  index, a duplicate entry failing with 1062;
+- behind the fence the index refuses the old definition's writes;
+- an APPLY interrupted once the copy has the table's name finds the index
+  through the catalog under its old name, and the next, interrupted before
+  the catalog commit, has renamed it after the copy;
+- the published table keeps the index's space, ID and entries, which take
+  the new definition's writes, refuse the old one's and a duplicate, and
+  go with DROP TABLE; a rebuild that also pads rows keeps them alike;
+- a second rebuild names the space after its own copy; an index whose id
+  the change renews, and a space an older change left under another index
+  id, take the names the new definition gives them;
+- ABORT leaves the index under its name with every entry;
+- descriptors that would make, drop or leave out a global index, keep a
+  space that is not the table's, keep the old name or take one another
+  space has, have a lazy index, or keep an index without saying so
+  (`rebuild = 'aux'`; also when they leave it out) are refused, and ABORT
+  still ends each job.
+
 Without the padding of either path, the new format, the refusals, ABORT's
-leniency, or either read fix, the suite fails. It verifies
+leniency, either read fix, the kept spaces' renames or their lookup through
+the catalog, the suite fails. It verifies
 acknowledged writes during a paused copy, a unique-key cycle, DELETE/PK
 moves, rollback extras, sparse index IDs, unchanged physical tuple suffixes,
 capture recopy, stale workers, both decision-flip refusals, counter aliases
@@ -1441,7 +1480,8 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
   Bug_EngineCutoverApplyAfterAbort Bug_EngineCutoverOldStreamValidates \
   Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity \
   Bug_EngineCutoverRenameLosesOriginalIdentity Bug_EngineCutoverCatalogByName \
-  Bug_EngineCutoverAuxStreamOmitted
+  Bug_EngineCutoverAuxStreamOmitted Bug_EngineCutoverKeptByNameOnly \
+  Bug_EngineCutoverPublishBeforeKeptRename Bug_EngineCutoverRetireKept
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
@@ -1458,18 +1498,24 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 | `Bug_EngineCopyStaleBatch` | 11,291 | 17 | violates `PreparedImage` |
 | `Bug_EngineCopyTailIgnoresDeletes` | 6,372 | 13 | violates `PreparedImage` |
 | `Bug_EngineCopyUnconfirmedSource` | 288 | 6 | violates `ConfirmedCopies` |
-| `EngineCutover` | 856 | 20 | passes |
-| `Bug_EngineCutoverAbortAfterDecision` | 235 | 10 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverApplyAfterAbort` | 322 | 11 | violates `CatalogHasSpace` |
+| `EngineCutover` | 1,012 | 22 | passes |
+| `Bug_EngineCutoverAbortAfterDecision` | 285 | 11 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverApplyAfterAbort` | 384 | 12 | violates `CatalogHasSpace` |
 | `Bug_EngineCutoverDropBeforePublish` | 3 | 2 | violates `CatalogHasSpace` |
 | `Bug_EngineCutoverForgetOldObligations` | 4 | 2 | violates `OldObligationsRetained` |
-| `Bug_EngineCutoverOldStreamValidates` | 214 | 10 | violates `OldStreamsRejected` |
-| `Bug_EngineCutoverPublishBeforeAuxReady` | 198 | 7 | violates `PublishedReady` |
-| `Bug_EngineCutoverPublishBeforeDecision` | 241 | 9 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 318 | 12 | violates `CatalogHasSpace` |
-| `Bug_EngineCutoverResetCounterIdentity` | 216 | 10 | violates `CounterNeverReuses` |
+| `Bug_EngineCutoverOldStreamValidates` | 231 | 11 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverPublishBeforeAuxReady` | 266 | 8 | violates `PublishedReady` |
+| `Bug_EngineCutoverPublishBeforeDecision` | 308 | 10 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 349 | 13 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverResetCounterIdentity` | 233 | 11 | violates `CounterNeverReuses` |
 | `Bug_EngineCutoverCatalogByName` | 173 | 8 | violates `CatalogObservationBound` |
-| `Bug_EngineCutoverAuxStreamOmitted` | 214 | 10 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverAuxStreamOmitted` | 231 | 11 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverKeptByNameOnly` | 171 | 8 | violates `KeptFound`: the copy has the table's name, and a lookup by name finds the kept index under neither |
+| `Bug_EngineCutoverPublishBeforeKeptRename` | 195 | 9 | violates `KeptNamedAfterCatalog`: the catalog names the copy while the kept index is still named after the old space |
+| `Bug_EngineCutoverRetireKept` | 228 | 11 | violates `KeptAlive`: cleanup drops the kept index with the old space |
+
+The three configurations for kept global index spaces are generated by
+`gen_cfgs.sh` and bring the default check list from 337 to 340.
 
 ### Unique indexes on an engine copy's shadow (issue #267)
 

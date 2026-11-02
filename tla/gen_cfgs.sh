@@ -575,7 +575,7 @@ mk_handback Bug_HandbackMalformedReply_Autocommit FALSE BugTrustMalformedReply
 engine_flags () {
     case "$1" in
       EngineCopy) echo 'BugBeforeCapture BugSkipPrefixDrain BugCaptureOnlyNewKeys BugUnconfirmedSource BugTailIgnoresDeletes BugSkipFinalDrain BugLostCaptureContinues BugStaleBatch BugRebuildPrepared BugPrepareWithoutIndexes BugLosePersistentFence' ;;
-      EngineCutover) echo 'BugPublishBeforeDecision BugPublishBeforeAuxReady BugDropBeforePublish BugAbortAfterDecision BugApplyAfterAbort BugOldStreamValidates BugForgetOldObligations BugResetCounterIdentity BugRenameLosesOriginalIdentity BugCatalogByName BugAuxStreamOmitted' ;;
+      EngineCutover) echo 'BugPublishBeforeDecision BugPublishBeforeAuxReady BugDropBeforePublish BugAbortAfterDecision BugApplyAfterAbort BugOldStreamValidates BugForgetOldObligations BugResetCounterIdentity BugRenameLosesOriginalIdentity BugCatalogByName BugAuxStreamOmitted BugKeptByNameOnly BugPublishBeforeKeptRename BugRetireKept' ;;
     esac
 }
 mk_engine () {
@@ -591,7 +591,7 @@ mk_engine () {
         if [ "$family" = EngineCopy ]; then
             echo 'INVARIANTS TypeOK ConfirmedCopies PreparedImage'
         else
-            echo 'INVARIANTS TypeOK CatalogHasSpace PublishedReady NoAbortPublished OldObligationsRetained OldStreamsRejected CounterNeverReuses CatalogObservationBound'
+            echo 'INVARIANTS TypeOK CatalogHasSpace PublishedReady NoAbortPublished OldObligationsRetained OldStreamsRejected CounterNeverReuses CatalogObservationBound KeptFound KeptNamedAfterCatalog KeptAlive'
         fi
         echo 'CHECK_DEADLOCK FALSE'
     } > "$name.cfg"

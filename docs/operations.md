@@ -158,11 +158,14 @@ cache it must resolve the table's name again afterwards.
 `index_build` in `cluster.json` chooses: `auto` (the default) copies when a
 shard has replicas, `copy` always copies, and `in_place` builds on the
 table's own space. A change that checks existing rows against a new type,
-renames the table, or involves a global or lazy index builds in place, as
-does any change while a replica does not answer or runs a version without
-the copy (a change of the stored layout, a new format or rows padded with
-fills, needs `tarn_engine_rebuild_format_capabilities` on every replica
-too); the rest of this section is about those builds. It builds the new
+renames the table, makes or drops a global index (a unique key without the
+shard key), or is of a table with lazy indexes builds in place, as does any
+change while a replica does not answer or runs a version without the copy
+(a change of the stored layout, a new format or rows padded with fills,
+needs `tarn_engine_rebuild_format_capabilities` on every replica too, and
+one of a table with global indexes, whose spaces the copy keeps,
+`tarn_engine_rebuild_aux_capabilities`); the rest of this section is about
+those builds. It builds the new
 index in its applier fiber,
 which handles nothing else from the leader until the build ends: no rows,
 no heartbeats, no votes. While both followers build, no synchronous write
@@ -729,8 +732,9 @@ indexes on a populated table: `auto` (the default) copies the table into a
 space that has its indexes before its rows when a shard has replicas,
 `copy` always does, and `in_place` builds them on the table's own space.
 Changes that build secondary indexes copy, also when they add, rename or
-drop columns, but not when they check rows against a new type or involve a
-global or lazy index; see [storage nodes](#storage-nodes) for what the copy
+drop columns and when the table has global indexes, which the copy keeps,
+but not when they check rows against a new type, make or drop a global
+index, or are of a table with lazy indexes; see [storage nodes](#storage-nodes) for what the copy
 costs and why a replicated shard needs it (issues #267 and #184).
 
 A materializing ALTER retains a memtx undo journal in `_tarn_alter_undo`
@@ -740,10 +744,10 @@ copy and keeps no journal: aborting it drops the copy. Include the journal
 in the memory budget when raising `alter_check_rows`. Finish or abort
 active materializing jobs with this version before downgrading storage;
 older code cannot process their undo. The same goes for an ALTER that
-copies the table with a new layout (it shows as an engine job in
-`_tarn_meta`): a node from before such copies refuses every step of the
-job (1210), ABORT included, so the job, and DDL on the table, wait for a
-node that knows layouts.
+copies the table with a new layout, or keeps its global indexes (it shows
+as an engine job in `_tarn_meta`): a node from before such copies refuses
+every step of the job (1210), ABORT included, so the job, and DDL on the
+table, wait for a node that knows them.
 Older nodes reject missing indexed fields with 1846, causing rollback when
 materialization would be required there instead of publishing an incomplete
 index. Empty or already-full older shards can still prepare safely.
