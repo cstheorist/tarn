@@ -139,11 +139,16 @@ vinyl space of a replicated shard by hand while the shard takes writes.
 
 A follower also acknowledges nothing while it applies an index build, on
 either engine (issue #267). So on a cluster with replicated shards, an
-`ALTER TABLE` (or `CREATE INDEX`) whose only storage work is new secondary
-indexes, with drops and renames of others, copies the table into a new
-space instead, as an engine change does: the new space has every index
-before its first row, the rows reach it in ordinary batches while writes
-go on, and the final fence rereads only the keys written meanwhile. Budget
+`ALTER TABLE` (or `CREATE INDEX`) that builds new secondary indexes, with
+drops and renames of others and columns the same statement adds, renames
+or drops, copies the table into a new space instead, as an engine change
+does: the new space has every index (and the new format) before its first
+row, the rows reach it in ordinary batches while writes go on, and the
+final fence rereads only the keys written meanwhile. An index on a column
+whose older rows lack its non-NULL fill (a column added with a default)
+gets that fill written into each row as the copy writes it, so such a
+change scans nothing behind the fence and is not limited by
+`alter_check_rows` (issue #184). Budget
 room for a second copy of the table on every replica (in `memtx_memory`
 for a memtx table), as for an [engine change](#online-engine-changes),
 whose capacity failures leave the table as it was, and for every row once
@@ -152,10 +157,13 @@ physical space ID, as an engine change does: raw native KV clients that
 cache it must resolve the table's name again afterwards.
 `index_build` in `cluster.json` chooses: `auto` (the default) copies when a
 shard has replicas, `copy` always copies, and `in_place` builds on the
-table's own space. A change with column changes, row checks, a table
-rename, or a global or lazy index builds in place, as does any change while
-a replica does not answer or runs a version without the copy; the rest of
-this section is about those builds. It builds the new index in its applier fiber,
+table's own space. A change that checks existing rows against a new type,
+renames the table, or involves a global or lazy index builds in place, as
+does any change while a replica does not answer or runs a version without
+the copy (a change of the stored layout, a new format or rows padded with
+fills, needs `tarn_engine_rebuild_format_capabilities` on every replica
+too); the rest of this section is about those builds. It builds the new
+index in its applier fiber,
 which handles nothing else from the leader until the build ends: no rows,
 no heartbeats, no votes. While both followers build, no synchronous write
 on the shard reaches its quorum. If the build takes them more than twice
@@ -221,7 +229,7 @@ configured values makes admission fail closed rather than rewriting history.
 | `gc_interval` | 0.5 s | period of the garbage-collection fiber's passes |
 | `gc_batch` | 500 | protocol records deleted per garbage-collection transaction; a pass looks at no more than `gc_batch` × 40 expired records of each kind, from where the previous pass stopped, and deletes no more than `gc_batch` × 4 |
 | `gc_time_budget` | 0.5 s | a garbage-collection pass asks other shards about no more records after this; the rest wait for its next lap |
-| `alter_check_rows` | 1,000,000 | `ALTER TABLE` refuses (1846) to check or materialize existing rows (a narrower type, `NOT NULL`, indexed non-NULL fills) when a shard holds more of them than this: writes to the table wait for the whole scan |
+| `alter_check_rows` | 1,000,000 | `ALTER TABLE` refuses (1846) to check or materialize existing rows (a narrower type, `NOT NULL`, indexed non-NULL fills) when a shard holds more of them than this: writes to the table wait for the whole scan. An ALTER that copies the table writes indexed fills as it copies, while writes go on, and is not limited by this |
 | `lazy_outbox_entries` | 65,536 | per-shard committed lazy-index assignments plus PREPARE promises; fresh admissions exceeding this cap fail with 1041 |
 | `lazy_outbox_bytes` | 64 MiB | corresponding encoded assignment and promise bytes; this is not a reservation of native allocator memory |
 
@@ -720,15 +728,22 @@ for such jobs at startup and every `ddl_job_stale / 2` seconds (at most 10).
 indexes on a populated table: `auto` (the default) copies the table into a
 space that has its indexes before its rows when a shard has replicas,
 `copy` always does, and `in_place` builds them on the table's own space.
-Only changes to secondary indexes alone copy; see
-[storage nodes](#storage-nodes) for what the copy costs
-and why a replicated shard needs it (issue #267).
+Changes that build secondary indexes copy, also when they add, rename or
+drop columns, but not when they check rows against a new type or involve a
+global or lazy index; see [storage nodes](#storage-nodes) for what the copy
+costs and why a replicated shard needs it (issues #267 and #184).
 
 A materializing ALTER retains a memtx undo journal in `_tarn_alter_undo`
 until commit cleanup or abort completes: one primary key and original tuple
-length per changed row. Include it in the memory budget when raising
-`alter_check_rows`. Finish or abort active materializing jobs with this
-version before downgrading storage; older code cannot process their undo.
+length per changed row. An ALTER that copies the table materializes in its
+copy and keeps no journal: aborting it drops the copy. Include the journal
+in the memory budget when raising `alter_check_rows`. Finish or abort
+active materializing jobs with this version before downgrading storage;
+older code cannot process their undo. The same goes for an ALTER that
+copies the table with a new layout (it shows as an engine job in
+`_tarn_meta`): a node from before such copies refuses every step of the
+job (1210), ABORT included, so the job, and DDL on the table, wait for a
+node that knows layouts.
 Older nodes reject missing indexed fields with 1846, causing rollback when
 materialization would be required there instead of publishing an incomplete
 index. Empty or already-full older shards can still prepare safely.

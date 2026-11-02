@@ -168,6 +168,29 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tests/indexcopy.sh` runs it on 2 shards x 3 replicas
   ([#267](https://github.com/cstheorist/tarn/issues/267)).
 
+- On a cluster with replicated shards, an `ALTER TABLE` that adds, renames
+  or drops columns along with new secondary indexes now copies the table
+  as well, rather than having each follower build the indexes in its
+  applier. The new space takes the new format, and the copy writes each row
+  with the fills its indexes need. So an index on a column added with a
+  non-NULL default no longer materializes rows behind the table's fence,
+  and is not limited by `alter_check_rows`. A change that checks rows
+  against a new type, and any change to a table with global or lazy
+  indexes, still builds in place, as does a change while a replica lacks
+  `tarn_engine_rebuild_format_capabilities`. Storage from before this
+  refuses such a copy at every step (1210) rather than copy the old layout;
+  finish or abort these ALTERs before downgrading storage
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
+- A `COUNT` or aggregate read that yielded while a table copy was published
+  could fail with a storage error (1105, "attempt to index a nil value")
+  instead of running again. Both engine changes and ALTERs that copy the
+  table drop the old space when they publish. Such a read now fails with
+  1412, as other reads of a replaced table do, and the SQL server runs it
+  again with the new definition. One that races a DROP TABLE fails with
+  1146, as a read that holds the dropped table's index does
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
 - An engine change whose copy took longer than the session's lock wait
   timeout (50 s by default) could fail with 1205 ("Engine-change
   transactions have not drained") instead of finishing. When another engine

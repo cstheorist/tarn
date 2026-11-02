@@ -1394,8 +1394,24 @@ long when many were.
 
 The independent [protocol suite](../lua/test/engine_test.lua) exercises
 both directions with the native module loaded and with native disabled:
-118 and 116 checks respectively, including the same-engine rebuilds of
-issue #267 (below). It verifies
+156 and 154 checks respectively, including the same-engine rebuilds of
+issue #267 (below) and rebuilds that change columns (issue #184):
+- the shadow takes the new format, the whole of it;
+- rows copied from pages and in the final pass, rows written during the
+  copy too, are padded: a row that ends before an old slot takes that
+  slot's earlier fill, and an explicit NULL stays NULL;
+- a copy started again after its capture was lost pads alike;
+- renamed and dropped columns keep every row as it was, and so does a
+  NULL fill;
+- a fill shared by rows fails a new unique index with 1062;
+- descriptors that would change the layout of an engine change, change it
+  without saying so (`rebuild = 'layout'`), carry malformed padding, check
+  rows or rename the table are refused, and ABORT still ends each job;
+- a COUNT held at its scan, and an aggregate that scans again, across the
+  publication that drops the old space fail with 1412, not a storage error.
+
+Without the padding of either path, the new format, the refusals, ABORT's
+leniency, or either read fix, the suite fails. It verifies
 acknowledged writes during a paused copy, a unique-key cycle, DELETE/PK
 moves, rollback extras, sparse index IDs, unchanged physical tuple suffixes,
 capture recopy, stale workers, both decision-flip refusals, counter aliases
@@ -1478,7 +1494,11 @@ holds no duplicate; `NoFalseDuplicate` says a change fails only if the
 source held a duplicate at some moment while it ran; `DirtyOnlyWritten`
 says the final pass has no more keys than writes began, so a copy that
 meets many stale copies of one duplicated value fails with 1062 rather
-than outgrowing the capture's limits.
+than outgrowing the capture's limits. A rebuild that also adds a column
+(issue #184) writes every row, from a page or the final pass, through one
+function that pads it with the fills its indexes need. So the model's
+values read as the padded rows, and a duplicate means two rows whose padded
+keys are equal at once, such as a fill that rows share.
 
 ```sh
 tla/check.sh ShadowUnique Bug_ShadowUniqueFailOnDirtyHolder \

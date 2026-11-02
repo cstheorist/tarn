@@ -21,7 +21,8 @@ tarn.init{shard_id = 1, peers = {}, sync = true, test_hooks = true, check_yields
 
 local pass, fail, sequence = 0, 0, 88000
 local jobs, workers, streams = {}, {}, {}
-local hooks = {'engine_copy', 'engine_tail', 'engine_prepared', 'engine_publish', 'engine_published', 'write'}
+local hooks = {'engine_copy', 'engine_tail', 'engine_prepared', 'engine_publish', 'engine_published', 'write', 'scan',
+    'reduce_scan'}
 local function ok(r) assert(type(r) == 'table' and r[1] == 'ok', json.encode(r)); return r end
 local function wait(label, fn, seconds)
     local until_ = fiber.clock() + (seconds or 5)
@@ -443,6 +444,223 @@ local function exercise_rebuild(engine)
     decide(bad, 'abort'); end_job(bad)
 end
 
+-- A rebuild that also adds a column e (field 5) and indexes it: e_idx (14)
+-- on e, unique when `unique_e`, and the unique v_e (15) on (v, e). With a
+-- non-NULL `fill`, every row the copy writes is padded (a.pad): a row that
+-- ends before c takes `cfill`, the fill an earlier ALTER gave c, and every
+-- row takes `fill` for e, as PREPARE would materialize them in place. With
+-- a NULL fill, rows are copied as they are.
+local function rebuild_layout(engine, tag, count, fill, unique_e, cfill)
+    local t = create(engine, tag, count)
+    end_job(t) -- (create's job changes the engine)
+    local nd = table.deepcopy(t.def)
+    nd.id, nd.ver = t.new_id, 1
+    nd.json = json.encode{space_id = t.new_id, ver = 1, engine = engine, marker = 'layout'}
+    nd.format[5] = {name = 'e', type = 'integer', is_nullable = true}
+    local e_part = {field = 5, type = 'integer', is_nullable = true}
+    nd.indexes[#nd.indexes + 1] = {name = 'e_idx', unique = unique_e == true, parts = {e_part}}
+    nd.indexes[#nd.indexes + 1] = {name = 'v_e', unique = true, parts = {{2, 'integer'}, e_part}}
+    t.args = {ver = 1, timeout = 5, def = nd, uix = {}, uix_drop = {}, lazy_drop = {},
+        builds = {{14, 'e_idx', unique_e == true, {e_part}}, {15, 'v_e', true, {{field = 2, type = 'integer'}, e_part}}},
+        drop = {}, renames = {}, format = nd.format, old_width = 4, materialize = fill ~= nil,
+        pad = fill ~= nil and {3, cfill == nil and box.NULL or cfill, fill} or box.NULL,
+        checks = fill ~= nil and {{5, 'e', 'indexed', box.NULL, box.NULL, fill}} or {},
+        engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = 'layout'}}
+    begin_job(t)
+    return t
+end
+-- A space's format, and a descriptor's, as {name, type, nullable} fields.
+local function format_of(fields)
+    local out = {}
+    for _, f in ipairs(fields) do out[#out + 1] = {f.name, f.type, f.is_nullable == true} end
+    return out
+end
+-- t's expected rows as the copy writes them: a row that ends before c takes
+-- `cfill`, and every row shorter than e takes `fill`.
+local function padded(t, fill, cfill)
+    local out = {}
+    for _, row in ipairs(wanted(t)) do
+        local r = table.deepcopy(row)
+        if #r < 5 then
+            if #r < 4 then r[4] = cfill == nil and box.NULL or cfill end
+            r[5] = fill
+        end
+        out[#out + 1] = r
+    end
+    return out
+end
+-- A job the copy refuses at BUILD: no shadow, and ABORT still ends it with
+-- the table as it was.
+local function refused_then_aborted(t, label, code)
+    local r = call('build', t)
+    local refused = r[1] ~= 'ok' and r[2] == (code or 1210) and box.space[t.new_id] == nil
+    decide(t, 'abort')
+    local aborted = call('abort', t)
+    end_job(t)
+    check(label, refused and aborted[1] == 'ok' and box.space[t.name].id == t.old_id
+        and mp.encode(rows(t.old_id)) == t.original_bytes and phase(t).phase == 'aborted', {r, aborted})
+end
+
+local function exercise_layout(engine)
+    local label = function(s) return engine .. ' rebuild with a new column: ' .. s end
+    -- c's earlier fill is 5: rows that end before c take it, and rows that
+    -- hold an explicit NULL keep it.
+    local t = rebuild_layout(engine, 'layout', 260, 7, false, 5)
+    hook('engine_copy', 'hold')
+    local building = spawn(function() return call('build', t) end)
+    hook('engine_copy', 'reached')
+    local shadow = box.space[t.new_id]
+    check(label('the shadow has the new format and every index before the copy goes on'),
+        shadow ~= nil and same(format_of(shadow:format()), format_of(t.args.format))
+        and same(indexes_of(t.new_id), {{0, 'primary', true, {{1, 'unsigned', false}}},
+            {4, 'bucket_id', false, {{3, 'unsigned', false}}}, {7, 'u', true, {{2, 'integer', false}}},
+            {11, 'c_idx', false, {{4, 'integer', true}}}, {14, 'e_idx', false, {{5, 'integer', true}}},
+            {15, 'v_e', true, {{2, 'integer', false}, {5, 'integer', true}}}}),
+        {shadow and format_of(shadow:format()), indexes_of(t.new_id)})
+    check(label('copied rows take the old slot\'s fill and the new one, and keep explicit NULLs'),
+        same(shadow:get{9}:totable(), {9, 90, 1, 5, 7}) and same(shadow:get{1}:totable(), {1, 10, 1, box.NULL, 7})
+        and same(shadow:get{2}:totable(), {2, 20, 1, 9, 7}), {shadow:get{9}, shadow:get{1}, shadow:get{2}})
+    -- Writes in the old layout go on: a short row changes, rows of three and
+    -- four fields come in, one goes, and a short row gains its c.
+    ok(update(t, 3, 2, 31))
+    ok(change(t, {{'insert', t.old_id, {1001, 10010, 1}}})); t.expected[1001] = {1001, 10010, 1}
+    ok(change(t, {{'insert', t.old_id, {1002, 10020, 1, 5}}})); t.expected[1002] = {1002, 10020, 1, 5}
+    ok(change(t, {{'delete', t.old_id, {5}}})); t.expected[5] = nil
+    ok(change(t, {{'update', t.old_id, {6}, {{'=', 4, 1066}}}})); t.expected[6][4] = 1066
+    hook('engine_copy', 'release'); ok(result(building))
+    ok(call('prepare', t))
+    shadow = box.space[t.new_id]
+    local want = padded(t, 7, 5)
+    check(label('PREPARED holds every row padded, written during the copy or not'),
+        phase(t).phase == 'prepared' and same(rows(t.new_id), want), {rows(t.new_id)[3], want[3]})
+    check(label('the new index holds the fill for every row'),
+        shadow.index.e_idx:count{7} == #want and shadow.index.v_e:count() == #want
+        and shadow.index.c_idx:count{1066} == 1,
+        {shadow.index.e_idx:count{7}, shadow.index.v_e:count(), shadow.index.c_idx:count{1066}})
+    decide(t, 'apply'); ok(call('apply', t)); end_job(t)
+    check(label('the published table is the padded copy, in its own engine and the new format'),
+        clean(t) and same(rows(t.new_id), want) and box.space[t.name].engine == engine
+        and same(format_of(box.space[t.name]:format()), format_of(t.args.format)), difference(t, t.new_id))
+    local written = tarn_autocommit({{'insert', t.new_id, {5000, 50000, 1, box.NULL, 8}}},
+        {fence = {t.new_id, t.args.ver}})
+    check(label('rows in the new layout go in after it'), written[1] == 'ok'
+        and box.space[t.name].index.e_idx:count{8} == 1, written)
+
+    -- Writes outgrow the capture mid-copy: the copy starts again, and pads
+    -- alike, from the job's record.
+    local lost = rebuild_layout(engine, 'layout_lost', 260, 7, false, 5)
+    hook('engine_copy', 'hold')
+    building = spawn(function() return call('build', lost) end)
+    hook('engine_copy', 'reached')
+    local token = phase(lost).capture
+    tarn.cfg.engine_dirty_keys = 2
+    ok(update(lost, 3, 2, 31)); ok(update(lost, 6, 2, 61)); ok(update(lost, 9, 2, 91))
+    tarn.cfg.engine_dirty_keys = nil
+    hook('engine_copy', 'release'); ok(result(building))
+    ok(call('prepare', lost)); decide(lost, 'apply'); ok(call('apply', lost)); end_job(lost)
+    check(label('a copy started again after its capture was lost pads every row alike'),
+        phase(lost).capture ~= token and clean(lost) and same(rows(lost.new_id), padded(lost, 7, 5)),
+        difference(lost, lost.new_id))
+
+    -- A COUNT that yields while the copy is published and the old space
+    -- goes fails with 1412, which the SQL server runs again with the new
+    -- definition, rather than with a storage error.
+    local raced = rebuild_layout(engine, 'layout_race', 40, 7)
+    ok(call('build', raced))
+    hook('scan', 'hold')
+    local counting = spawn(function()
+        return {pcall(tarn_count, raced.old_id, 0, {}, 'ALL', nil, true, {}, {{1}}, true, false)}
+    end)
+    local scanning = hook('scan', 'reached')
+    ok(call('prepare', raced)); decide(raced, 'apply'); ok(call('apply', raced)); end_job(raced)
+    hook('scan', 'release')
+    local counted = result(counting)
+    check(label('a COUNT whose space the copy replaced while it yielded fails with 1412'),
+        scanning[2] == 1 and clean(raced) and counted[1] == true and type(counted[2]) == 'table'
+        and counted[2][1] == 'error' and counted[2][2] == 1412, tostring(counted[2]))
+    -- An aggregate the publication's DDL makes scan again, once the old
+    -- space is gone: vinyl scans again (1412); memtx answers from its scan.
+    local summed = rebuild_layout(engine, 'layout_sum', 40, 7)
+    ok(call('build', summed))
+    hook('reduce_scan', 'hold')
+    local reducing = spawn(function()
+        return {pcall(tarn_count, summed.old_id, 0, {}, 'ALL', nil, true, {}, {}, true, false, nil,
+            {{'countstar', 1}})}
+    end)
+    local reduced_at = hook('reduce_scan', 'reached')
+    ok(call('prepare', summed)); decide(summed, 'apply'); ok(call('apply', summed)); end_job(summed)
+    hook('reduce_scan', 'release')
+    local reduced = result(reducing)
+    local answer = reduced[2]
+    check(label('an aggregate across the publication answers, or fails with 1412'),
+        reduced_at[2] == 1 and reduced[1] == true and type(answer) == 'table'
+        and ((answer[1] == 'error' and answer[2] == 1412)
+             or (engine == 'memtx' and answer[1] == 'ok' and tonumber(answer[2][1]) == 40)),
+        {reduced[1], tostring(answer and answer[1]), tostring(answer and answer[2])})
+
+    -- Columns renamed and dropped, with a new index: the copy takes the new
+    -- format and copies the rows as they are.
+    local renamed = create(engine, 'layout_rename', 40)
+    end_job(renamed)
+    local nd = table.deepcopy(renamed.def)
+    nd.id, nd.ver = renamed.new_id, 1
+    nd.json = json.encode{space_id = renamed.new_id, ver = 1, engine = engine, marker = 'renamed'}
+    nd.format[2] = {name = 'w', type = 'integer'}
+    nd.format[4] = {name = '_dropped_4', type = 'any', is_nullable = true}
+    renamed.args = {ver = 1, timeout = 5, def = nd, uix = {}, uix_drop = {}, lazy_drop = {},
+        builds = {{12, 'w_b', false, {{field = 2, type = 'integer'}, {field = 3, type = 'unsigned'}}}},
+        drop = {11}, renames = {{7, 'w_u'}}, format = nd.format, old_width = 4, materialize = false,
+        pad = box.NULL, checks = {},
+        engine_change = {old_id = renamed.old_id, old_ver = 0, old_engine = engine, old_name = renamed.name,
+            rebuild = 'layout'}}
+    begin_job(renamed)
+    ok(call('build', renamed)); ok(call('prepare', renamed)); decide(renamed, 'apply'); ok(call('apply', renamed))
+    end_job(renamed)
+    check(label('columns renamed and dropped: the new format, and every row as it was'),
+        clean(renamed) and same(format_of(box.space[renamed.name]:format()), format_of(nd.format))
+        and mp.encode(rows(renamed.new_id)) == renamed.original_bytes
+        and box.space[renamed.name].index.w_b:count() == 40 and box.space[renamed.name].index.w_u ~= nil
+        and box.space[renamed.name].index.c_idx == nil, format_of(box.space[renamed.name]:format()))
+
+    -- A NULL fill needs no padding: rows are copied as they are.
+    local short = rebuild_layout(engine, 'layout_null', 40)
+    ok(call('build', short)); ok(call('prepare', short)); decide(short, 'apply'); ok(call('apply', short))
+    end_job(short)
+    check(label('with a NULL fill, rows keep their physical length'),
+        clean(short) and mp.encode(rows(short.new_id)) == short.original_bytes
+        and box.space[short.name].index.e_idx:count() == 40, difference(short, short.new_id))
+
+    -- A unique index on the new column: every row takes the fill.
+    local dup = rebuild_layout(engine, 'layout_dup', 40, 7, true)
+    local refused = call('build', dup)
+    check(label('a unique index on a shared fill fails the copy with 1062'),
+        refused[1] ~= 'ok' and refused[2] == 1062 and tostring(refused[3]):find("'e_idx'") ~= nil, refused)
+    decide(dup, 'abort'); ok(call('abort', dup)); end_job(dup)
+    check(label('ABORT leaves the table and its rows as they were'),
+        box.space[dup.new_id] == nil and box.space[dup.name].id == dup.old_id
+        and mp.encode(rows(dup.old_id)) == dup.original_bytes and #box.space[dup.name]:format() == 4)
+
+    -- Descriptors the copy refuses before any shadow exists. ABORT still
+    -- ends each job (as a tombstone a stale BUILD meets).
+    local bad = create(engine, 'layout_engine', 4)
+    bad.args.format = table.deepcopy(bad.def.format)
+    refused_then_aborted(bad, label('an engine change that would change the layout is refused, and aborts'))
+    local unsaid = rebuild_layout(engine, 'layout_unsaid', 4, 7)
+    unsaid.args.engine_change.rebuild = true
+    refused_then_aborted(unsaid, label('a layout change in a rebuild that does not say so is refused, and aborts'))
+    local badpad = rebuild_layout(engine, 'layout_badpad', 4, 7)
+    badpad.args.pad = {0, 7}
+    refused_then_aborted(badpad, label('malformed padding is refused, and aborts'))
+    local checked = rebuild_layout(engine, 'layout_checked', 4, 7)
+    checked.args.checks[2] = {2, 'v', 'range', 0, 10, box.NULL}
+    refused_then_aborted(checked, label('a rebuild that would check rows is refused, and aborts'))
+    local moved = rebuild_layout(engine, 'layout_moved', 4, 7)
+    moved.args.rename = moved.name .. '_2'
+    refused_then_aborted(moved, label('a rebuild that would rename the table is refused, and aborts'))
+    local stale = call('build', moved)
+    check(label('a BUILD after that ABORT meets its tombstone'), stale[1] ~= 'ok' and stale[2] == 1412, stale)
+end
+
 local function exercise(engine)
     local label = function(s) return engine .. ': ' .. s end
     local t = create(engine, 'online', 260)
@@ -745,8 +963,11 @@ local yes, err = xpcall(function()
         sync = tarn.cfg.sync, wal = box.cfg.wal_mode})
     assert(mp.encode(tarn_engine_capabilities()) == mp.encode({'ok', 1}), 'engine capability V1 required')
     assert(mp.encode(tarn_engine_rebuild_capabilities()) == mp.encode({'ok', 1}), 'rebuild capability required')
+    assert(mp.encode(tarn_engine_rebuild_format_capabilities()) == mp.encode({'ok', 1}),
+        'layout rebuild capability required')
     exercise('memtx'); exercise('vinyl')
     exercise_rebuild('memtx'); exercise_rebuild('vinyl')
+    exercise_layout('memtx'); exercise_layout('vinyl')
 end, debug.traceback)
 cleanup()
 if native ~= nil and native ~= '0' then

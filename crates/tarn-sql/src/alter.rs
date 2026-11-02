@@ -1897,9 +1897,14 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
 /// replicated shard builds an index on a populated space in its applier,
 /// which acknowledges nothing until it finishes: the shard's synchronous
 /// writes wait, and past twice `replication_timeout` the leader resigns
-/// (issue #267). The rebuild takes changes to secondary indexes alone --
-/// new ones, with drops and renames -- of a table without global or lazy
-/// indexes; it keeps the primary key, the stored layout and the name.
+/// (issue #267). The rebuild takes changes that build secondary indexes --
+/// new ones, with drops and renames of others -- of a table without global
+/// or lazy indexes, also when the same statement adds, renames or drops
+/// columns: the new space takes the new format, and the copy pads every row
+/// it writes with the fills its indexes need (`pad`), which PREPARE would
+/// otherwise materialize behind the fence. It keeps the primary key and the
+/// table's name, and leaves to the in-place path a change that checks
+/// existing rows against a new type.
 pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
     let local = |t: &TableDef| t.globals.is_empty() && t.indexes.iter().all(|i| i.global.is_none() && i.lazy.is_none());
     ch.changed
@@ -1907,10 +1912,8 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         && !ch.builds.is_empty()
         && ch.builds.iter().all(|b| b.id != 0)
         && !ch.drop.contains(&0)
-        && ch.format.is_none()
-        && ch.checks.is_empty()
-        && !ch.materialize
-        && ch.pad.is_none()
+        && ch.checks.iter().all(|c| c.kind == CheckKind::IndexFieldPresent)
+        && ch.materialize == ch.pad.is_some()
         && ch.rename.is_none()
         && ch.uix_drop.is_empty()
         && ch.lazy_drop.is_empty()
@@ -1918,6 +1921,14 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         && ch.def.space_id == def.space_id
         && local(def)
         && local(&ch.def)
+}
+
+/// Whether a rebuild of change `ch` changes the stored layout: the new
+/// space's format, or rows padded to fills. Storage from before such
+/// rebuilds would copy the old layout under the new definition, so each
+/// replica must answer `tarn_engine_rebuild_format_capabilities` first.
+pub fn rebuild_changes_layout(ch: &Change) -> bool {
+    ch.format.is_some() || ch.pad.is_some()
 }
 
 fn check_lazy(def: &TableDef, nd: &TableDef) -> SqlResult<Vec<u32>> {
@@ -2012,7 +2023,11 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
             .str(engine.old_engine.name())
             .str("old_name")
             .str(&engine.old_name);
-        if engine.rebuild {
+        // A rebuild that changes the stored layout says so: storage that
+        // predates layouts takes only `true`, and refuses it.
+        if engine.rebuild && rebuild_changes_layout(ch) {
+            m.str("rebuild").str("layout");
+        } else if engine.rebuild {
             m.str("rebuild").bool(true);
         }
     }
@@ -2360,18 +2375,39 @@ mod tests {
             let ch = alter(&def, &cat, sql).unwrap();
             rebuild_eligible(&def, &ch)
         };
+        let layout = |sql: &str| rebuild_changes_layout(&alter(&def, &cat, sql).unwrap());
         assert!(eligible("ALTER TABLE t ADD INDEX ks (s)"));
         assert!(eligible("CREATE INDEX kd ON t (d, a)"));
         assert!(eligible("ALTER TABLE t ADD UNIQUE INDEX us (s, id)"));
         assert!(eligible("ALTER TABLE t DROP INDEX ka, ADD INDEX ka (a, s)"));
         assert!(eligible("ALTER TABLE t ADD INDEX ks (s), RENAME INDEX ka TO ka2"));
+        assert!(!layout("ALTER TABLE t ADD INDEX ks (s)"));
         // Nothing to build: a drop or a rename alone stays in place.
         assert!(!eligible("ALTER TABLE t DROP INDEX ka"));
         assert!(!eligible("ALTER TABLE t RENAME INDEX ka TO ka2"));
-        // A new column changes the stored layout.
-        assert!(!eligible("ALTER TABLE t ADD COLUMN n INT, ADD INDEX kn (n)"));
+        assert!(!eligible("ALTER TABLE t ADD COLUMN n INT DEFAULT 3"));
+        // Columns the same statement adds, renames or drops: the copy takes
+        // the new format, and pads rows when an index needs a fill.
+        for sql in [
+            "ALTER TABLE t ADD COLUMN n INT, ADD INDEX kn (n)",
+            "ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)",
+            "ALTER TABLE t ADD COLUMN n INT NOT NULL, ADD UNIQUE INDEX un (n, id)",
+            "ALTER TABLE t ADD COLUMN n VARCHAR(10) DEFAULT 'x', ADD INDEX kn (n, a)",
+            "ALTER TABLE t RENAME COLUMN s TO s2, ADD INDEX ks (s2)",
+            "ALTER TABLE t DROP COLUMN d, ADD INDEX ks (s)",
+        ] {
+            assert!(eligible(sql), "{}", sql);
+            assert!(layout(sql), "{}", sql);
+        }
+        let padded = alter(&def, &cat, "ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)").unwrap();
+        assert!(padded.materialize && padded.pad.is_some() && padded.format.is_some());
+        let short = alter(&def, &cat, "ALTER TABLE t ADD COLUMN n INT, ADD INDEX kn (n)").unwrap();
+        assert!(!short.materialize && short.pad.is_none() && short.format.is_some());
         // Existing rows are checked against a narrower type.
         assert!(!eligible("ALTER TABLE t MODIFY a SMALLINT, ADD INDEX ks (s)"));
+        assert!(!eligible(
+            "ALTER TABLE t MODIFY s VARCHAR(5), ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)"
+        ));
         // A renamed table, and a unique key needing a global index.
         assert!(!eligible("ALTER TABLE t ADD INDEX ks (s), RENAME TO t2"));
         let (sharded, scat) = table(
@@ -2413,6 +2449,49 @@ mod tests {
             }
         }
         assert!(seen && rd.buf.is_empty());
+        // A rebuild that changes the stored layout sends its format and pad.
+        let mut ch = alter(&def, &cat, "ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)").unwrap();
+        ch.engine_change = Some(EngineChange {
+            old_id: def.space_id,
+            old_ver: def.ver,
+            old_engine: def.engine,
+            old_name: def.space_name(),
+            rebuild: true,
+        });
+        let args = lua_args(&ch, 7, 5.0);
+        let mut rd = Rd::new(&args);
+        let mut fields = std::collections::HashMap::new();
+        for _ in 0..rd.map().unwrap() {
+            let k = rd.string().unwrap().to_string();
+            fields.insert(k, rd.raw_value().unwrap().to_vec());
+        }
+        let (base, values) = ch.pad.as_ref().unwrap();
+        let mut pad = Rd::new(&fields["pad"]);
+        assert_eq!(pad.array().unwrap(), values.len() + 1);
+        assert_eq!(pad.value().unwrap().as_i64(), Some(*base as i64));
+        assert_eq!(
+            Rd::new(&fields["format"]).array().unwrap(),
+            ch.format.as_ref().unwrap().len()
+        );
+        assert_eq!(fields["materialize"], vec![0xc3]);
+        let mut rebuild = None;
+        let mut rd = Rd::new(&fields["engine_change"]);
+        for _ in 0..rd.map().unwrap() {
+            if rd.string().unwrap() == "rebuild" {
+                rebuild = Some(rd.string().unwrap().to_string());
+            } else {
+                rd.skip().unwrap();
+            }
+        }
+        assert_eq!(rebuild.as_deref(), Some("layout"));
+        // An index on a column an earlier ALTER added with a default pads
+        // rows without changing the format: a change of layout all the same.
+        let added = alter(&def, &cat, "ALTER TABLE t ADD COLUMN n INT DEFAULT 3")
+            .unwrap()
+            .def;
+        let ch = alter(&added, &cat, "ALTER TABLE t ADD INDEX kn (n)").unwrap();
+        assert!(ch.format.is_none() && ch.pad.is_some() && ch.materialize);
+        assert!(rebuild_eligible(&added, &ch) && rebuild_changes_layout(&ch));
     }
 
     #[test]

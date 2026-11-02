@@ -1568,16 +1568,18 @@ idempotent steps per shard (lua/tarn.lua "Schema changes"):
    it are confirmed. Writes to the shard's other tables go on, one in
    flight at a time, until the build ends. Engine changes create their
    shadow's indexes the same way, while the shadow is still empty.
-   On a cluster with replicated shards, a change whose storage work is new
-   secondary indexes copies the table instead of building them in place
-   (§2.11, issue #267): no replica then builds an index on a populated
+   On a cluster with replicated shards, a change that builds secondary
+   indexes copies the table instead of building them in place (§2.11,
+   issues #267 and #184): no replica then builds an index on a populated
    space, and the fence covers only the copy's last pass.
    An index on an instant-added column with a non-NULL fill is deferred to
    PREPARE instead: its stored field (or collation weight field) must be
    physically present in every existing tuple. Otherwise the native index
    would hold NULL where SQL reads the fill, missing rows and failing to
    enforce logical uniqueness. PREPARE materializes that suffix before the
-   index is built. NULL fills already have the correct native key.
+   index is built. NULL fills already have the correct native key. A
+   change that copies the table pads each row it copies with the same
+   suffix instead, while writes go on.
    New lazy indexes are then built while writes go on, when the change
    leaves the columns they read as they are: their writes are captured
    from a short drain on, and their baseline is scanned before PREPARE
@@ -1795,19 +1797,26 @@ shard's synchronous writes wait for the first follower to finish, and a
 build that takes the followers more than twice `replication_timeout`
 makes the leader resign under strict fencing (issue #267).
 
-So on a cluster with replicated shards, a change whose storage work is new
-secondary indexes -- with drops and renames of others, but no change of
-columns, checks or the table's name, and no global or lazy index --
-copies the table instead, through the engine change's copy below, in the
-table's own engine. The new space gets every index while it is empty, and
-the rows reach it in ordinary batches, which followers apply and
-acknowledge at once. The final fence rereads only the keys written during
-the copy. The copy needs room for a second copy of the table until the
-change is published, and writes every row once more through the WAL and
-replication. `index_build` in `cluster.json` decides: `auto` (the default)
-copies on a cluster with replicated shards, `copy` always does, and
-`in_place` never does; a replica that does not answer, or predates the
-copy, makes the change build in place.
+So on a cluster with replicated shards, a change that builds secondary
+indexes copies the table instead, through the engine change's copy below,
+in the table's own engine. That takes new indexes with drops and renames of
+others, and columns the same statement adds, renames or drops, but no
+change that checks existing rows against a new type, of the primary key or
+of the table's name, and no global or lazy index. The new space gets every
+index, and the new format, while it is empty, and the rows reach it in
+ordinary batches, which followers apply and acknowledge at once. When an
+index needs a field that older rows lack (an instant-added column's
+non-NULL fill), the copy pads each row it writes, from a page or the final
+pass, with the fills a materializing PREPARE would write (`pad`, issue
+#184), so such a change needs neither that fence nor
+`tarn.cfg.alter_check_rows`. The final fence rereads only the keys written
+during the copy. The copy needs room for a second copy of the table until
+the change is published, and writes every row once more through the WAL
+and replication. `index_build` in `cluster.json` decides: `auto` (the
+default) copies on a cluster with replicated shards, `copy` always does,
+and `in_place` never does. A replica that does not answer
+`tarn_engine_rebuild_capabilities`, or for a change of the stored layout
+`tarn_engine_rebuild_format_capabilities`, makes the change build in place.
 
 Built in place on a replicated shard, writes to the table wait for the
 build however long it takes (it is not bounded by
@@ -1860,6 +1869,24 @@ dirty rows back one at a time would meet stale copies, as when two rows
 swap values (`tla/ShadowUnique.tla`). Fresh global/lazy copies are filled
 behind the fence. PREPARED certifies that complete image; APPLY and
 restart retain it rather than recopying it.
+
+A rebuild for an ALTER that also changes columns (issue #184) creates the
+shadow with the ALTER's format, and passes every row it writes, from a page
+or the final pass, through one function: the row itself, or the row padded
+to the fills its indexes need (`pad`, kept in the job's record so that a
+new copy after a capture loss pads alike). Rows reach the shadow only that
+way, so the models' rows can be read as the padded ones, and what they
+show for the copy holds for it: PREPARED certifies the padded image of the
+fenced source, and a unique index the change adds fails it with 1062 only
+for a padded value two rows held at once (a fill that rows share, for
+one). The descriptor of such a rebuild says so (`rebuild = 'layout'`
+rather than `true`): storage from before layouts refuses it at every step
+(1210) rather than copy the old layout under the new definition, and the
+job stays until a node that knows layouts ends it. An engine change keeps
+the stored layout, and a rebuild neither checks rows against a new type nor
+renames the table; a descriptor that asks otherwise is refused before any
+copy begins. ABORT checks none of that, so a refused job still ends: it
+leaves a tombstone, which a late BUILD of the job meets.
 
 The global job's confirmed APPLY decision precedes native renames and
 catalog publication. Recovery uses the explicit old/new IDs even if a
@@ -2303,7 +2330,7 @@ throughput measurements:
 
 | Suite | Engine-change boundary | Recorded result |
 |---|---|---|
-| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup; same-engine rebuilds (issue #267): indexes before the first row, stale copies evicted for a page's row, swapped unique values, shared values behind one stale copy, NULL in a unique key's last part, duplicates found by the copy and at the fence (1062), copies and final passes past their call's deadline, drops and renames | 118 checks with the native module; 116 with native disabled; both engine directions |
+| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup; same-engine rebuilds (issue #267): indexes before the first row, stale copies evicted for a page's row, swapped unique values, shared values behind one stale copy, NULL in a unique key's last part, duplicates found by the copy and at the fence (1062), copies and final passes past their call's deadline, drops and renames; rebuilds that change columns (issue #184): the new format, padded rows from pages, the final pass and a recopy, old slots' fills and explicit NULLs, renamed and dropped columns, NULL fills left short, a shared fill under a new unique index (1062), refused descriptors that ABORT still ends, a COUNT and an aggregate across the cutover (1412) | 156 checks with the native module; 154 with native disabled; both engine directions |
 | `lua/test/engine_terminal_test.lua` | a detached shadow commit remains tracked after its caller ends; cleanup waits for the terminal/native queue cut; capture allocation failure cannot certify a lost tail | focused native-terminal fault gate, separate from process loss |
 | `lua/test/engine_replication.sh` | quorum-2/fsync replica sets: leader loss during copy forces recopy; a later leader loss preserves PREPARED and completes publication/cleanup | passes in both engine directions, with native enabled and disabled; eight owned leader terminations across four cohorts |
 
@@ -2747,11 +2774,13 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   Writes wait during PREPARE and, on memtx or on a replicated shard's
   vinyl table, index building, which no row limit bounds; an unreplicated
   shard's vinyl indexes build before that wait. On a cluster with
-  replicated shards, a change to secondary indexes alone copies the table
-  instead (§2.11), and needs room for a second copy of it. Other changes
-  that build indexes on a replicated shard still build in place, where the
-  followers' builds also hold the shard's other writes, and a build that
-  takes them more than about a second makes the leader resign (#267).
+  replicated shards, a change that builds secondary indexes, with columns
+  added, renamed or dropped, copies the table instead (§2.11), and needs
+  room for a second copy of it. Other changes that build indexes on a
+  replicated shard (with a type change, or on a table with global or lazy
+  indexes) still build in place, where the followers' builds also hold the
+  shard's other writes, and a build that takes them more than about a
+  second makes the leader resign (#267).
   Checking or materializing existing rows
   (a narrower type, `NOT NULL`, indexed fills) is refused above
   `tarn.cfg.alter_check_rows` rows per shard. Engine changes use a separate
