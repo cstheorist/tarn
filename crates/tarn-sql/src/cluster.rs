@@ -112,6 +112,12 @@ pub struct ClusterConfig {
     /// (seconds) is taken over and finished by another server.
     #[serde(default = "default_ddl_job_stale")]
     pub ddl_job_stale: f64,
+    /// How ALTER TABLE builds a table's new secondary indexes: `auto` (the
+    /// default) copies the table into a new space whose indexes exist
+    /// before its rows when a shard has replicas, `copy` always does, and
+    /// `in_place` builds them on the table's own space (issue #267).
+    #[serde(default)]
+    pub index_build: IndexBuild,
     /// Collation of text columns in tables that name none (no COLLATE or
     /// CHARSET option): `collation_server`.
     #[serde(default = "default_collation")]
@@ -148,6 +154,22 @@ impl ClusterConfig {
         }
         Ok(())
     }
+}
+
+/// `ClusterConfig::index_build`. Building an index in place on a populated
+/// space of a replicated shard makes each follower build it in its applier,
+/// which acknowledges nothing meanwhile: the shard's synchronous writes wait
+/// for the first follower to finish, and past twice `replication_timeout`
+/// the leader resigns. A copy writes the rows as ordinary batches into a
+/// space that has its indexes already, at the cost of a second copy of the
+/// table until the change is published (`alter::rebuild_eligible`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexBuild {
+    #[default]
+    Auto,
+    Copy,
+    InPlace,
 }
 
 fn default_move_timeout() -> f64 {
@@ -2113,10 +2135,23 @@ impl Cluster {
             if !ch.changed {
                 return self.alter_auto_inc(&def, &ch).await;
             }
+            let rebuild = self.copy_index_builds(&def, &ch).await;
+            if rebuild {
+                ch.engine_change = Some(crate::alter::EngineChange {
+                    old_id: def.space_id,
+                    old_ver: def.ver,
+                    old_engine: def.engine,
+                    old_name: def.space_name(),
+                    rebuild: true,
+                });
+            }
             if ch.engine_change.is_some() {
                 // A replica must be able to resume this job after promotion.
-                // Check before allocating identities or publishing any job.
-                self.require_engine_capabilities().await?;
+                // Check before allocating identities or publishing any job
+                // (copy_index_builds checked a rebuild's).
+                if !rebuild {
+                    self.require_engine_capabilities().await?;
+                }
                 ch.def.counter_id = Some(def.counter_space_id());
                 ch.def.space_id = self.alloc_space_ids(1).await?;
                 for ix in &mut ch.def.indexes {
@@ -2175,6 +2210,59 @@ impl Cluster {
             self.run_job(&job).await?;
             return self.alter_auto_inc(&ch.def, &ch).await;
         }
+    }
+
+    /// Whether ALTER TABLE change `ch` of `def` builds its new indexes by
+    /// copying the table (`ClusterConfig::index_build`): it must be one
+    /// `alter::rebuild_eligible` takes, and every replica of every shard
+    /// must know the rebuild, since any of them may take over the job. A
+    /// replica that does not answer, or predates the rebuild, leaves the
+    /// change to build in place.
+    async fn copy_index_builds(&self, def: &TableDef, ch: &crate::alter::Change) -> bool {
+        let wanted = match self.cfg.index_build {
+            IndexBuild::InPlace => false,
+            IndexBuild::Copy => true,
+            IndexBuild::Auto => self.live_shards().any(|i| self.shards[i].replicas().len() > 1),
+        };
+        if !wanted || !crate::alter::rebuild_eligible(def, ch) {
+            return false;
+        }
+        for shard in self.live_shards() {
+            for addr in self.shards[shard].replicas() {
+                let capable = async {
+                    self.reclaim_connections(false).await;
+                    let client = tarn_iproto::Client::connect(&self.opts(addr)).await.ok()?;
+                    let response = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        client.call(0, "tarn_engine_rebuild_capabilities", &[0x90]),
+                    )
+                    .await
+                    .ok()?
+                    .ok()?;
+                    let data = response.data()?;
+                    let mut rd = Rd::new(&data);
+                    (|| -> SqlResult<bool> {
+                        Ok(rd.array()? == 1
+                            && rd.array()? == 2
+                            && rd.string()? == "ok"
+                            && matches!(rd.value()?, Value::Int(1) | Value::UInt(1))
+                            && rd.buf.is_empty())
+                    })()
+                    .ok()
+                }
+                .await;
+                if capable != Some(true) {
+                    tracing::info!(
+                        "ALTER TABLE {} builds its indexes in place: replica {} of shard {} cannot rebuild the table",
+                        def.space_name(),
+                        addr,
+                        self.shards[shard].id
+                    );
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Engine replacement changes physical identities. Every potential

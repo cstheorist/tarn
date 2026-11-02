@@ -1,0 +1,119 @@
+{
+  "issue": 184,
+  "date": "2026-11-02T10:50:51+00:00",
+  "source": "f41c961f3a38e186c5eaa88b46666a4a4f3d7f17",
+  "dirty": true,
+  "tarn_server_sha256": "cf24901de3f7841d2c6febdb22682be21aaa90a35a4f0a74cb07a0e66d5665ae",
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f5",
+  "host": {
+    "cpus": 2,
+    "machine": "x86_64",
+    "kernel": "6.18.44-fc-v185"
+  },
+  "engine": "vinyl",
+  "index": "plain",
+  "shards": 2,
+  "replicas_per_shard": 3,
+  "rows_per_shard": 200000,
+  "alter_check_rows": 1000000,
+  "writer_rate": 200.0,
+  "other_rate": 100.0,
+  "load_s": 70.7,
+  "load_vinyl_refusals": 0,
+  "alter_s": 7.5,
+  "alter_error": null,
+  "published_s": null,
+  "leader_changes": [
+    2,
+    1
+  ],
+  "build_rows_per_s": 53355,
+  "writes": {
+    "before": {
+      "writes": 1857,
+      "errors": 0,
+      "p50_ms": 3.6118650023126975,
+      "p99_ms": 14.294480002718046,
+      "max_ms": 51.763527997536585
+    },
+    "during": {
+      "writes": 22,
+      "errors": 28,
+      "p50_ms": 3.817059005086776,
+      "p99_ms": 210.96010800101794,
+      "max_ms": 210.96010800101794
+    },
+    "after": {
+      "writes": 889,
+      "errors": 0,
+      "p50_ms": 3.882105003867764,
+      "p99_ms": 16.038303001550958,
+      "max_ms": 93.53171700058738
+    }
+  },
+  "other_writes": {
+    "before": {
+      "writes": 987,
+      "errors": 0,
+      "p50_ms": 4.009557000244968,
+      "p99_ms": 13.460330002999399,
+      "max_ms": 50.48248000093736
+    },
+    "during": {
+      "writes": 63,
+      "errors": 16,
+      "p50_ms": 13.072506000753492,
+      "p99_ms": 134.5972549970611,
+      "max_ms": 176.40152200328885
+    },
+    "after": {
+      "writes": 486,
+      "errors": 0,
+      "p50_ms": 4.060288003529422,
+      "p99_ms": 11.064843994972762,
+      "max_ms": 33.24669300491223
+    }
+  },
+  "nodes_before": [
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 206231,
+      "term": 2,
+      "engine": "vinyl",
+      "wal_bytes": 12901070,
+      "rss": 94425088
+    },
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 193769,
+      "term": 2,
+      "engine": "vinyl",
+      "wal_bytes": 11993893,
+      "rss": 94367744
+    }
+  ],
+  "nodes_after": [
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 206693,
+      "term": 4,
+      "engine": "vinyl",
+      "wal_bytes": 13162932,
+      "rss": 141320192
+    },
+    {
+      "check_rows": 1000000,
+      "ro": true,
+      "rows": 194214,
+      "term": 3,
+      "engine": "vinyl",
+      "wal_bytes": 12227996,
+      "rss": 136085504
+    }
+  ],
+  "checked_rows": 400000,
+  "mismatched_keys": []
+}

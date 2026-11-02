@@ -5609,7 +5609,11 @@ end
 -- last one to finish restores the limit.
 --
 -- A replica set's followers apply each build in their applier, which
--- acknowledges nothing until it ends (issue #267). One that takes more than
+-- acknowledges nothing until it ends (issue #267). (So an ALTER that only
+-- changes secondary indexes copies the table on a replicated cluster
+-- instead, into a space whose indexes exist before its rows: the engine
+-- copy of lua/tarn_engine.lua. What follows is about the builds that remain
+-- in place.) One that takes more than
 -- twice replication_timeout makes the leader resign, and a build the leader
 -- started before it resigned still committed on it afterwards: Tarantool
 -- checks that a node is writable only when a statement starts, and the
@@ -8090,6 +8094,7 @@ BK.production_functions = {
         'tarn_engine_capabilities',
         'tarn_engine_counter_alias',
         'tarn_engine_decision',
+        'tarn_engine_rebuild_capabilities',
         'tarn_estimate',
         'tarn_fence',
         'tarn_info',
@@ -8213,6 +8218,10 @@ tarn_lock_range = M.engine.rpc_errors(tarn_lock_range, pl_failed)
 tarn_estimate = M.engine.rpc_errors(tarn_estimate)
 tarn_analyze = M.engine.rpc_errors(tarn_analyze)
 function tarn_engine_capabilities() return {'ok', 1} end
+-- A same-engine rebuild through the engine copy (lua/tarn_engine.lua): the
+-- SQL server uses it for an ALTER's new indexes only when every replica
+-- answers, so that a node from before it never meets the descriptor.
+function tarn_engine_rebuild_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()
     return M.engine.decision(name, old_id, new_id, ver, gen)

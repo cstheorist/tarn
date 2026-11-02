@@ -144,6 +144,29 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On a cluster with replicated shards, an `ALTER TABLE` or `CREATE INDEX`
+  that adds secondary indexes no longer stalls the shard or makes its
+  leader resign. Each follower used to build the new index on the populated
+  table in its applier, acknowledging nothing until it finished: the
+  shard's synchronous writes waited for the first follower, and a build
+  that took the followers more than about a second made the leader resign
+  under strict fencing. Such a change now copies the table, in its own
+  engine, into a new space that has every index before its first row, as
+  an engine change copies it: followers apply only DDL on an empty space
+  and ordinary batches of rows, writes go on during the copy, and the final
+  fence rereads only the keys written meanwhile. Engine changes create
+  their copy's indexes before the copy too, so their final fence no longer
+  builds them. A unique index the change adds fails it with 1062 only for a
+  value two rows held at once: one the copy finds in two rows, or one the
+  fenced table holds twice. The copy takes changes to secondary indexes alone (new ones, with
+  drops and renames) of tables without global or lazy indexes, needs room
+  for a second copy of the table until the change is published, and writes
+  every row once more through the WAL and replication. `index_build` in
+  `cluster.json` chooses `auto` (copy when a shard has replicas, the
+  default), `copy` or `in_place`. `tla/ShadowUnique.tla` models the copy's
+  unique index, and `tests/indexcopy.sh` runs it on 2 shards x 3 replicas
+  ([#267](https://github.com/cstheorist/tarn/issues/267)).
+
 - An ALTER TABLE or engine change that builds several vinyl indexes on a
   replicated shard no longer splits the shard's old leader from its replica
   set. If the followers took more than about a second to apply one build

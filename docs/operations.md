@@ -138,7 +138,24 @@ down for the length of the build. Don't call `create_index` on a populated
 vinyl space of a replicated shard by hand while the shard takes writes.
 
 A follower also acknowledges nothing while it applies an index build, on
-either engine (issue #267). It builds the new index in its applier fiber,
+either engine (issue #267). So on a cluster with replicated shards, an
+`ALTER TABLE` (or `CREATE INDEX`) whose only storage work is new secondary
+indexes, with drops and renames of others, copies the table into a new
+space instead, as an engine change does: the new space has every index
+before its first row, the rows reach it in ordinary batches while writes
+go on, and the final fence rereads only the keys written meanwhile. Budget
+room for a second copy of the table on every replica (in `memtx_memory`
+for a memtx table), as for an [engine change](#online-engine-changes),
+whose capacity failures leave the table as it was, and for every row once
+more in the WAL and in replication. The copy also gives the table a new
+physical space ID, as an engine change does: raw native KV clients that
+cache it must resolve the table's name again afterwards.
+`index_build` in `cluster.json` chooses: `auto` (the default) copies when a
+shard has replicas, `copy` always copies, and `in_place` builds on the
+table's own space. A change with column changes, row checks, a table
+rename, or a global or lazy index builds in place, as does any change while
+a replica does not answer or runs a version without the copy; the rest of
+this section is about those builds. It builds the new index in its applier fiber,
 which handles nothing else from the leader until the build ends: no rows,
 no heartbeats, no votes. While both followers build, no synchronous write
 on the shard reaches its quorum. If the build takes them more than twice
@@ -648,6 +665,7 @@ options:
   "lock_wait_timeout": 50,
   "deadlock_interval": 1.0,
   "ddl_job_stale": 30,
+  "index_build": "auto",
   "move_timeout": 10,
   "default_collation": "utf8mb4_bin"
 }
@@ -697,6 +715,14 @@ APPLY or ABORT decision. A job without a decision reruns preparation and any
 global index fill before deciding; a partially applied change only goes
 forward ([design §2.10](design.md#210-schema-changes)). Every server looks
 for such jobs at startup and every `ddl_job_stale / 2` seconds (at most 10).
+
+`index_build` is how `ALTER TABLE` and `CREATE INDEX` build new secondary
+indexes on a populated table: `auto` (the default) copies the table into a
+space that has its indexes before its rows when a shard has replicas,
+`copy` always does, and `in_place` builds them on the table's own space.
+Only changes to secondary indexes alone copy; see
+[storage nodes](#storage-nodes) for what the copy costs
+and why a replicated shard needs it (issue #267).
 
 A materializing ALTER retains a memtx undo journal in `_tarn_alter_undo`
 until commit cleanup or abort completes: one primary key and original tuple
@@ -761,18 +787,18 @@ same metadata support after a promotion.
 
 The source stays authoritative and accepts SQL/commit-protocol writes
 during the baseline copy. The replacement has a new physical space ID,
-preserves the actual tuple format and native index IDs, and initially has
-only its primary index. Committed source pages are copied in batches. Source changes are
+preserves the actual tuple format and native index IDs, and has every
+index before its first row, so that no replica builds an index on a
+populated space (issue #267). Committed source pages are copied in batches. Source changes are
 noted by primary key, including deletes and both sides of a primary-key
 move. A final fence drains local/native commits, including READ COMMITTED
 commits already in flight, and prepared transactions, then rereads dirty
 keys from confirmed source data. Transactions still holding an old
-definition cannot apply buffered writes after the switch. Secondary and
-unique indexes are built after that tail, followed by new global-index
-fills and lazy-index bootstrap.
+definition cannot apply buffered writes after the switch. New global-index
+fills and lazy-index bootstrap follow that tail.
 
-**The final pause can be long.** It includes secondary-index construction
-and auxiliary-index readiness, not just a name switch. Reads that honor
+**The final pause can be long.** It includes rereading every key written
+during the copy and auxiliary-index readiness, not just a name switch. Reads that honor
 DDL holds and writers can wait or fail their normal lock deadlines during
 this phase. Copying is paged and the job is kept alive; the lock/drain
 timeout is not a whole-migration duration guarantee. A busy source can also
