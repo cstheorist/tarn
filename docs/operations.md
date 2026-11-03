@@ -157,7 +157,9 @@ physical space ID, as an engine change does: raw native KV clients that
 cache it must resolve the table's name again afterwards.
 `index_build` in `cluster.json` chooses: `auto` (the default) copies when a
 shard has replicas, `copy` always copies, and `in_place` builds on the
-table's own space. A change that checks existing rows against a new type,
+table's own space. A copy also checks rows against a narrower type or NOT
+NULL as it writes them (with `tarn_engine_rebuild_checks_capabilities` on
+every replica). A change that checks existing rows and builds no index,
 renames the table, makes or drops a global index (a unique key without the
 shard key), drops or changes a lazy index (making a column of its key
 nullable, for one), or adds a lazy index on a column it adds or retypes, or
@@ -238,7 +240,7 @@ configured values makes admission fail closed rather than rewriting history.
 | `gc_interval` | 0.5 s | period of the garbage-collection fiber's passes |
 | `gc_batch` | 500 | protocol records deleted per garbage-collection transaction; a pass looks at no more than `gc_batch` × 40 expired records of each kind, from where the previous pass stopped, and deletes no more than `gc_batch` × 4 |
 | `gc_time_budget` | 0.5 s | a garbage-collection pass asks other shards about no more records after this; the rest wait for its next lap |
-| `alter_check_rows` | 1,000,000 | `ALTER TABLE` refuses (1846) to check or materialize existing rows (a narrower type, `NOT NULL`, indexed non-NULL fills) when a shard holds more of them than this: writes to the table wait for the whole scan. An ALTER that copies the table writes indexed fills as it copies, while writes go on, and is not limited by this |
+| `alter_check_rows` | 1,000,000 | `ALTER TABLE` refuses (1846) to check or materialize existing rows (a narrower type, `NOT NULL`, indexed non-NULL fills) when a shard holds more of them than this: writes to the table wait for the whole scan. An ALTER that copies the table writes indexed fills and checks rows as it copies, while writes go on, and is not limited by this |
 | `lazy_outbox_entries` | 65,536 | per-shard committed lazy-index assignments plus PREPARE promises; fresh admissions exceeding this cap fail with 1041 |
 | `lazy_outbox_bytes` | 64 MiB | corresponding encoded assignment and promise bytes; this is not a reservation of native allocator memory |
 

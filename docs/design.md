@@ -2032,10 +2032,30 @@ one). The descriptor of such a rebuild says so (`rebuild = 'layout'`
 rather than `true`): storage from before layouts refuses it at every step
 (1210) rather than copy the old layout under the new definition, and the
 job stays until a node that knows layouts ends it. An engine change keeps
-the stored layout, and a rebuild neither checks rows against a new type nor
-renames the table; a descriptor that asks otherwise is refused before any
-copy begins. ABORT checks none of that, so a refused job still ends: it
-leaves a tombstone, which a late BUILD of the job meets.
+the stored layout, and a rebuild does not rename the table; a descriptor
+that asks otherwise is refused before any copy begins. ABORT checks none of
+that, so a refused job still ends: it leaves a tombstone, which a late
+BUILD of the job meets.
+
+A rebuild may check rows against a narrower type or NOT NULL (issue #184),
+as the in-place change checks them behind its fence: a narrower integer
+range, fewer characters or decimal digits, no NULL, with the column's fill
+for a row that ends before its field. The copy checks every row it writes
+to the shadow, from a page, a pass or the final pass. A row written during
+the copy is written to the shadow again by a pass or the final pass, so
+every row of a prepared copy was checked after its last write. A row that
+fails fails the change with the error the in-place change gives (1265 or
+1264), naming the row by its position in the shard's primary-key order,
+and ABORT leaves the table as it was. There is no row limit: the checks run
+while writes go on. A row made invalid and valid again before a pass or
+the final pass reads it fails nothing. Storage from before such rebuilds
+refuses the descriptor before its copy begins (1210), so the SQL server
+copies only when every replica answers
+`tarn_engine_rebuild_checks_capabilities`. `tla/EngineCopy.tla` models the
+checks: a page, a pass or the final pass that writes a row without checking
+it (`BugPageUnchecked`, `BugPassUnchecked`, `BugTailUnchecked`) leaves a
+prepared copy with a row the checks refuse (`CheckedImage`). A change that
+checks rows and builds no index still checks in place.
 
 A rebuild keeps the table's global unique indexes (issue #184), where an
 engine change makes new ones and fills them behind its fence. Their
@@ -2560,11 +2580,12 @@ throughput measurements:
 
 | Suite | Engine-change boundary | Recorded result |
 |---|---|---|
-| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup; same-engine rebuilds (issue #267): indexes before the first row, stale copies evicted for a page's row, swapped unique values, shared values behind one stale copy, NULL in a unique key's last part, duplicates found by the copy and at the fence (1062), copies and final passes past their call's deadline, drops and renames; rebuilds that change columns (issue #184): the new format, padded rows from pages, the final pass and a recopy, old slots' fills and explicit NULLs, renamed and dropped columns, NULL fills left short, a shared fill under a new unique index (1062), refused descriptors that ABORT still ends, a COUNT and an aggregate across the cutover (1412); rebuilds that keep a global unique index (issue #184): writes and a duplicate through it during the copy, the old definition's writes refused behind the fence, an APPLY interrupted before and after the kept space's rename, its space, ID and entries kept and renamed after the copy, a second rebuild, an index whose ID changes, ABORT, refused descriptors | 220 checks with the native module; 218 with native disabled; both engine directions |
+| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup; same-engine rebuilds (issue #267): indexes before the first row, stale copies evicted for a page's row, swapped unique values, shared values behind one stale copy, NULL in a unique key's last part, duplicates found by the copy and at the fence (1062), copies and final passes past their call's deadline, drops and renames; rebuilds that change columns (issue #184): the new format, padded rows from pages, the final pass and a recopy, old slots' fills and explicit NULLs, renamed and dropped columns, NULL fills left short, a shared fill under a new unique index (1062), refused descriptors that ABORT still ends, a rebuild that checks rows failing at the first row out of range, a COUNT and an aggregate across the cutover (1412); rebuilds that keep a global unique index (issue #184): writes and a duplicate through it during the copy, the old definition's writes refused behind the fence, an APPLY interrupted before and after the kept space's rename, its space, ID and entries kept and renamed after the copy, a second rebuild, an index whose ID changes, ABORT, refused descriptors | 224 checks with the native module; 222 with native disabled; both engine directions |
 | `lua/test/engine_lazy_test.lua` | rebuilds that keep a lazy index (issue #184), on both engines: writes to the old space during the copy, PREPARED, the lazy registry rebuilt between the renames and the catalog commit, APPLY interrupted there and before the catalog commit, a registry read then, a write between publication and cleanup, publication, a schema export, later writes, a second rebuild, an ALTER in place after it, ABORT, refused descriptors that ABORT still ends | 42 checks with the native module and with native disabled; the generation, its target and entries kept, bound to the copy at publication and to nothing else; the new space's writes refused until a registry knows it is published; ABORT retires nothing |
 | `lua/test/engine_lazy_made_test.lua` | rebuilds that make a lazy index (issue #184), on both engines: the online start before the copy, writes during a held scan batch and during the copy, the pending new space (also for a table's first lazy index), READY, APPLY interrupted before the catalog commit, publication, later writes, a schema export, ABORT before and after the copy, a late start, the scan behind the fence and its bound, APPLY without READY or the coordinator's batches, takeovers after the online scan and after the copy, refused descriptors | 74 checks with the native module and with native disabled; the generation built for the old space and bound with the kept ones at publication; ABORT retires it, and none of the kept ones |
 | `lua/test/engine_catchup_test.lua` | a copy's catch-up passes (issue #184), on both engines: passes during a copy written to more keys than its capture holds, a threshold of 0, the final pass's bound, unique values that change hands across a pass, a row written since a pass's swap that held a reread row's value, a write in flight at a pass's swap and one left in the synchronous queue, a pass that fails after its swap, after its deletes and through another job's cut, with and without room for its keys, passes in PREPARE over more keys than a batch, a capture lost during and after a pass, writes that outpace the passes during the copy and before the fence (1205); BUILD and PREPARE in slices, the budget of passes across sliced calls, a takeover and an ABORT between slices, a call that waited for the serial lock longer than its slice; PREPARE's own budget of passes after BUILD's, and the copy's restarts counted until it reaches the end of the table | 54 checks with the native module and with native disabled; the copy never restarts for its capture's size, and is exact |
 | `lua/test/engine_resume_test.lua` | a copy's durable capture (issue #184), on both engines: a capture lost during the copy, during a pass after its swap, and behind the fence resumes, with the rows written before and after the loss and after the resume; a pass's settled generation bounds the capture rebuilt; a pass and the final pass clear only the keys the durable capture notes, so a key whose write rolled back keeps its copy; a copy the holder rule takes out is a hole, which a resume puts back (and PREPARE meets the source's duplicate, 1062); a write rolled back leaves no entry; a resume waits for a write in flight and orders after one left in the synchronous queue; a copy not marked durable starts over; one past its limits starts over with a durable capture of its own; publication and ABORT drop the durable capture; a resume that fails part way (a deadline, another job's cut) leaves the capture lost, and one whose capture is lost meanwhile fails the step for now (1213), and the step sent again resumes; a durable capture bound again takes the generation after the settled one; a pass prunes the entries it settled once there are many; a write that began during ABORT's cut is not aborted by the drop of the durable capture; a reset after a resume has a deadline of its own, and one that fails leaves the copy to start over | 56 checks with the native module and with native disabled; every copy is exact |
+| `lua/test/engine_checks_test.lua` | rebuilds that check rows against a narrower type or NOT NULL (issue #184), on both engines: a page's row that fails a range, NOT NULL, length or digits check, a pass's reread of a row made invalid during the copy, and the final pass's, each fail the change with the in-place error and the row's position; a row made invalid and valid again fails nothing; a check of an unknown kind is refused; ABORT leaves the table as it was | 32 checks with the native module and with native disabled |
 | `lua/test/engine_terminal_test.lua` | a detached shadow commit remains tracked after its caller ends; cleanup waits for the terminal/native queue cut; capture allocation failure cannot certify a lost tail | focused native-terminal fault gate, separate from process loss |
 | `lua/test/engine_replication.sh` | quorum-2/fsync replica sets: leader loss during copy resumes the copy from the durable capture, whose entry for a row written behind the cursor reached every replica with it (issue #184); a later leader loss preserves PREPARED and completes publication/cleanup | passes in both engine directions, with native enabled and disabled; eight owned leader terminations across four cohorts |
 
@@ -2670,30 +2691,33 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineBuildCallerOnlyCut | violates PreparedImage | 2058 | 4782 | 13 | 00s | 13 |
 | Bug_EngineBuildKeepPrefix | violates PreparedImage | 764 | 1673 | 9 | 00s | 9 |
 | Bug_EngineBuildReusePage | violates PreparedImage | 747 | 1651 | 10 | 00s | 10 |
-| Bug_EngineCopyAbandonLosesKeys | violates PreparedImage | 112481 | 352417 | 15 | 04s | 15 |
-| Bug_EngineCopyBeforeCapture | violates PreparedImage | 55986 | 160973 | 12 | 03s | 12 |
-| Bug_EngineCopyCaptureNotDurable | violates PreparedImage | 38079 | 122503 | 13 | 03s | 13 |
-| Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 56266 | 159700 | 13 | 03s | 13 |
-| Bug_EngineCopyClearUnnoted | violates PreparedImage | 271151 | 877196 | 17 | 08s | 17 |
-| Bug_EngineCopyHolderNoHole | violates PreparedImage | 67360 | 206853 | 14 | 04s | 14 |
-| Bug_EngineCopyLosePersistentFence | violates PreparedImage | 41908 | 115871 | 12 | 03s | 12 |
-| Bug_EngineCopyLostCaptureContinues | violates PreparedImage | 218118 | 683671 | 16 | 07s | 16 |
-| Bug_EngineCopyNoGenerationBump | violates PreparedImage | 116545 | 436145 | 18 | 05s | 18 |
-| Bug_EngineCopyPassDropsKeys | violates PreparedImage | 237585 | 791401 | 17 | 08s | 17 |
-| Bug_EngineCopyPassWithoutSettle | violates PreparedImage | 301939 | 1011784 | 16 | 09s | 16 |
-| Bug_EngineCopyPrepareWithoutIndexes | violates PreparedImage | 12445 | 30368 | 10 | 02s | 10 |
-| Bug_EngineCopyPruneUnsettled | violates PreparedImage | 159866 | 543845 | 14 | 05s | 14 |
-| Bug_EngineCopyRebindAtSettled | violates PreparedImage | 643858 | 2332461 | 21 | 20s | 21 |
-| Bug_EngineCopyRebuildPrepared | violates PreparedImage | 41908 | 115871 | 12 | 03s | 12 |
-| Bug_EngineCopyResumeBeforeSettle | violates PreparedImage | 247475 | 798476 | 16 | 07s | 16 |
-| Bug_EngineCopyResumeFailKeeps | violates PreparedImage | 256500 | 792134 | 16 | 07s | 16 |
-| Bug_EngineCopySettleBeforeReread | violates PreparedImage | 403462 | 1363666 | 16 | 11s | 16 |
-| Bug_EngineCopySkipFinalDrain | violates PreparedImage | 65687 | 189181 | 13 | 03s | 13 |
-| Bug_EngineCopySkipPrefixDrain | violates PreparedImage | 53076 | 149161 | 13 | 03s | 13 |
-| Bug_EngineCopyStaleBatch | violates PreparedImage | 514825 | 1763118 | 19 | 14s | 19 |
-| Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 102605 | 305474 | 14 | 04s | 14 |
-| Bug_EngineCopyUnbindEarly | violates PreparedImage | 354103 | 1193287 | 17 | 11s | 17 |
-| Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 411 | 652 | 6 | 01s | 6 |
+| Bug_EngineCopyAbandonLosesKeys | violates PreparedImage | 146732 | 464656 | 15 | 05s | 15 |
+| Bug_EngineCopyBeforeCapture | violates PreparedImage | 76232 | 221497 | 12 | 03s | 12 |
+| Bug_EngineCopyCaptureNotDurable | violates PreparedImage | 50683 | 165121 | 13 | 03s | 13 |
+| Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 76380 | 219747 | 13 | 03s | 13 |
+| Bug_EngineCopyClearUnnoted | violates PreparedImage | 346375 | 1132968 | 17 | 09s | 17 |
+| Bug_EngineCopyHolderNoHole | violates PreparedImage | 89833 | 278898 | 14 | 03s | 14 |
+| Bug_EngineCopyLosePersistentFence | violates PreparedImage | 56695 | 158549 | 12 | 03s | 12 |
+| Bug_EngineCopyLostCaptureContinues | violates PreparedImage | 282514 | 893089 | 16 | 09s | 16 |
+| Bug_EngineCopyNoGenerationBump | violates PreparedImage | 145412 | 550990 | 18 | 05s | 18 |
+| Bug_EngineCopyPageUnchecked | violates CheckedImage | 65975 | 192846 | 13 | 04s | 13 |
+| Bug_EngineCopyPassDropsKeys | violates PreparedImage | 307412 | 1032624 | 17 | 10s | 17 |
+| Bug_EngineCopyPassUnchecked | violates CheckedImage | 406406 | 1352797 | 17 | 11s | 17 |
+| Bug_EngineCopyPassWithoutSettle | violates PreparedImage | 397278 | 1337837 | 16 | 11s | 16 |
+| Bug_EngineCopyPrepareWithoutIndexes | violates PreparedImage | 17014 | 42065 | 10 | 02s | 10 |
+| Bug_EngineCopyPruneUnsettled | violates PreparedImage | 210758 | 720989 | 14 | 07s | 14 |
+| Bug_EngineCopyRebindAtSettled | violates PreparedImage | 801101 | 2924852 | 21 | 23s | 21 |
+| Bug_EngineCopyRebuildPrepared | violates PreparedImage | 56695 | 158549 | 12 | 03s | 12 |
+| Bug_EngineCopyResumeBeforeSettle | violates PreparedImage | 320547 | 1042806 | 16 | 09s | 16 |
+| Bug_EngineCopyResumeFailKeeps | violates PreparedImage | 334050 | 1038776 | 16 | 09s | 16 |
+| Bug_EngineCopySettleBeforeReread | violates PreparedImage | 530489 | 1800816 | 16 | 14s | 16 |
+| Bug_EngineCopySkipFinalDrain | violates PreparedImage | 86982 | 253334 | 13 | 03s | 13 |
+| Bug_EngineCopySkipPrefixDrain | violates PreparedImage | 71593 | 203275 | 13 | 03s | 13 |
+| Bug_EngineCopyStaleBatch | violates PreparedImage | 655507 | 2255651 | 19 | 17s | 19 |
+| Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 134803 | 405221 | 14 | 04s | 14 |
+| Bug_EngineCopyTailUnchecked | violates CheckedImage | 137124 | 413836 | 14 | 05s | 14 |
+| Bug_EngineCopyUnbindEarly | violates PreparedImage | 459597 | 1564903 | 17 | 12s | 17 |
+| Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 554 | 898 | 6 | 00s | 6 |
 | Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 43487 | 242696 | 12 | 04s | 12 |
 | Bug_EngineCutoverAbortKeepsMade | violates AbortedMadeRetired | 1200 | 3313 | 4 | 01s | 4 |
 | Bug_EngineCutoverAbortRetiresKept | violates KeptLazyAlive | 288 | 468 | 3 | 01s | 3 |
@@ -2912,7 +2936,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineAlias | no errors | 12 | 13 | 7 | 00s |  |
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
 | EngineBuildReentry | no errors | 1500 | 2946 | 14 | 00s |  |
-| EngineCopy | no errors | 1015638 | 4007132 | 35 | 32s |  |
+| EngineCopy | no errors | 1215733 | 4821937 | 35 | 33s |  |
 | EngineCutover | no errors | 70982 | 472752 | 26 | 05s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |
@@ -3037,9 +3061,11 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   shard's vinyl indexes build before that wait. On a cluster with
   replicated shards, a change that builds secondary indexes, with columns
   added, renamed or dropped, copies the table instead (§2.11), and needs
-  room for a second copy of it. Other changes that build indexes on a
-  replicated shard (with a type change, a new or dropped global or lazy
-  index, or a changed lazy one) still build in place, where the followers'
+  room for a second copy of it; so does one that also narrows a column's
+  type or makes it NOT NULL, whose copy checks each row it writes. Other
+  changes that build indexes on a replicated shard (with a new or dropped
+  global or lazy index, or a changed lazy one) still build in place, where
+  the followers'
   builds also hold the shard's other writes, and a build that takes them
   more than about a second makes the leader resign (#267).
   Checking or materializing existing rows

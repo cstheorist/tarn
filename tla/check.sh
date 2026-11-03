@@ -63,6 +63,7 @@ DEFAULT="$DEFAULT Bug_EngineCopyCaptureNotDurable Bug_EngineCopyResumeBeforeSett
 Bug_EngineCopyNoGenerationBump Bug_EngineCopyClearUnnoted Bug_EngineCopyHolderNoHole"
 DEFAULT="$DEFAULT Bug_EngineCopyResumeFailKeeps Bug_EngineCopyRebindAtSettled Bug_EngineCopyPruneUnsettled
 Bug_EngineCopyUnbindEarly"
+DEFAULT="$DEFAULT Bug_EngineCopyPageUnchecked Bug_EngineCopyPassUnchecked Bug_EngineCopyTailUnchecked"
 DEFAULT="$DEFAULT Bug_EngineCutoverCatalogByName"
 DEFAULT="$DEFAULT Bug_EngineCutoverAuxStreamOmitted"
 DEFAULT="$DEFAULT Bug_EngineCutoverKeptByNameOnly Bug_EngineCutoverPublishBeforeKeptRename Bug_EngineCutoverRetireKept"

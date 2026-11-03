@@ -8126,6 +8126,7 @@ BK.production_functions = {
         'tarn_engine_durable_capabilities',
         'tarn_engine_rebuild_aux_capabilities',
         'tarn_engine_rebuild_capabilities',
+        'tarn_engine_rebuild_checks_capabilities',
         'tarn_engine_rebuild_format_capabilities',
         'tarn_engine_rebuild_lazy_capabilities',
         'tarn_engine_rebuild_lazy_made_capabilities',
@@ -8238,6 +8239,7 @@ M.move = require('tarn_move').new{cfg = M.cfg, bk = BK, shard_uris = shard_uris}
 M.engine = require('tarn_engine').new{
     cfg = M.cfg, bk = BK, writable = writable, failure = failure, atomic = atomic,
     key_def = index_key_def, serial = UIX.serial_sid, drain = drain, wait_commits = wait_commits,
+    check_value = check_value,
     lazy = M.lazy, create_space = create_space, create_index = build_native_index,
     lazy_start = function(...) return UIX.lazy_start(...) end,
     uix_spaces = UIX.spaces, uix_prefix = UIX.prefix, call = on_shard, hook = yield_point,
@@ -8273,6 +8275,10 @@ function tarn_engine_rebuild_lazy_capabilities() return {'ok', 1} end
 -- against the old space and published with the kept ones. A node that
 -- answers only the calls above refuses the job before its copy begins.
 function tarn_engine_rebuild_lazy_made_capabilities() return {'ok', 1} end
+-- A rebuild that checks rows (a.checks other than 'indexed': a narrower
+-- type, NOT NULL), as it writes them to the replacement. A node that
+-- answers only the calls above refuses such a job before its copy begins.
+function tarn_engine_rebuild_checks_capabilities() return {'ok', 1} end
 -- A copy that keeps its capture durably too (engine_change.durable, issue
 -- #184): every leader must note its writes there. The SQL server asks for
 -- it only when every replica answers.

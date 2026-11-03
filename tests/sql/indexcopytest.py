@@ -74,6 +74,12 @@ space; the replicas agree on each target, whose live entries are the
 table's rows, one each; and each lazy index finds rows by its key, on
 the lazy path. DROP TABLE retires the generations.
 
+An ALTER that narrows a column's type and makes it NOT NULL, and adds an
+index, copies the table too, checking every row it writes: it succeeds
+while a session writes, and one with a row out of the new range, or a NULL
+for NOT NULL, fails with the in-place change's error (1264, 1265), leaving
+the table as it was and no copy behind (#184).
+
 A shard whose BUILD ended first keeps noting the writes to its rows while
 the other shard builds, here held after a page by a test hook, and these
 writes outgrow its capture. The coordinator sends BUILD everywhere again
@@ -457,6 +463,86 @@ def main():
 
     def space_id(node, space):
         return ev(node, "local sp = box.space[...]; return sp and sp.id or box.NULL", [space])
+
+    def checked_copy(engine):
+        """An ALTER that narrows a column's type and makes it NOT NULL, and
+        adds an index, copies the table too: the copy checks every row it
+        writes (#184). One whose rows all pass succeeds while a session
+        writes. One with a row out of the new range, or a NULL for NOT NULL,
+        fails with the in-place change's error and leaves the table as it
+        was, with no copy left on any replica."""
+        t = f"ck_{engine}"
+        space = f"{DB}.{t}"
+        q(c, f"CREATE TABLE {t} (tenant_id INT, id INT, k INT, a INT, w INT, z INT, PRIMARY KEY (tenant_id, id)) "
+             f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
+        for first in range(0, 10000, 1000):
+            q(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},0,{i % 100},{i},{i})"
+                                                       for i in range(first, first + 1000)))
+        q(c, f"UPDATE {t} SET w = 100000 WHERE tenant_id = 5 AND id = 5")
+        q(c, f"UPDATE {t} SET z = NULL WHERE tenant_id = 7 AND id = 7")
+        caught_up()
+        stop, failures, bumps_ = threading.Event(), [], [0]
+
+        def writer():
+            conn = connect(args.tarn)
+            rnd = random.Random(f"checked-{engine}")
+            while not stop.is_set():
+                i = rnd.randrange(10000)
+                try:
+                    bumps_[0] += q(conn, f"UPDATE {t} SET k = k + 1 WHERE tenant_id = %s AND id = %s",
+                                   (i % TENANTS, i))
+                except pymysql.MySQLError as e:
+                    failures.append(e.args)
+                time.sleep(0.005)
+
+        th = threading.Thread(target=writer, daemon=True)
+        th.start()
+        time.sleep(0.5)
+        ids = {g["id"]: space_id(leader(g), space) for g in groups}
+        error = None
+        try:
+            q(c, f"ALTER TABLE {t} MODIFY a TINYINT NOT NULL, ADD INDEX ka (a)")
+        except pymysql.MySQLError as e:
+            error = e.args
+        time.sleep(0.5)
+        stop.set()
+        th.join(30)
+        check(f"{engine}: an ALTER that narrows a column, makes it NOT NULL and adds an index succeeds "
+              "while a session writes", error is None and not failures and bumps_[0] > 0,
+              {"error": error, "failures": failures[:3], "writes": bumps_[0]})
+        caught_up()
+        records = {g["id"]: engine_record(leader(g), space, ids[g["id"]]) for g in groups}
+        check(f"{engine}: that change was a copy, published on every shard",
+              all(r == {"phase": "published", "rebuild": True} for r in records.values()), records)
+        shapes = {node: shape(node, space) for node in nodes}
+        check(f"{engine}: the replicas agree on that copy, its new index holding every row",
+              all(shapes[n] == shapes[g["replicas"][0]] for g in groups for n in g["replicas"])
+              and all(sh is not None and "ka" in sh["indexes"] and sh["indexes"]["ka"]["rows"] == sh["rows"]
+                      for sh in shapes.values()), shapes)
+        total = q(c, f"SELECT SUM(k), COUNT(*) FROM {t}")[0]
+        check(f"{engine}: the table took every write", int(total[0]) == bumps_[0] and total[1] == 10000,
+              {"sum": total[0], "rows": total[1], "writes": bumps_[0]})
+        for alter, code, what in ((f"ALTER TABLE {t} MODIFY w SMALLINT, ADD INDEX kw (w)", 1264,
+                                   "a row out of the new range"),
+                                  (f"ALTER TABLE {t} MODIFY z INT NOT NULL, ADD INDEX kz (z)", 1265,
+                                   "a NULL for NOT NULL")):
+            before = {g["id"]: shape(leader(g), space) for g in groups}
+            ids = {g["id"]: space_id(leader(g), space) for g in groups}
+            refused = None
+            try:
+                q(c, alter)
+            except pymysql.MySQLError as e:
+                refused = e.args[0]
+            check(f"{engine}: {what} fails the change with {code}, from the copy", refused == code, refused)
+            caught_up()
+            records = {g["id"]: engine_record(leader(g), space, ids[g["id"]]) for g in groups}
+            check(f"{engine}: that change was a copy, aborted on every shard",
+                  all(r == {"phase": "aborted", "rebuild": True} for r in records.values()), records)
+            after = {g["id"]: shape(leader(g), space) for g in groups}
+            check(f"{engine}: that table is as it was", after == before, {"before": before, "after": after})
+            left = {node: leftovers(node) for node in nodes}
+            check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
+        q(c, f"DROP TABLE {t}")
 
     def catch_up_round(engine):
         """The first shard's BUILD ends while the second's is held after a
@@ -1240,6 +1326,7 @@ def main():
         lazily_indexed(engine)
         lazily_made(engine)
         catch_up_round(engine)
+        checked_copy(engine)
 
     # An engine change copies too, into a space that has its indexes first.
     before_terms = terms()
