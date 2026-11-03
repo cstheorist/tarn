@@ -16,7 +16,8 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-# (A copy's BUILD and PREPARE in short slices: each takes several calls.)
-TARN_DDL_STEP_SLICE=${TARN_DDL_STEP_SLICE:-0.05} \
+# (A copy's BUILD and PREPARE in short slices: each takes several calls.
+# Test hooks hold a shard's BUILD.)
+TARN_DDL_STEP_SLICE=${TARN_DDL_STEP_SLICE:-0.05} TARN_TEST_HOOKS=1 \
   "$ROOT/scripts/cluster.sh" start -d "$DIR" -n 2 -r 3 -s 1 -b "$BASE" -p "$PORT" -m 256 -w fsync
 python3 "$ROOT/tests/sql/indexcopytest.py" --tarn "127.0.0.1:$PORT" --cluster-dir "$DIR" "$@"

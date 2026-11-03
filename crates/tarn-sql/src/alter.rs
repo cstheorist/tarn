@@ -2101,6 +2101,20 @@ fn check_globals(def: &TableDef, nd: &mut TableDef) -> SqlResult<Vec<u32>> {
 
 /// The argument of `tarn_alter_prepare` / `_apply` / `_abort` (`ch.def`
 /// carries version `ver`).
+/// Whether an ALTER's job arguments (`lua_args`) copy the table: they name
+/// an `engine_change`, which an engine change has, and a rebuild that copies
+/// a table of replicated shards.
+pub(crate) fn job_copies(args: &[u8]) -> SqlResult<bool> {
+    let mut rd = crate::mpw::Rd::new(args);
+    for _ in 0..rd.map()? {
+        if rd.string()? == "engine_change" {
+            return Ok(true);
+        }
+        rd.skip()?;
+    }
+    Ok(false)
+}
+
 pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     let mut m = Mp::new();
     // A rebuild names the lazy generations it makes, which it builds online
@@ -2562,6 +2576,12 @@ mod tests {
             }
         }
         assert!(seen && rd.buf.is_empty());
+        // The coordinator sends such a job's BUILD again before PREPARE (a
+        // catch-up round, issue #184), and no other's.
+        assert!(job_copies(&args).unwrap());
+        assert!(job_copies(&lua_args(&engine, 7, 5.0)).unwrap());
+        let in_place = alter(&def, &cat, "ALTER TABLE t ADD INDEX ks (s)").unwrap();
+        assert!(!job_copies(&lua_args(&in_place, 7, 5.0)).unwrap());
         // A copy that keeps its capture durably says so (issue #184).
         ch.engine_change.as_mut().unwrap().durable = true;
         let args = lua_args(&ch, 7, 5.0);

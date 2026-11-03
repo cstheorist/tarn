@@ -74,6 +74,12 @@ space; the replicas agree on each target, whose live entries are the
 table's rows, one each; and each lazy index finds rows by its key, on
 the lazy path. DROP TABLE retires the generations.
 
+A shard whose BUILD ended first keeps noting the writes to its rows while
+the other shard builds, here held after a page by a test hook, and these
+writes outgrow its capture. The coordinator sends BUILD everywhere again
+before PREPARE: that shard copies its table again then, and no shard fences
+until it has (#184).
+
 Last, an engine change, whose copy now has its indexes from the start too,
 keeps the terms as they were.
 
@@ -451,6 +457,96 @@ def main():
 
     def space_id(node, space):
         return ev(node, "local sp = box.space[...]; return sp and sp.id or box.NULL", [space])
+
+    def catch_up_round(engine):
+        """The first shard's BUILD ends while the second's is held after a
+        page (test hooks), and writes to the first shard's rows outgrow its
+        capture meanwhile. The coordinator sends BUILD everywhere again before
+        PREPARE (#184): the first shard copies its table again there, and no
+        shard fences until it has. (Each leader logs the phases its copy's
+        record takes, with the host's monotonic clock, from a trigger.)"""
+        t = f"cr_{engine}"
+        space = f"{DB}.{t}"
+        q(c, f"CREATE TABLE {t} (tenant_id INT, id INT, k INT, PRIMARY KEY (tenant_id, id)) "
+             f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
+        for first in range(0, 20000, 1000):
+            q(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},0)" for i in range(first, first + 1000)))
+        caught_up()
+        first_g, held_g = groups
+        lead1, lead2 = leader(first_g), leader(held_g)
+        sid = space_id(lead1, space)
+        # The tenants whose rows the first shard holds.
+        tenants = ev(lead1, """
+            local seen, out = {}, {}
+            for _, row in box.space[...]:pairs() do
+                if not seen[row[1]] then seen[row[1]] = true; out[#out + 1] = row[1] end
+            end
+            return out
+        """, [space], timeout=60)
+        for lead in (lead1, lead2):
+            ev(lead, """
+                local key, clock = 'engine:' .. ..., require('clock')
+                rawset(_G, 'phases_log', {})
+                rawset(_G, 'phases_trigger', function(_, new)
+                    if new ~= nil and new[1] == key then table.insert(phases_log, {clock.monotonic(), new[2].phase}) end
+                end)
+                box.space._tarn_meta:on_replace(phases_trigger)
+            """, [sid])
+        for node in first_g["replicas"]:
+            ev(node, "tarn.cfg.engine_dirty_keys = 64")
+        ev(lead2, "return tarn_test_hook('engine_copy', 'hold')")
+        result = {}
+
+        def alter():
+            conn = connect(args.tarn)
+            try:
+                q(conn, f"ALTER TABLE {t} ADD INDEX kk (k)")
+                result["error"] = None
+            except pymysql.MySQLError as e:
+                result["error"] = e.args
+
+        th = threading.Thread(target=alter, daemon=True)
+        th.start()
+        deadline = time.monotonic() + 30
+        while not (ev(lead2, "return tarn_test_hook('engine_copy', 'reached')")[1] > 0
+                   and engine_record(lead1, space)["phase"] == "copied") and time.monotonic() < deadline:
+            time.sleep(0.05)
+        built = engine_record(lead1, space)
+        # (More keys than the first shard's capture holds: about 600.)
+        written = q(c, f"UPDATE {t} SET k = k + 1 WHERE tenant_id IN ({','.join(map(str, tenants[:2]))})")
+        ev(lead2, "return tarn_test_hook('engine_copy', 'release')")
+        th.join(180)
+        for node in first_g["replicas"]:
+            ev(node, "tarn.cfg.engine_dirty_keys = nil")
+        logs = [ev(lead, """
+            box.space._tarn_meta:on_replace(nil, phases_trigger)
+            local out = phases_log
+            rawset(_G, 'phases_log', nil); rawset(_G, 'phases_trigger', nil)
+            return out
+        """) for lead in (lead1, lead2)]
+        check(f"{engine}: an ALTER whose first shard's capture outgrew it while the other built succeeds",
+              not th.is_alive() and result.get("error") is None and built["phase"] == "copied" and written > 64,
+              {"result": result, "built": built, "written": written})
+
+        def at(log, phase, after=None):
+            return next((t_ for t_, p in log if p == phase and (after is None or t_ > after)), None)
+
+        copied = at(logs[0], "copied")
+        again = at(logs[0], "resetting", copied) if copied is not None else None
+        recopied = at(logs[0], "copied", again) if again is not None else None
+        fenced = min((t_ for log in logs for t_, p in log if p == "preparing"), default=None)
+        check(f"{engine}: that shard copies its table again before any shard fences",
+              None not in (copied, again, recopied, fenced) and recopied < fenced,
+              {"phases": [[p for i, (_, p) in enumerate(log) if i == 0 or log[i - 1][1] != p] for log in logs],
+               "copied": copied, "again": again,
+               "recopied": recopied, "fenced": fenced})
+        caught_up()
+        shapes = {node: shape(node, space) for node in nodes}
+        check(f"{engine}: the replicas agree on that copy, its new index holding every row",
+              all(shapes[n] == shapes[g["replicas"][0]] for g in groups for n in g["replicas"])
+              and all(sh is not None and "kk" in sh["indexes"] and sh["indexes"]["kk"]["rows"] == sh["rows"]
+                      for sh in shapes.values()), shapes)
+        q(c, f"DROP TABLE {t}")
 
     def drained(timeout=120):
         """Every shard's lazy outbox is empty, with nothing in flight, and
@@ -1143,6 +1239,7 @@ def main():
         globally_unique(engine)
         lazily_indexed(engine)
         lazily_made(engine)
+        catch_up_round(engine)
 
     # An engine change copies too, into a space that has its indexes first.
     before_terms = terms()
