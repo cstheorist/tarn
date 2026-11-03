@@ -1600,7 +1600,7 @@ start after ABORT, an online start always refused, and a build bound to
 the new space.
 
 [A suite for catch-up passes](../lua/test/engine_catchup_test.lua) runs
-copies on both engines, 34 checks with the native module and as many
+copies on both engines, 40 checks with the native module and as many
 without:
 - a copy written to more keys than its capture holds runs passes and never
   starts over, and leaves the final pass at most `engine_fence_keys` keys;
@@ -1624,6 +1624,11 @@ without:
   table in flight, fails the pass for now (1213); it puts its keys back,
   and both copies finish exact;
 - PREPARE catches up over more keys than a batch before it fences;
+- BUILD and then PREPARE in slices of 0 s, which copy a page or run a pass
+  per call, returning `{'ok', 'more'}`, with writes between the calls, and
+  PREPARE alone in slices, copy exactly; writes that refill the capture
+  between such calls after the copy exhaust the budget of passes before the
+  fence, which counts across calls (1205);
 - a capture lost during a pass fails it for now (1213), and one lost after
   a pass starts the copy over; either copy is then exact;
 - writes that refill the capture during each pass of the copy, and writes
@@ -1635,8 +1640,11 @@ in flight, no marker, no removal or no reread of the set's copies, a holder
 always taken for a duplicate, no restore of a failed pass's keys or a
 restore past the capture's limits, no passes during the copy or before the
 fence, no limit on either, passes at `engine_catchup_keys` past half the
-capture's limit, and passes over an empty capture at a threshold of 0. Only the marker's count in the job's record catches
-the missing marker. In Tarantool 3.9 a pass's first delete batch also waits
+capture's limit, and passes over an empty capture at a threshold of 0. So
+does each of three mutations of the slices: a budget of passes counted per
+call, no slice during the copy, and a PREPARE that takes a slice's
+`{'ok', 'more'}` for done. Only the marker's count in the job's record
+catches the missing marker. In Tarantool 3.9 a pass's first delete batch also waits
 for the synchronous queue, since a delete of a missing key is logged, and
 so orders the reread after a detached write without the marker; the
 marker doesn't rely on that.
@@ -1799,9 +1807,11 @@ that suite. `tests/indexcopy.sh` runs the copy through SQL on 2 shards x 3
 replicas with fsync while sessions increment a column, hand unique values
 from row to row, swap them by way of NULL, insert, delete and move rows to
 new primary keys, and checks the rows against those sessions' models; it
-fails when the final pass is skipped. Its first copy of each table runs
-with small catch-up bounds (16 captured keys, 8 left for the fence), so
-catch-up passes run on every shard while unique values move (issue #184).
+fails when the final pass is skipped. The SQL server sends a copy's BUILD
+and PREPARE in slices of 0.25 s there, so each copy takes several calls.
+Its first copy of each table runs with small catch-up bounds (16 captured
+keys, 8 left for the fence), so catch-up passes run on every shard while
+unique values move (issue #184).
 It also copies, on each engine, a
 table with a global unique index and one with a lazy index, and checks
 that every replica keeps the index's space, or the generation and its

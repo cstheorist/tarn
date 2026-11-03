@@ -252,6 +252,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tla/ShadowUnique.tla` model the passes
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
+- An `ALTER TABLE` that copies a table failed with 1205 ("Lock wait timeout
+  exceeded") when a shard's copy took longer than the SQL server's storage
+  RPC deadline (`rpc.timeout_secs`, 120 s) and the lock wait together. On a
+  small host that took about 1.5 million rows per shard. The SQL server sent
+  the step again past the deadline, and the new call waited for the first
+  one, which still held the table. The copy's BUILD and PREPARE now run in
+  slices (`ddl_step_slice`: a quarter of the RPC deadline, at most 30 s).
+  Each call returns once it has copied that long, and the SQL server sends
+  it again, until the copy is done
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
 - A `COUNT` or aggregate read that yielded while a table copy was published
   could fail with a storage error (1105, "attempt to index a nil value")
   instead of running again. Both engine changes and ALTERs that copy the

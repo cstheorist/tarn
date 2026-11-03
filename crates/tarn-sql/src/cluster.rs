@@ -3185,13 +3185,15 @@ mod tests {
         }
         // The slice: a quarter of the RPC deadline, at most 30 s, or the
         // configured one, at most half the deadline.
-        let config = |extra: &str| -> ClusterConfig {
-            serde_json::from_str(&format!(r#"{{"shards":[]{extra}}}"#)).unwrap()
-        };
+        let config =
+            |extra: &str| -> ClusterConfig { serde_json::from_str(&format!(r#"{{"shards":[]{extra}}}"#)).unwrap() };
         assert_eq!(config("").step_slice(), 30.0);
         assert_eq!(config(r#","rpc":{"timeout_secs":8}"#).step_slice(), 2.0);
         assert_eq!(config(r#","ddl_step_slice":0.25"#).step_slice(), 0.25);
-        assert_eq!(config(r#","ddl_step_slice":100,"rpc":{"timeout_secs":120}"#).step_slice(), 60.0);
+        assert_eq!(
+            config(r#","ddl_step_slice":100,"rpc":{"timeout_secs":120}"#).step_slice(),
+            60.0
+        );
     }
 
     #[test]

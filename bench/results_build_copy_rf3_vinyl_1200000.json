@@ -1,0 +1,202 @@
+{
+  "issue": 184,
+  "date": "2026-11-03T11:17:51+00:00",
+  "source": "7ae645cb2802f17554f4d21d888ed4b60d8c2f31",
+  "dirty": false,
+  "tarn_server_sha256": "22e8f958d74bc480a4cbd9681d68e56736b001af2fac3ac81e612c87148dea42",
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f5",
+  "host": {
+    "cpus": 2,
+    "machine": "x86_64",
+    "kernel": "6.18.44-fc-v230"
+  },
+  "engine": "vinyl",
+  "index": "plain",
+  "shards": 2,
+  "replicas_per_shard": 3,
+  "rows_per_shard": 1200000,
+  "alter_check_rows": 1000000,
+  "writer_rate": 200.0,
+  "other_rate": 100.0,
+  "load_s": 423.0,
+  "load_vinyl_refusals": 2,
+  "alter_s": 158.71,
+  "alter_error": null,
+  "published_s": null,
+  "leader_changes": [
+    0,
+    0
+  ],
+  "build_rows_per_s": 15122,
+  "writes": {
+    "before": {
+      "writes": 1866,
+      "errors": 0,
+      "p50_ms": 3.2525619990337873,
+      "p99_ms": 15.31386400165502,
+      "max_ms": 37.23522200016305
+    },
+    "during": {
+      "writes": 6862,
+      "errors": 0,
+      "p50_ms": 19.99598299880745,
+      "p99_ms": 79.97928000077081,
+      "max_ms": 371.8362519994116,
+      "slow": [
+        [
+          5.95,
+          234
+        ],
+        [
+          105.7,
+          285
+        ],
+        [
+          158.23,
+          372
+        ]
+      ]
+    },
+    "after": {
+      "writes": 917,
+      "errors": 0,
+      "p50_ms": 3.471816000455874,
+      "p99_ms": 14.484988001640886,
+      "max_ms": 51.61309100003564
+    }
+  },
+  "other_writes": {
+    "before": {
+      "writes": 990,
+      "errors": 0,
+      "p50_ms": 3.75166000048921,
+      "p99_ms": 12.727174998872215,
+      "max_ms": 36.08375800104113
+    },
+    "during": {
+      "writes": 6720,
+      "errors": 0,
+      "p50_ms": 20.138324000072316,
+      "p99_ms": 84.17406799890159,
+      "max_ms": 245.5400369999552,
+      "slow": [
+        [
+          4.18,
+          227
+        ],
+        [
+          105.68,
+          246
+        ]
+      ]
+    },
+    "after": {
+      "writes": 493,
+      "errors": 0,
+      "p50_ms": 3.6299769999459386,
+      "p99_ms": 11.814158999186475,
+      "max_ms": 33.971157999985735
+    }
+  },
+  "nodes_before": [
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 1237327,
+      "term": 2,
+      "engine": "vinyl",
+      "wal_bytes": 77695625,
+      "rss": 198791168
+    },
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 1162673,
+      "term": 2,
+      "engine": "vinyl",
+      "wal_bytes": 72264004,
+      "rss": 191315968
+    }
+  ],
+  "nodes_after": [
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 1244865,
+      "term": 2,
+      "engine": "vinyl",
+      "wal_bytes": 102188186,
+      "rss": 412614656
+    },
+    {
+      "check_rows": 1000000,
+      "ro": false,
+      "rows": 1169751,
+      "term": 2,
+      "engine": "vinyl",
+      "wal_bytes": 95283355,
+      "rss": 408481792
+    }
+  ],
+  "copy_phases": [
+    [
+      [
+        0.12,
+        "resetting"
+      ],
+      [
+        0.32,
+        "copying"
+      ],
+      [
+        156.86,
+        "copied"
+      ],
+      [
+        158.32,
+        "prepared"
+      ],
+      [
+        158.42,
+        "published"
+      ],
+      [
+        158.59,
+        "cleaned"
+      ]
+    ],
+    [
+      [
+        0.12,
+        "resetting"
+      ],
+      [
+        0.33,
+        "copying"
+      ],
+      [
+        149.85,
+        "copied"
+      ],
+      [
+        158.32,
+        "preparing"
+      ],
+      [
+        158.49,
+        "applying"
+      ],
+      [
+        158.59,
+        "published"
+      ],
+      [
+        158.69,
+        "cleaned"
+      ]
+    ]
+  ],
+  "slow_probes": [],
+  "checked_rows": 2400000,
+  "mismatched_keys": []
+}
