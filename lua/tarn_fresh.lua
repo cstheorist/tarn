@@ -87,12 +87,19 @@ function M.new(c)
         end
         return mode
     end
-    function F.space(sp)
-        local mode = F.mode()
+    local function space_mode(sp, mode)
         if mode == 3 then unavailable('unsupported replicated configuration') end
         if mode == 2 and (not sp.is_sync or not sp.state.is_sync) then
             unavailable('space ' .. sp.name .. ' is not synchronous')
         end
+    end
+    function F.space(sp) return space_mode(sp, F.mode()) end
+    -- The mode belongs only to this nonyielding final check.
+    -- Do not retain it across a barrier, data access, yield or invocation.
+    function F.plans(plans, space_pos)
+        local mode = F.controls()
+        c.writable()
+        for _, plan in ipairs(plans) do space_mode(plan[space_pos], mode) end
     end
     -- These ordinary Lua guards run through the public Lua C API before
     -- borrowing native State and after a quorum wait. Read current public

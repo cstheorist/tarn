@@ -1,0 +1,15 @@
+[
+  {
+    "engine": "vinyl",
+    "native": "enabled",
+    "source_files_per_arm": 111,
+    "warning_counts": [
+      {
+        "window": "outside brackets",
+        "category": "other warning/error",
+        "count": 564
+      }
+    ],
+    "wal_warnings": []
+  }
+]

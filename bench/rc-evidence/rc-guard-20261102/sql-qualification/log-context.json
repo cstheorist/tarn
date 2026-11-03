@@ -1,0 +1,130 @@
+[
+  {
+    "engine": "memtx",
+    "native": "disabled",
+    "source_files_per_arm": 111,
+    "warning_counts": [
+      {
+        "window": "outside brackets",
+        "category": "other warning/error",
+        "count": 592
+      }
+    ],
+    "wal_warnings": []
+  },
+  {
+    "engine": "vinyl",
+    "native": "disabled",
+    "source_files_per_arm": 111,
+    "warning_counts": [
+      {
+        "window": "outside brackets",
+        "category": "other warning/error",
+        "count": 578
+      }
+    ],
+    "wal_warnings": []
+  },
+  {
+    "engine": "vinyl",
+    "native": "enabled",
+    "source_files_per_arm": 111,
+    "warning_counts": [
+      {
+        "window": "outside brackets",
+        "category": "other warning/error",
+        "count": 600
+      },
+      {
+        "window": "diagnostic bracket measured",
+        "category": "too long WAL write",
+        "count": 7
+      }
+    ],
+    "wal_warnings": [
+      {
+        "pair": 0,
+        "variant": "candidate",
+        "node": "127.0.0.1:17312",
+        "within": [
+          "unrelated",
+          "measured"
+        ],
+        "text": "2026-11-02 22:07:26.044 [2675] main txn.c:871 W> too long WAL write: 2 rows at LSN 39690: 0.672 sec"
+      },
+      {
+        "pair": 0,
+        "variant": "candidate",
+        "node": "127.0.0.1:17313",
+        "within": [
+          "unrelated",
+          "measured"
+        ],
+        "text": "2026-11-02 22:07:26.044 [2694] main txn.c:871 W> too long WAL write: 2 rows at LSN 39675: 0.676 sec"
+      },
+      {
+        "pair": 0,
+        "variant": "candidate",
+        "node": "127.0.0.1:17313",
+        "within": [
+          "unrelated",
+          "measured"
+        ],
+        "text": "2026-11-02 22:07:26.044 [2694] main txn.c:871 W> too long WAL write: 2 rows at LSN 39677: 0.676 sec"
+      },
+      {
+        "pair": 0,
+        "variant": "candidate",
+        "node": "127.0.0.1:17313",
+        "within": [
+          "unrelated",
+          "measured"
+        ],
+        "text": "2026-11-02 22:07:26.044 [2694] main txn.c:871 W> too long WAL write: 2 rows at LSN 39679: 0.676 sec"
+      },
+      {
+        "pair": 0,
+        "variant": "candidate",
+        "node": "127.0.0.1:17313",
+        "within": [
+          "unrelated",
+          "measured"
+        ],
+        "text": "2026-11-02 22:07:26.044 [2694] main txn.c:871 W> too long WAL write: 2 rows at LSN 39681: 0.676 sec"
+      },
+      {
+        "pair": 3,
+        "variant": "control",
+        "node": "127.0.0.1:17311",
+        "within": [
+          "unrelated",
+          "measured"
+        ],
+        "text": "2026-11-02 22:13:35.250 [5189] main txn.c:871 W> too long WAL write: 2 rows at LSN 54796: 0.580 sec"
+      },
+      {
+        "pair": 3,
+        "variant": "control",
+        "node": "127.0.0.1:17311",
+        "within": [
+          "unrelated",
+          "measured"
+        ],
+        "text": "2026-11-02 22:13:35.250 [5189] main txn.c:871 W> too long WAL write: 2 rows at LSN 54798: 0.580 sec"
+      }
+    ]
+  },
+  {
+    "engine": "memtx",
+    "native": "enabled",
+    "source_files_per_arm": 111,
+    "warning_counts": [
+      {
+        "window": "outside brackets",
+        "category": "other warning/error",
+        "count": 596
+      }
+    ],
+    "wal_warnings": []
+  }
+]

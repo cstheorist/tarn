@@ -1,0 +1,139 @@
+name: READ COMMITTED matched guard cost
+
+on:
+  workflow_dispatch:
+    inputs:
+      pilot_engine:
+        description: Engine when full matrix is disabled
+        type: choice
+        options: [memtx, vinyl]
+        default: memtx
+      full_matrix:
+        description: Run both engines and native configurations
+        type: boolean
+        default: false
+      driver:
+        description: Matched client driver (separate studies)
+        type: choice
+        options: [sql, direct]
+        default: sql
+
+permissions:
+  contents: read
+concurrency:
+  group: rc-cost-${{ github.run_id }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Collector and source-copy controls
+        run: |
+          python3 -m pip install PyMySQL==1.1.2
+          python3 bench/rc_profile_test.py
+          python3 bench/rc_guard_candidate_test.py
+          python3 bench/rc_direct_test.py
+      - name: Companion safety and sensitivity models
+        run: |
+          curl -fsSL -o /tmp/rc-cost-tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+          sha256sum /tmp/rc-cost-tla2tools.jar > /tmp/rc-cost-tla.sha256
+          mkdir -p /tmp/rc-cost-models
+          cp tla/PlanGuardBatch.tla tla/PlanGuardScalar.cfg tla/PlanGuardBatch.cfg \
+            tla/Bug_PlanGuardSkipSpace.cfg tla/Bug_PlanGuardYield.cfg /tmp/rc-cost-models/
+          cp /tmp/rc-cost-tla2tools.jar tla/tla2tools.jar
+          trap 'cp -R tla/out /tmp/rc-cost-models/' EXIT
+          tla/check.sh PlanGuardScalar PlanGuardBatch Bug_PlanGuardSkipSpace Bug_PlanGuardYield
+          for cfg in Bug_PlanGuardSkipSpace Bug_PlanGuardYield; do
+            grep -q 'Invariant NoUnsafeAcceptance is violated' "tla/out/$cfg.out"
+          done
+      - name: Build unchanged production release artifacts
+        run: |
+          cargo build --release --locked -p tarn-server -p tarn-storage
+          mkdir -p /tmp/rc186-build
+          cp target/release/tarn-server target/release/libtarn_storage.so /tmp/rc186-build/
+          git rev-parse HEAD > /tmp/rc186-build/source.txt
+          git rev-parse HEAD:lua > /tmp/rc186-build/lua-tree.txt
+          rustc -Vv > /tmp/rc186-build/rustc.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/rc186-build/binaries.sha256
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: rc186-build-${{ github.run_id }}
+          path: |
+            /tmp/rc186-build
+            /tmp/rc-cost-models
+            /tmp/rc-cost-tla.sha256
+          retention-days: 30
+
+  compare:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        engine: ${{ fromJSON(inputs.full_matrix && '["memtx","vinyl"]' || inputs.pilot_engine == 'vinyl' && '["vinyl"]' || '["memtx"]') }}
+        native: ${{ fromJSON(inputs.full_matrix && '["enabled","disabled"]' || '["enabled"]') }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v6
+        with:
+          name: rc186-build-${{ github.run_id }}
+          path: /tmp/rc-cost-build-download
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2
+      - uses: actions/cache/restore@v6
+        id: tarantool-cache
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install pinned runtime and normal release artifacts
+        run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+          mv /tmp/rc-cost-build-download/rc186-build /tmp/rc186-build
+          chmod +x /tmp/rc186-build/tarn-server
+          test "$(cat /tmp/rc186-build/source.txt)" = "$(git rev-parse HEAD)"
+          mkdir -p target/release /tmp/rc-cost-results
+          cp /tmp/rc186-build/tarn-server /tmp/rc186-build/libtarn_storage.so target/release/
+          sha256sum -c /tmp/rc186-build/binaries.sha256
+      - uses: actions/cache/save@v6
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Five alternating 15-second pairs with exact effects
+        run: |
+          tarantool --version > /tmp/rc-cost-results/tarantool.txt
+          sha256sum "$(command -v tarantool)" > /tmp/rc-cost-results/tarantool.sha256
+          lscpu > /tmp/rc-cost-results/cpu.txt
+          df -h > /tmp/rc-cost-results/disk-before.txt
+          python3 bench/rc_cost_compare.py --bin /tmp/rc186-build/tarn-server --out /tmp/rc-cost-results/paired \
+            --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' \
+            --driver '${{ inputs.driver }}' \
+            --seconds 15 --base-port 17300 --sql-port 17400
+      - name: Retain complete and failed evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rc-cost-guards-${{ inputs.driver }}-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
+          path: |
+            /tmp/rc-cost-results
+            /tmp/rc186-build/source.txt
+            /tmp/rc186-build/lua-tree.txt
+            /tmp/rc186-build/rustc.txt
+            /tmp/rc186-build/binaries.sha256
+          retention-days: 30
+          if-no-files-found: error

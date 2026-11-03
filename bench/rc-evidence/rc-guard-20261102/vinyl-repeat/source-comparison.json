@@ -1,0 +1,9 @@
+{
+  "previous_qualification_source": "b1e7ce88358e15437fdf82d10b2a0e961513ee0d",
+  "repeat_source": "51075aa861999ea16b9a1dd63ceebd8a3222049d",
+  "changed_files": [
+    ".github/workflows/rc-profile.yml"
+  ],
+  "production_and_harness_unchanged": true,
+  "workflow_patch": "diff --git a/.github/workflows/rc-profile.yml b/.github/workflows/rc-profile.yml\nindex ac1f610..abcda79 100644\n--- a/.github/workflows/rc-profile.yml\n+++ b/.github/workflows/rc-profile.yml\n@@ -8,6 +8,11 @@ on:\n         type: choice\n         options: [guards, confirmation]\n         default: guards\n+      pilot_engine:\n+        description: Engine when full matrix is disabled\n+        type: choice\n+        options: [memtx, vinyl]\n+        default: memtx\n       full_matrix:\n         description: Run both engines and native configurations\n         type: boolean\n@@ -75,7 +80,7 @@ jobs:\n       fail-fast: false\n       max-parallel: 2\n       matrix:\n-        engine: ${{ fromJSON(inputs.full_matrix && '[\"memtx\",\"vinyl\"]' || '[\"memtx\"]') }}\n+        engine: ${{ fromJSON(inputs.full_matrix && '[\"memtx\",\"vinyl\"]' || inputs.pilot_engine == 'vinyl' && '[\"vinyl\"]' || '[\"memtx\"]') }}\n         native: ${{ fromJSON(inputs.full_matrix && '[\"enabled\",\"disabled\"]' || '[\"enabled\"]') }}\n     steps:\n       - uses: actions/checkout@v7\n"
+}

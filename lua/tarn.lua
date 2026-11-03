@@ -2880,8 +2880,7 @@ function BK.fresh_spaces(writes, points, ranges)
     end
 end
 function BK.fresh_plans(plans)
-    M.fresh.clock_check(); M.fresh.controls(); writable()
-    for _, p in ipairs(plans) do M.fresh.space(p[P_SPACE]) end
+    M.fresh.clock_check(); M.fresh.plans(plans, P_SPACE)
 end
 function BK.clock_ids(parts, dshard)
     if type(parts) ~= 'table' then return nil end -- legacy unknown scope: conservative full coverage

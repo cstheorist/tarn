@@ -109,6 +109,8 @@ jobs:
           python-version: "3.12"
       - name: Install Python packages
         run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0
+      - name: READ COMMITTED profile accounting and runtime controls
+        run: python3 bench/rc_profile_test.py
       - name: Vinyl pressure scheduling and readback controls
         run: python3 tests/sql/vinylpressure_phase_test.py
       - name: Strong KV administrative transport privacy controls
@@ -149,6 +151,15 @@ jobs:
         run: cargo build --release --workspace --all-targets
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
+      - name: Final plan guard and sensitivity controls
+        run: bash lua/test/rc_plan_guard_controls.sh /tmp/tarn-rc-plan-guard-controls
+      - name: Retain final plan guard controls
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rc-plan-guard-controls
+          path: /tmp/tarn-rc-plan-guard-controls/*.log
+          if-no-files-found: warn
       - name: Production ACL migration and negative controls
         run: tarantool lua/test/production_acl_test.lua /tmp/tarn-production-acl
       - name: Production profile, TLS drivers, recovery and matched security costs

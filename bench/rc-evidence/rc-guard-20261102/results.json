@@ -1,0 +1,1043 @@
+[
+  {
+    "hypothesis": "confirmation",
+    "totals": {
+      "ok": 384000,
+      "attempts": 384000
+    },
+    "changed_files": [
+      "lua/tarn.lua"
+    ],
+    "node_logs_checked": 60,
+    "summary": {
+      "uncontended": {
+        "arms": {
+          "control": {
+            "goodput": {
+              "median": 435.84341459483693,
+              "minimum": 418.20428795632165,
+              "maximum": 438.8932698974964
+            },
+            "p50_ms": {
+              "median": 2.225600000031136,
+              "minimum": 2.217156000028808,
+              "maximum": 2.243289000034565
+            },
+            "p99_ms": {
+              "median": 3.157137000002308,
+              "minimum": 3.095923999921979,
+              "maximum": 3.174488000013298
+            },
+            "lua_bytes": {
+              "median": 40048.98275596613,
+              "minimum": 39686.11428116034,
+              "maximum": 40168.11443850267
+            },
+            "tx_cpu_us": {
+              "median": 991.5319476520401,
+              "minimum": 985.0175326745299,
+              "maximum": 1000.3059039461609
+            },
+            "process_cpu_us": {
+              "median": 2625.119540962703,
+              "minimum": 2595.8747135217723,
+              "maximum": 2635.3624961762007
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          },
+          "candidate": {
+            "goodput": {
+              "median": 436.7129702809537,
+              "minimum": 434.76498967967603,
+              "maximum": 438.6591728765529
+            },
+            "p50_ms": {
+              "median": 2.2226479999858384,
+              "minimum": 2.216739999994388,
+              "maximum": 2.227234000002909
+            },
+            "p99_ms": {
+              "median": 3.112882999971589,
+              "minimum": 3.0882780000069943,
+              "maximum": 3.2655140000201754
+            },
+            "lua_bytes": {
+              "median": 40083.44473361911,
+              "minimum": 40025.14544072948,
+              "maximum": 40259.596136154556
+            },
+            "tx_cpu_us": {
+              "median": 990.6884445122882,
+              "minimum": 983.7064108420893,
+              "maximum": 992.0269855872431
+            },
+            "process_cpu_us": {
+              "median": 2609.6289481754065,
+              "minimum": 2603.928734582001,
+              "maximum": 2624.026866127309
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          }
+        },
+        "ratios": {
+          "goodput": {
+            "median": 1.0019951103010816,
+            "minimum": 0.9964633287108976,
+            "maximum": 1.041237468269868
+          },
+          "lua_bytes": {
+            "median": 1.0012219367726891,
+            "minimum": 0.9994047959874063,
+            "maximum": 1.0100118255378654
+          },
+          "tx_cpu_us": {
+            "median": 0.9973604640043787,
+            "minimum": 0.9903854816852202,
+            "maximum": 1.0055742503423524
+          },
+          "process_cpu_us": {
+            "median": 0.9956986448485401,
+            "minimum": 0.991994016845191,
+            "maximum": 1.005298497104652
+          },
+          "p50_ms": {
+            "median": 0.9996019051000419,
+            "minimum": 0.9881651449992543,
+            "maximum": 1.003312791684468
+          },
+          "p99_ms": {
+            "median": 0.9981230159598926,
+            "minimum": 0.9805937209271381,
+            "maximum": 1.029413257451437
+          }
+        },
+        "wait_delta": {
+          "row_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          }
+        }
+      },
+      "unrelated": {
+        "arms": {
+          "control": {
+            "goodput": {
+              "median": 1165.260365367825,
+              "minimum": 1146.618179112557,
+              "maximum": 1184.6889819592732
+            },
+            "p50_ms": {
+              "median": 6.66699599992171,
+              "minimum": 6.54930199999626,
+              "maximum": 6.7165720000161855
+            },
+            "p99_ms": {
+              "median": 12.439309999990655,
+              "minimum": 12.293808000094941,
+              "maximum": 12.588316999995186
+            },
+            "lua_bytes": {
+              "median": 41501.651008223496,
+              "minimum": 41473.06654291821,
+              "maximum": 41648.89066019754
+            },
+            "tx_cpu_us": {
+              "median": 682.8664641691979,
+              "minimum": 677.7625257378173,
+              "maximum": 686.9297378973674
+            },
+            "process_cpu_us": {
+              "median": 1595.1334910442718,
+              "minimum": 1575.1169641309998,
+              "maximum": 1596.9175385307683
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          },
+          "candidate": {
+            "goodput": {
+              "median": 1184.1398596833205,
+              "minimum": 1173.809328857146,
+              "maximum": 1194.191595186719
+            },
+            "p50_ms": {
+              "median": 6.562535999989905,
+              "minimum": 6.513050000080511,
+              "maximum": 6.61392199998545
+            },
+            "p99_ms": {
+              "median": 12.049875999991855,
+              "minimum": 11.945336999986012,
+              "maximum": 12.212307999959648
+            },
+            "lua_bytes": {
+              "median": 39599.457301839655,
+              "minimum": 39590.15944859917,
+              "maximum": 39830.136368752814
+            },
+            "tx_cpu_us": {
+              "median": 673.0007917656374,
+              "minimum": 669.762757385855,
+              "maximum": 679.2052684451389
+            },
+            "process_cpu_us": {
+              "median": 1581.2690872073297,
+              "minimum": 1569.9523052464228,
+              "maximum": 1590.499774876182
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          }
+        },
+        "ratios": {
+          "goodput": {
+            "median": 1.0112519921419036,
+            "minimum": 1.005364992444404,
+            "maximum": 1.026264459195131
+          },
+          "lua_bytes": {
+            "median": 0.9547984364825732,
+            "minimum": 0.9518504491543017,
+            "maximum": 0.9563312668689433
+          },
+          "tx_cpu_us": {
+            "median": 0.9900336893247124,
+            "minimum": 0.9761777464449904,
+            "maximum": 0.9929743327620595
+          },
+          "process_cpu_us": {
+            "median": 0.9967950749270215,
+            "minimum": 0.9834062364898142,
+            "maximum": 1.0097661387030195
+          },
+          "p50_ms": {
+            "median": 0.9903893366084126,
+            "minimum": 0.977066277257817,
+            "maximum": 0.9960662983633257
+          },
+          "p99_ms": {
+            "median": 0.9686932796112411,
+            "minimum": 0.9587342239457334,
+            "maximum": 0.9933706464152797
+          }
+        },
+        "wait_delta": {
+          "row_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          }
+        }
+      },
+      "hot": {
+        "arms": {
+          "control": {
+            "goodput": {
+              "median": 524.4678579347407,
+              "minimum": 520.7817913216688,
+              "maximum": 535.9797987311827
+            },
+            "p50_ms": {
+              "median": 14.864396000007218,
+              "minimum": 14.55389499994908,
+              "maximum": 14.981943999998748
+            },
+            "p99_ms": {
+              "median": 21.277950000012424,
+              "minimum": 21.12159699993299,
+              "maximum": 21.41211299999668
+            },
+            "lua_bytes": {
+              "median": 43548.37428462419,
+              "minimum": 43512.857852882706,
+              "maximum": 43705.94244788336
+            },
+            "tx_cpu_us": {
+              "median": 942.368587713743,
+              "minimum": 934.3936381709741,
+              "maximum": 954.0862002813659
+            },
+            "process_cpu_us": {
+              "median": 2430.370087752766,
+              "minimum": 2384.443339960239,
+              "maximum": 2450.441232894232
+            },
+            "row_waits": {
+              "median": 0.9998729997459995,
+              "minimum": 0.999872106407469,
+              "maximum": 0.999875745526839
+            },
+            "commit_waits": {
+              "median": 0.9998729997459995,
+              "minimum": 0.999872106407469,
+              "maximum": 0.999875745526839
+            }
+          },
+          "candidate": {
+            "goodput": {
+              "median": 523.1400261433305,
+              "minimum": 515.8751388815639,
+              "maximum": 531.8529053917348
+            },
+            "p50_ms": {
+              "median": 14.859171000011884,
+              "minimum": 14.651288999999679,
+              "maximum": 15.120797000008679
+            },
+            "p99_ms": {
+              "median": 21.2016300000073,
+              "minimum": 20.958333999999468,
+              "maximum": 21.667573000001994
+            },
+            "lua_bytes": {
+              "median": 41932.42176350662,
+              "minimum": 41896.890129186,
+              "maximum": 42150.769693174705
+            },
+            "tx_cpu_us": {
+              "median": 936.5443425076452,
+              "minimum": 922.9805886036319,
+              "maximum": 952.8728211749516
+            },
+            "process_cpu_us": {
+              "median": 2417.176350662589,
+              "minimum": 2385.5512354195407,
+              "maximum": 2480.3098773402194
+            },
+            "row_waits": {
+              "median": 0.9998727249586357,
+              "minimum": 0.9998708844415752,
+              "maximum": 0.9998747651847214
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          }
+        },
+        "ratios": {
+          "goodput": {
+            "median": 0.9980687718014838,
+            "minimum": 0.9624898925347332,
+            "maximum": 1.021258642783898
+          },
+          "lua_bytes": {
+            "median": 0.9630340374065175,
+            "minimum": 0.9614218115000622,
+            "maximum": 0.9646959674352574
+          },
+          "tx_cpu_us": {
+            "median": 0.9964882496803267,
+            "minimum": 0.967397482880938,
+            "maximum": 1.0197766575553207
+          },
+          "process_cpu_us": {
+            "median": 0.9945713053511218,
+            "minimum": 0.9735892454929193,
+            "maximum": 1.040204997021057
+          },
+          "p50_ms": {
+            "median": 0.9983367292774198,
+            "minimum": 0.9779297666578451,
+            "maximum": 1.0389519094415332
+          },
+          "p99_ms": {
+            "median": 0.9921430453874291,
+            "minimum": 0.9849790040857898,
+            "maximum": 1.0258491817673985
+          }
+        },
+        "wait_delta": {
+          "row_waits": {
+            "median": -2.430770679184846e-07,
+            "minimum": -4.861085263763165e-06,
+            "maximum": 2.6587772523622988e-06
+          },
+          "commit_waits": {
+            "median": -0.9998729997459995,
+            "minimum": -0.999875745526839,
+            "maximum": -0.999872106407469
+          }
+        }
+      }
+    },
+    "mechanisms": {
+      "control": {
+        "error": null,
+        "arm": "control",
+        "wrapper_restored": true,
+        "space_removed": true,
+        "cases": [
+          {
+            "injected_rollback": false,
+            "waiter_finished_during_confirmed_hold": false,
+            "owner_code": 0,
+            "commit_waits": 1,
+            "engine": "memtx",
+            "owner_status": "ok",
+            "row": 1
+          },
+          {
+            "injected_rollback": true,
+            "waiter_finished_during_confirmed_hold": false,
+            "owner_code": 1213,
+            "commit_waits": 0,
+            "engine": "memtx",
+            "owner_status": "conflict",
+            "row": 0
+          },
+          {
+            "injected_rollback": false,
+            "waiter_finished_during_confirmed_hold": false,
+            "owner_code": 0,
+            "commit_waits": 1,
+            "engine": "vinyl",
+            "owner_status": "ok",
+            "row": 1
+          },
+          {
+            "injected_rollback": true,
+            "waiter_finished_during_confirmed_hold": false,
+            "owner_code": 1213,
+            "commit_waits": 0,
+            "engine": "vinyl",
+            "owner_status": "conflict",
+            "row": 0
+          }
+        ],
+        "watchdog_fired": false,
+        "ok": true,
+        "cleanup_errors": []
+      },
+      "candidate": {
+        "error": null,
+        "arm": "candidate",
+        "wrapper_restored": true,
+        "space_removed": true,
+        "cases": [
+          {
+            "injected_rollback": false,
+            "waiter_finished_during_confirmed_hold": true,
+            "owner_code": 0,
+            "commit_waits": 0,
+            "engine": "memtx",
+            "owner_status": "ok",
+            "row": 1
+          },
+          {
+            "injected_rollback": true,
+            "waiter_finished_during_confirmed_hold": false,
+            "owner_code": 1213,
+            "commit_waits": 0,
+            "engine": "memtx",
+            "owner_status": "conflict",
+            "row": 0
+          },
+          {
+            "injected_rollback": false,
+            "waiter_finished_during_confirmed_hold": true,
+            "owner_code": 0,
+            "commit_waits": 0,
+            "engine": "vinyl",
+            "owner_status": "ok",
+            "row": 1
+          },
+          {
+            "injected_rollback": true,
+            "waiter_finished_during_confirmed_hold": false,
+            "owner_code": 1213,
+            "commit_waits": 0,
+            "engine": "vinyl",
+            "owner_status": "conflict",
+            "row": 0
+          }
+        ],
+        "watchdog_fired": false,
+        "ok": true,
+        "cleanup_errors": []
+      }
+    }
+  },
+  {
+    "hypothesis": "guards",
+    "totals": {
+      "ok": 295255,
+      "attempts": 295255
+    },
+    "changed_files": [
+      "lua/tarn.lua",
+      "lua/tarn_fresh.lua"
+    ],
+    "node_logs_checked": 60,
+    "summary": {
+      "uncontended": {
+        "arms": {
+          "control": {
+            "goodput": {
+              "median": 351.2233001657851,
+              "minimum": 345.77217421479486,
+              "maximum": 353.25239324466577
+            },
+            "p50_ms": {
+              "median": 2.687836999996307,
+              "minimum": 2.6789109999754146,
+              "maximum": 2.713100999983453
+            },
+            "p99_ms": {
+              "median": 5.528849999990371,
+              "minimum": 5.3159350000555605,
+              "maximum": 6.091203999972095
+            },
+            "lua_bytes": {
+              "median": 40796.58279651383,
+              "minimum": 40620.372031160936,
+              "maximum": 41035.80721033353
+            },
+            "tx_cpu_us": {
+              "median": 1118.1800655484867,
+              "minimum": 1111.530477448575,
+              "maximum": 1133.0049261083743
+            },
+            "process_cpu_us": {
+              "median": 3188.7410834779253,
+              "minimum": 3185.5066993772407,
+              "maximum": 3222.8116710875333
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          },
+          "candidate": {
+            "goodput": {
+              "median": 353.20982691685805,
+              "minimum": 350.2463159780724,
+              "maximum": 358.84149876792645
+            },
+            "p50_ms": {
+              "median": 2.680080999994061,
+              "minimum": 2.6494019999745433,
+              "maximum": 2.6877930000068773
+            },
+            "p99_ms": {
+              "median": 5.550180999989607,
+              "minimum": 5.189186000052359,
+              "maximum": 5.671545000041078
+            },
+            "lua_bytes": {
+              "median": 35443.56086053972,
+              "minimum": 35369.47794949114,
+              "maximum": 35478.60954735641
+            },
+            "tx_cpu_us": {
+              "median": 1100.2075863370446,
+              "minimum": 1091.2174896343763,
+              "maximum": 1113.4373810430147
+            },
+            "process_cpu_us": {
+              "median": 3183.1888428194497,
+              "minimum": 3165.5210848968973,
+              "maximum": 3208.9836315188427
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          }
+        },
+        "ratios": {
+          "goodput": {
+            "median": 1.0053548914434354,
+            "minimum": 0.9914902847819878,
+            "maximum": 1.037797502308595
+          },
+          "lua_bytes": {
+            "median": 0.8669715825442506,
+            "minimum": 0.8628024433065309,
+            "maximum": 0.8725562836635286
+          },
+          "tx_cpu_us": {
+            "median": 0.9814224621850619,
+            "minimum": 0.9631180451990365,
+            "maximum": 1.0017155657295307
+          },
+          "process_cpu_us": {
+            "median": 0.9927181298283076,
+            "minimum": 0.9855707352033775,
+            "maximum": 1.0073699208186226
+          },
+          "p50_ms": {
+            "median": 0.9998078576537778,
+            "minimum": 0.9765216997047664,
+            "maximum": 1.0004367446393916
+          },
+          "p99_ms": {
+            "median": 0.977916319393346,
+            "minimum": 0.8519146625324209,
+            "maximum": 1.0440648728646227
+          }
+        },
+        "wait_delta": {
+          "row_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          }
+        }
+      },
+      "unrelated": {
+        "arms": {
+          "control": {
+            "goodput": {
+              "median": 878.7054396354148,
+              "minimum": 804.407564942998,
+              "maximum": 879.6303057497865
+            },
+            "p50_ms": {
+              "median": 8.782107000001815,
+              "minimum": 8.764029999952072,
+              "maximum": 8.792502000005697
+            },
+            "p99_ms": {
+              "median": 15.982725000014852,
+              "minimum": 15.621355000007497,
+              "maximum": 19.80241000001115
+            },
+            "lua_bytes": {
+              "median": 42117.82575757576,
+              "minimum": 41912.80829604914,
+              "maximum": 42345.18635190527
+            },
+            "tx_cpu_us": {
+              "median": 845.5296883294154,
+              "minimum": 836.9342733682056,
+              "maximum": 846.2121212121212
+            },
+            "process_cpu_us": {
+              "median": 2166.6666666666665,
+              "minimum": 2157.531650367675,
+              "maximum": 2171.139827700464
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          },
+          "candidate": {
+            "goodput": {
+              "median": 892.2435799183462,
+              "minimum": 884.5252698596561,
+              "maximum": 897.4103159942051
+            },
+            "p50_ms": {
+              "median": 8.697804000007636,
+              "minimum": 8.67886899993664,
+              "maximum": 8.729017000007389
+            },
+            "p99_ms": {
+              "median": 14.958840999952372,
+              "minimum": 14.612011000053826,
+              "maximum": 15.927199000032033
+            },
+            "lua_bytes": {
+              "median": 36681.7553096688,
+              "minimum": 36676.98673660547,
+              "maximum": 36737.27246246919
+            },
+            "tx_cpu_us": {
+              "median": 816.5109972883398,
+              "minimum": 808.1408304241255,
+              "maximum": 820.5851774840339
+            },
+            "process_cpu_us": {
+              "median": 2129.636568002997,
+              "minimum": 2125.826338854639,
+              "maximum": 2139.81626708492
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          }
+        },
+        "ratios": {
+          "goodput": {
+            "median": 1.0197346089978592,
+            "minimum": 1.0115893009299453,
+            "maximum": 1.09959839813582
+          },
+          "lua_bytes": {
+            "median": 0.8708697851933566,
+            "minimum": 0.8662556117908865,
+            "maximum": 0.8765166056871495
+          },
+          "tx_cpu_us": {
+            "median": 0.9690130476560807,
+            "minimum": 0.9550097548431922,
+            "maximum": 0.9750299330477137
+          },
+          "process_cpu_us": {
+            "median": 0.9869799620163987,
+            "minimum": 0.980084259300877,
+            "maximum": 0.9889645603492442
+          },
+          "p50_ms": {
+            "median": 0.9904005952109031,
+            "minimum": 0.9879626982208712,
+            "maximum": 0.9950034599277509
+          },
+          "p99_ms": {
+            "median": 0.944091862498577,
+            "minimum": 0.8043060920374371,
+            "maximum": 0.9575892104074962
+          }
+        },
+        "wait_delta": {
+          "row_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          }
+        }
+      },
+      "hot": {
+        "arms": {
+          "control": {
+            "goodput": {
+              "median": 407.5459779948999,
+              "minimum": 404.86741409947115,
+              "maximum": 413.7043156696772
+            },
+            "p50_ms": {
+              "median": 18.774194000002353,
+              "minimum": 18.551139000010153,
+              "maximum": 18.89324299997952
+            },
+            "p99_ms": {
+              "median": 29.390691000003244,
+              "minimum": 27.22724500000595,
+              "maximum": 31.653618999996525
+            },
+            "lua_bytes": {
+              "median": 44298.7756097561,
+              "minimum": 44080.52222222222,
+              "maximum": 45467.80986842105
+            },
+            "tx_cpu_us": {
+              "median": 1089.8692810457517,
+              "minimum": 1080.167417900837,
+              "maximum": 1096.922069417158
+            },
+            "process_cpu_us": {
+              "median": 3066.666666666667,
+              "minimum": 3060.2060528010306,
+              "maximum": 3077.3026315789475
+            },
+            "row_waits": {
+              "median": 0.9998366013071895,
+              "minimum": 0.9998355263157894,
+              "maximum": 0.9998390212491951
+            },
+            "commit_waits": {
+              "median": 0.9998366013071895,
+              "minimum": 0.9998355263157894,
+              "maximum": 0.9998390212491951
+            }
+          },
+          "candidate": {
+            "goodput": {
+              "median": 411.4559403167811,
+              "minimum": 408.27751814183586,
+              "maximum": 418.65461542873084
+            },
+            "p50_ms": {
+              "median": 18.727117000025828,
+              "minimum": 18.510888000037085,
+              "maximum": 18.83929400003126
+            },
+            "p99_ms": {
+              "median": 27.321358999984113,
+              "minimum": 25.698868999938895,
+              "maximum": 30.714308000028723
+            },
+            "lua_bytes": {
+              "median": 38907.19656457625,
+              "minimum": 38848.79815492286,
+              "maximum": 38924.6338878017
+            },
+            "tx_cpu_us": {
+              "median": 1068.166992824527,
+              "minimum": 1067.2816923811038,
+              "maximum": 1074.0203193033383
+            },
+            "process_cpu_us": {
+              "median": 3044.181906457355,
+              "minimum": 3033.2432002544933,
+              "maximum": 3048.128342245989
+            },
+            "row_waits": {
+              "median": 0.9998381615148082,
+              "minimum": 0.9998369210697978,
+              "maximum": 0.9998409416255766
+            },
+            "commit_waits": {
+              "median": 0.9998381615148082,
+              "minimum": 0.9998369210697978,
+              "maximum": 0.9998409416255766
+            }
+          }
+        },
+        "ratios": {
+          "goodput": {
+            "median": 1.009593917086651,
+            "minimum": 0.9969724021973689,
+            "maximum": 1.0295016030543074
+          },
+          "lua_bytes": {
+            "median": 0.8786841927800182,
+            "minimum": 0.8557086140099883,
+            "maximum": 0.8827390575001015
+          },
+          "tx_cpu_us": {
+            "median": 0.9804816426672895,
+            "minimum": 0.9729785935916092,
+            "maximum": 0.9943091242194243
+          },
+          "process_cpu_us": {
+            "median": 0.9933633965795966,
+            "minimum": 0.9860058258198215,
+            "maximum": 0.9943962984368729
+          },
+          "p50_ms": {
+            "median": 0.9969798518917378,
+            "minimum": 0.985975110304856,
+            "maximum": 1.0091628889111786
+          },
+          "p99_ms": {
+            "median": 0.9746950294886013,
+            "minimum": 0.8118777508487013,
+            "maximum": 1.0450352460248495
+          }
+        },
+        "wait_delta": {
+          "row_waits": {
+            "median": 1.560207618656051e-06,
+            "minimum": -4.773041859529314e-07,
+            "maximum": 4.6613374299342425e-06
+          },
+          "commit_waits": {
+            "median": 1.560207618656051e-06,
+            "minimum": -4.773041859529314e-07,
+            "maximum": 4.6613374299342425e-06
+          }
+        }
+      }
+    },
+    "mechanisms": {
+      "control": {
+        "0": {
+          "lua_allocated": {
+            "median": 2791.5,
+            "minimum": 2791.5,
+            "maximum": 2799.12
+          },
+          "elapsed_seconds": {
+            "median": 9.4723750001435e-06,
+            "minimum": 9.2692950002515e-06,
+            "maximum": 1.0481509999920001e-05
+          }
+        },
+        "1": {
+          "lua_allocated": {
+            "median": 5410.36,
+            "minimum": 5407.5,
+            "maximum": 5412.92
+          },
+          "elapsed_seconds": {
+            "median": 1.4292269999885e-05,
+            "minimum": 1.41192500001355e-05,
+            "maximum": 1.4592825000079501e-05
+          }
+        },
+        "2": {
+          "lua_allocated": {
+            "median": 8023.58,
+            "minimum": 8023.5,
+            "maximum": 8026.44
+          },
+          "elapsed_seconds": {
+            "median": 1.86131299997785e-05,
+            "minimum": 1.8524864999847003e-05,
+            "maximum": 1.87491849999335e-05
+          }
+        },
+        "8": {
+          "lua_allocated": {
+            "median": 23719.58,
+            "minimum": 23719.58,
+            "maximum": 23789.065
+          },
+          "elapsed_seconds": {
+            "median": 4.5117939999954504e-05,
+            "minimum": 4.4130044999804e-05,
+            "maximum": 4.6405390000075e-05
+          }
+        },
+        "32": {
+          "lua_allocated": {
+            "median": 86574.145,
+            "minimum": 86504.385,
+            "maximum": 86600.825
+          },
+          "elapsed_seconds": {
+            "median": 0.00017595556999993,
+            "minimum": 0.00017414604499976,
+            "maximum": 0.000182499080000015
+          }
+        }
+      },
+      "candidate": {
+        "0": {
+          "lua_allocated": {
+            "median": 2791.5,
+            "minimum": 2791.5,
+            "maximum": 2799.28
+          },
+          "elapsed_seconds": {
+            "median": 9.387865000008e-06,
+            "minimum": 9.2946949999375e-06,
+            "maximum": 1.0025209999753499e-05
+          }
+        },
+        "1": {
+          "lua_allocated": {
+            "median": 2791.58,
+            "minimum": 2791.5,
+            "maximum": 2799.64
+          },
+          "elapsed_seconds": {
+            "median": 9.4031899999435e-06,
+            "minimum": 9.3204399999535e-06,
+            "maximum": 9.9166550000975e-06
+          }
+        },
+        "2": {
+          "lua_allocated": {
+            "median": 2791.58,
+            "minimum": 2791.5,
+            "maximum": 2799.72
+          },
+          "elapsed_seconds": {
+            "median": 9.4457250000345e-06,
+            "minimum": 9.2709500000865e-06,
+            "maximum": 9.885190000034e-06
+          }
+        },
+        "8": {
+          "lua_allocated": {
+            "median": 2791.5,
+            "minimum": 2791.5,
+            "maximum": 2794.36
+          },
+          "elapsed_seconds": {
+            "median": 9.3680250000715e-06,
+            "minimum": 9.3058100000575e-06,
+            "maximum": 9.4544400002405e-06
+          }
+        },
+        "32": {
+          "lua_allocated": {
+            "median": 2791.5,
+            "minimum": 2791.5,
+            "maximum": 2945.145
+          },
+          "elapsed_seconds": {
+            "median": 9.6530599998345e-06,
+            "minimum": 9.4839449999995e-06,
+            "maximum": 1.37035200000925e-05
+          }
+        }
+      }
+    }
+  }
+]

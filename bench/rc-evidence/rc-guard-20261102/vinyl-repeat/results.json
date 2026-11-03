@@ -1,0 +1,966 @@
+[
+  {
+    "hypothesis": "guards",
+    "engine": "vinyl",
+    "native": "enabled",
+    "source": "51075aa861999ea16b9a1dd63ceebd8a3222049d",
+    "run_id": "41536728436",
+    "totals": {
+      "ok": 428149,
+      "attempts": 428149
+    },
+    "measured_totals": {
+      "ok": 358218,
+      "attempts": 358218
+    },
+    "native_deltas": {
+      "all": {
+        "validations": 0,
+        "ready": 0,
+        "writes": 0,
+        "commits_to_lua": 0,
+        "served": 0,
+        "to_lua": 0,
+        "writes_to_lua": 0,
+        "validations_to_lua": 0,
+        "commits": 0,
+        "fallbacks.validate.freshness": 0,
+        "": 0
+      },
+      "measured": {
+        "validations": 0,
+        "ready": 0,
+        "writes": 0,
+        "commits_to_lua": 0,
+        "served": 0,
+        "to_lua": 0,
+        "writes_to_lua": 0,
+        "validations_to_lua": 0,
+        "commits": 0,
+        "fallbacks.validate.freshness": 0,
+        "": 0
+      }
+    },
+    "changed_files": [
+      "lua/tarn.lua",
+      "lua/tarn_fresh.lua"
+    ],
+    "node_logs_checked": 60,
+    "log_warnings": {
+      "Applier to unknown disconnected. Self: unknown": 59,
+      "connect, called on fd 22, aka 127.0.0.1:50454: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to 0c2632ed-64e8-4507-b443-6a3179e517c2 (id = 0, addr: 127.0.0.1:17313) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:51354)": 1,
+      "Instance bootstrap hasn't finished yet {\"type\":\"ClientError\",\"code\":116,\"name\":\"LOADING\",\"trace\":[{\"file\":\"./src/box/box.cc\",\"line\":4520}]}": 23,
+      "Applier to eba7810a-0aff-420e-8e90-d316b0d2824b (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:50516)": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:57322) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:57300) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "fiber is cancelled {\"type\":\"FiberIsCancelled\",\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":448}]}": 72,
+      "RAFT: resigning from leader state": 20,
+      "Applier to c7a41dbb-4e49-429d-8632-8b8dec0e4cfc (id = 0, addr: 127.0.0.1:17311) disconnected. Self: eba7810a-0aff-420e-8e90-d316b0d2824b (id = 0, addr: 127.0.0.1:57284)": 1,
+      "Write access to space '_cluster' is denied for user 'tarn' {\"type\":\"AccessDeniedError\",\"code\":42,\"object_type\":\"space\",\"object_name\":\"_cluster\",\"access_type\":\"Write\",\"user\":\"tarn\",\"trace\":[{\"file\":\"./src/box/space.c\",\"line\":142}]}": 3,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:57324)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:57322, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:50534) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17312, peer of 127.0.0.1:50534: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:50546) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "connect, called on fd 21, aka 127.0.0.1:50452: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to c7a41dbb-4e49-429d-8632-8b8dec0e4cfc (id = 0, addr: 127.0.0.1:17311) disconnected. Self: 0c2632ed-64e8-4507-b443-6a3179e517c2 (id = 0, addr: 127.0.0.1:57262)": 1,
+      "Applier to eba7810a-0aff-420e-8e90-d316b0d2824b (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:50528)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:57312)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:57300, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:51426) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 29, aka 127.0.0.1:17313, peer of 127.0.0.1:51426: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:50548)": 1,
+      "unexpected EOF when reading from socket, called on fd 32, aka 127.0.0.1:50546, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:51362) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:17313, peer of 127.0.0.1:51362: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:58678: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 21, aka 127.0.0.1:39732: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to 7d7a460a-2892-404e-85b7-c802bb7c71cd (id = 0, addr: 127.0.0.1:17323) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:58736)": 1,
+      "Applier to 9e401b41-0b5d-4053-a51a-3e7f2ab1ef03 (id = 0, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:39784)": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:44540) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:44568) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Applier to 9c0e80ed-5acf-42f3-99f8-a94dc345f075 (id = 0, addr: 127.0.0.1:17321) disconnected. Self: 9e401b41-0b5d-4053-a51a-3e7f2ab1ef03 (id = 0, addr: 127.0.0.1:44538)": 1,
+      "Applier to 7d7a460a-2892-404e-85b7-c802bb7c71cd (id = 0, addr: 127.0.0.1:17323) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:58726)": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:44576)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:44568, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:39788) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:39798) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "connect, called on fd 21, aka 127.0.0.1:39736: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to 9c0e80ed-5acf-42f3-99f8-a94dc345f075 (id = 0, addr: 127.0.0.1:17321) disconnected. Self: 7d7a460a-2892-404e-85b7-c802bb7c71cd (id = 0, addr: 127.0.0.1:44506)": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:44554)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:44540, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:39792)": 1,
+      "unexpected EOF when reading from socket, called on fd 25, aka 127.0.0.1:39788, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:58788) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17323, peer of 127.0.0.1:58788: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:58800) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 27, aka 127.0.0.1:17323, peer of 127.0.0.1:58800: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:40122: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:35582: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:48898) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:48900) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:48914)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:48900, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:35642) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17312, peer of 127.0.0.1:35642: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:35628) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "connect, called on fd 21, aka 127.0.0.1:35602: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:48916)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:48898, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:40184) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17313, peer of 127.0.0.1:40184: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:35630)": 1,
+      "unexpected EOF when reading from socket, called on fd 28, aka 127.0.0.1:35628, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:40146) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:17313, peer of 127.0.0.1:40146: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:54160: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:59936: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:40968) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:41000) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:60016)": 1,
+      "unexpected EOF when reading from socket, called on fd 36, aka 127.0.0.1:60010, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:54176: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:59970) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:60010) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:40980)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:40968, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:59994)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:59970, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:41004)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:41000, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:54266) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17323, peer of 127.0.0.1:54266: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:54242) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17323, peer of 127.0.0.1:54242: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:53148: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 21, aka 127.0.0.1:56610: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to 86d82dca-a678-4696-b10f-ff173d8da1b8 (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:56644)": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:56042) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:56108) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "connect, called on fd 24, aka 127.0.0.1:53162: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to 2c3f871e-f5bb-4840-9fcd-05d8944be43d (id = 0, addr: 127.0.0.1:17311) disconnected. Self: 86d82dca-a678-4696-b10f-ff173d8da1b8 (id = 0, addr: 127.0.0.1:56040)": 1,
+      "User not found or supplied credentials are invalid {\"type\":\"ClientError\",\"code\":47,\"name\":\"CREDS_MISMATCH\",\"trace\":[{\"file\":\"./src/box/authentication.c\",\"line\":118}]}": 3,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:56118)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:56108, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:56742) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17312, peer of 127.0.0.1:56742: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:56726) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "Applier to 86d82dca-a678-4696-b10f-ff173d8da1b8 (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:56656)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:56048)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:56042, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:53282) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:17313, peer of 127.0.0.1:53282: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:56730)": 1,
+      "unexpected EOF when reading from socket, called on fd 33, aka 127.0.0.1:56726, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:53302) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17313, peer of 127.0.0.1:53302: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:51546: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:55298: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:43538) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:43514) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:55404)": 1,
+      "unexpected EOF when reading from socket, called on fd 35, aka 127.0.0.1:55388, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:51570: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:43528)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:43514, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:55388) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:55378) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:55380)": 1,
+      "unexpected EOF when reading from socket, called on fd 22, aka 127.0.0.1:55378, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:43544)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:43538, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:51640) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17323, peer of 127.0.0.1:51640: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:51630) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17323, peer of 127.0.0.1:51630: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:49310: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:33226: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:56748) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:56716) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "connect, called on fd 22, aka 127.0.0.1:49326: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:56728)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:56716, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:33304) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 29, aka 127.0.0.1:17312, peer of 127.0.0.1:33304: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:33276) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:56754)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:56748, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:49368) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17313, peer of 127.0.0.1:49368: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:33290)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:33276, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:49382) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17313, peer of 127.0.0.1:49382: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:60332: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:52846: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to 9c6e18f1-6d46-4da2-b891-5682953fcabb (id = 0, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:52904)": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:36040) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:35972) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:60334: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to c6a1f1e5-e1bd-4a2f-81d1-4abbe3812843 (id = 0, addr: 127.0.0.1:17321) disconnected. Self: unknown": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:36050)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:36040, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:52994) disconnected. Self: shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:17322)": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:53016) disconnected. Self: shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:17322)": 1,
+      "Applier to 9c6e18f1-6d46-4da2-b891-5682953fcabb (id = 0, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:52912)": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:35986)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:35972, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:60482) disconnected. Self: shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:17323, peer of 127.0.0.1:60482: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:60498) disconnected. Self: shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:17323)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:34090: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:51848: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:49028) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:49032) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:34102: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to f30d957b-3a7a-4549-a1aa-f83fa176ca9e (id = 0, addr: 127.0.0.1:17313) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:34130)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:49030)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:49028, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:51942) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 29, aka 127.0.0.1:17312, peer of 127.0.0.1:51942: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:51916) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:49046)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:49032, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:34182) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17313, peer of 127.0.0.1:34182: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:51928)": 1,
+      "unexpected EOF when reading from socket, called on fd 23, aka 127.0.0.1:51916, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:34200) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17313, peer of 127.0.0.1:34200: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:49736: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to 5ce667b3-d08d-40b7-a2f2-96f45276cb89 (id = 0, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:36848)": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:42332) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:42272) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:36926)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:36914, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:17323) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:49862)": 1,
+      "unexpected EOF when reading from socket, called on fd 29, aka 127.0.0.1:49850, peer of 127.0.0.1:17323: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:49734: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 20, aka 127.0.0.1:42226: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:42340)": 1,
+      "unexpected EOF when reading from socket, called on fd 25, aka 127.0.0.1:42332, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:36914) disconnected. Self: shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:17322)": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:36950) disconnected. Self: shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:17322)": 1,
+      "Applier to 5ce667b3-d08d-40b7-a2f2-96f45276cb89 (id = 0, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:36876)": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:42282)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:42272, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:36964)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:36950, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 3, addr: 127.0.0.1:49838) disconnected. Self: shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:17323, peer of 127.0.0.1:49838: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:49850) disconnected. Self: shard2_127_0_0_1_17323 (id = 2, addr: 127.0.0.1:17323)": 1,
+      "connect, called on fd 22, aka 127.0.0.1:53756: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to c84fdd27-a93e-4180-9647-5ff31eb8b22d (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:45702)": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:45958) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:46018) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:53750: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 20, aka 127.0.0.1:45932: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:46022)": 1,
+      "unexpected EOF when reading from socket, called on fd 25, aka 127.0.0.1:46018, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:45764) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:17312, peer of 127.0.0.1:45764: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:45784) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "Applier to c84fdd27-a93e-4180-9647-5ff31eb8b22d (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:45712)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:45964)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:45958, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:53870) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17313, peer of 127.0.0.1:53870: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:45792)": 1,
+      "unexpected EOF when reading from socket, called on fd 32, aka 127.0.0.1:45784, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:53850) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 22, aka 127.0.0.1:17313, peer of 127.0.0.1:53850: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:46660: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:51238: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:40390) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:40406) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:46682: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:40392)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:40390, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:51322) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "unexpected EOF when reading from socket, called on fd 29, aka 127.0.0.1:17322, peer of 127.0.0.1:51322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:51298) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:40410)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:40406, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:46740) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17323, peer of 127.0.0.1:46740: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:51312)": 1,
+      "unexpected EOF when reading from socket, called on fd 22, aka 127.0.0.1:51298, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:46758) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17323: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 2,
+      "connect, called on fd 23, aka 127.0.0.1:53384: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to da010766-2dc1-48e2-97f1-e95961f85d88 (id = 0, addr: 127.0.0.1:17313) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:53410)": 1,
+      "Applier to 4de83e0c-699e-4ca8-9afb-50d838cf3e76 (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:32894)": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:49104) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:49084) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:53374: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 20, aka 127.0.0.1:48998: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to da010766-2dc1-48e2-97f1-e95961f85d88 (id = 0, addr: 127.0.0.1:17313) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:53482)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:49098)": 1,
+      "unexpected EOF when reading from socket, called on fd 27, aka 127.0.0.1:49084, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:32936) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:17312, peer of 127.0.0.1:32936: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:32878) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "Applier to 5119e5e1-a055-4867-85f6-b9f5a0d74efd (id = 0, addr: 127.0.0.1:17311) disconnected. Self: da010766-2dc1-48e2-97f1-e95961f85d88 (id = 0, addr: 127.0.0.1:49036)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:49108)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:49104, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:53526) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17313, peer of 127.0.0.1:53526: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:32888)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:32878, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:53510) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17313, peer of 127.0.0.1:53510: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:51874: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:52470: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:40304) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:40270) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:51894: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:40286)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:40270, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:52002)": 1,
+      "unexpected EOF when reading from socket, called on fd 33, aka 127.0.0.1:51986, peer of 127.0.0.1:17323: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:52554) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "unexpected EOF when reading from socket, called on fd 29, aka 127.0.0.1:17322, peer of 127.0.0.1:52554: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:52530) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "unexpected EOF when reading from socket, called on fd 22, aka 127.0.0.1:17322, peer of 127.0.0.1:52530: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:40316)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:40304, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:51966) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17323, peer of 127.0.0.1:51966: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:51986) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:49406: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to 08f73c76-989b-47db-8c4c-b42e879669d8 (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:49538)": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:48740) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:48680) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "connect, called on fd 22, aka 127.0.0.1:49400: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 20, aka 127.0.0.1:48632: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:48746)": 1,
+      "unexpected EOF when reading from socket, called on fd 25, aka 127.0.0.1:48740, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:49640) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:17312, peer of 127.0.0.1:49640: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:49672) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "Applier to 08f73c76-989b-47db-8c4c-b42e879669d8 (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:49566)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:48696)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:48680, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:49506) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17313, peer of 127.0.0.1:49506: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:49678)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:49672, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:49490) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 22, aka 127.0.0.1:17313, peer of 127.0.0.1:49490: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:49214: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:38516: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:50030) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:50062) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:38608)": 1,
+      "unexpected EOF when reading from socket, called on fd 32, aka 127.0.0.1:38606, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:49236: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:38588) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:38606) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:50042)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:50030, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:50064)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:50062, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:38604)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:38588, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:49320) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:49294) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "connect, called on fd 22, aka 127.0.0.1:35846: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 21, aka 127.0.0.1:45968: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:57312) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:57320) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:35870: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:57318)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:57312, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:46028) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 29, aka 127.0.0.1:17312, peer of 127.0.0.1:46028: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:46010) disconnected. Self: shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:57328)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:57320, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:35950) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17313, peer of 127.0.0.1:35950: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:46014)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:46010, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 2, addr: 127.0.0.1:35968) disconnected. Self: shard1_127_0_0_1_17313 (id = 3, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17313, peer of 127.0.0.1:35968: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:45494: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:35322: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:36670) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:36656) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "connect, called on fd 24, aka 127.0.0.1:45510: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:36660)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:36656, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:35370) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:35394) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:36684)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:36670, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:35380)": 1,
+      "unexpected EOF when reading from socket, called on fd 22, aka 127.0.0.1:35370, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:45588) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:45560) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17323, peer of 127.0.0.1:45560: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:52408: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to 8f643cd7-fa4f-4b33-8f55-bee40bc7352b (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:60462)": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:34548) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:34618) disconnected. Self: shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311)": 1,
+      "connect, called on fd 22, aka 127.0.0.1:52404: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 20, aka 127.0.0.1:34528: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:34620)": 1,
+      "unexpected EOF when reading from socket, called on fd 25, aka 127.0.0.1:34618, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:60508) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:17312, peer of 127.0.0.1:60508: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:60526) disconnected. Self: shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312)": 1,
+      "Applier to 8f643cd7-fa4f-4b33-8f55-bee40bc7352b (id = 0, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:60470)": 1,
+      "Applier to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:17311) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:34560)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:34548, peer of 127.0.0.1:17311: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17311 (id = 1, addr: 127.0.0.1:52542) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17313, peer of 127.0.0.1:52542: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:17312) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:60540)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:60526, peer of 127.0.0.1:17312: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard1_127_0_0_1_17312 (id = 3, addr: 127.0.0.1:52512) disconnected. Self: shard1_127_0_0_1_17313 (id = 2, addr: 127.0.0.1:17313)": 1,
+      "unexpected EOF when reading from socket, called on fd 21, aka 127.0.0.1:17313, peer of 127.0.0.1:52512: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "connect, called on fd 23, aka 127.0.0.1:58256: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "connect, called on fd 22, aka 127.0.0.1:34698: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:55628) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:55654) disconnected. Self: shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321)": 1,
+      "connect, called on fd 23, aka 127.0.0.1:58272: Connection refused {\"type\":\"SocketError\",\"errno\":111,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":207}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:55630)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:55628, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:34738) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:34756) disconnected. Self: shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322)": 1,
+      "Applier to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:17322) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:34750)": 1,
+      "unexpected EOF when reading from socket, called on fd 22, aka 127.0.0.1:34738, peer of 127.0.0.1:17322: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Applier to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:17321) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:55660)": 1,
+      "unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:55654, peer of 127.0.0.1:17321: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17322 (id = 2, addr: 127.0.0.1:58366) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 30, aka 127.0.0.1:17323, peer of 127.0.0.1:58366: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1,
+      "Relay to shard2_127_0_0_1_17321 (id = 1, addr: 127.0.0.1:58344) disconnected. Self: shard2_127_0_0_1_17323 (id = 3, addr: 127.0.0.1:17323)": 1,
+      "unexpected EOF when reading from socket, called on fd 26, aka 127.0.0.1:17323: Broken pipe {\"type\":\"SocketError\",\"errno\":32,\"trace\":[{\"file\":\"./src/lib/core/coio.c\",\"line\":491}]}": 1
+    },
+    "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           48 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  4\nOn-line CPU(s) list:                     0-3\nVendor ID:                               AuthenticAMD\nModel name:                              AMD EPYC 9V45 96-Core Processor\nCPU family:                              26\nModel:                                   2\nThread(s) per core:                      2\nCore(s) per socket:                      2\nSocket(s):                               1\nStepping:                                1\nBogoMIPS:                                5192.24\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology tsc_reliable nonstop_tsc cpuid extd_apicid aperfmperf tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy svm cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext vmmcall fsgsbase bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves user_shstk avx_vnni avx512_bf16 clzero xsaveerptr rdpru arat npt nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold v_vmsave_vmload avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid fsrm avx512_vp2intersect\nVirtualization:                          AMD-V\nHypervisor vendor:                       Microsoft\nVirtualization type:                     full\nL1d cache:                               96 KiB (2 instances)\nL1i cache:                               64 KiB (2 instances)\nL2 cache:                                2 MiB (2 instances)\nL3 cache:                                32 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-3\nVulnerability Gather data sampling:      Not affected\nVulnerability Ghostwrite:                Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Old microcode:             Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Vulnerable: Safe RET, no microcode\nVulnerability Spec store bypass:         Vulnerable\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Retpolines; STIBP disabled; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Not affected\n",
+    "summary": {
+      "uncontended": {
+        "arms": {
+          "control": {
+            "goodput": {
+              "median": 499.0927999108623,
+              "minimum": 410.9576599284319,
+              "maximum": 546.2473781983298
+            },
+            "p50_ms": {
+              "median": 1.8489750000014737,
+              "minimum": 1.74489200003336,
+              "maximum": 1.9325519999711105
+            },
+            "p99_ms": {
+              "median": 2.9586549999862655,
+              "minimum": 2.5421649999088913,
+              "maximum": 17.288515999993592
+            },
+            "lua_bytes": {
+              "median": 40350.989748596534,
+              "minimum": 40299.4249628529,
+              "maximum": 40832.45029051001
+            },
+            "tx_cpu_us": {
+              "median": 779.5351839896707,
+              "minimum": 722.4798633146205,
+              "maximum": 842.9015264082129
+            },
+            "process_cpu_us": {
+              "median": 2049.709489993544,
+              "minimum": 1911.154503295094,
+              "maximum": 2161.2859651492636
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          },
+          "candidate": {
+            "goodput": {
+              "median": 518.4930894897725,
+              "minimum": 488.6151455872969,
+              "maximum": 531.5835698859008
+            },
+            "p50_ms": {
+              "median": 1.8219599999724778,
+              "minimum": 1.7682479999621137,
+              "maximum": 1.935583999966184
+            },
+            "p99_ms": {
+              "median": 2.9058890000044357,
+              "minimum": 2.5659660000201256,
+              "maximum": 9.030873000028805
+            },
+            "lua_bytes": {
+              "median": 34951.452044227306,
+              "minimum": 34927.10097510906,
+              "maximum": 35155.88409121576
+            },
+            "tx_cpu_us": {
+              "median": 764.986205166792,
+              "minimum": 727.6934944715865,
+              "maximum": 843.3409796248819
+            },
+            "process_cpu_us": {
+              "median": 2040.030792917629,
+              "minimum": 1951.65852404217,
+              "maximum": 2148.1581433004994
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          }
+        },
+        "ratios": {
+          "goodput": {
+            "median": 1.001158902852959,
+            "minimum": 0.9085260651658872,
+            "maximum": 1.2616703374748335
+          },
+          "lua_bytes": {
+            "median": 0.8664004031793828,
+            "minimum": 0.8559724384786792,
+            "maximum": 0.8723668916770316
+          },
+          "tx_cpu_us": {
+            "median": 1.0005213577184295,
+            "minimum": 0.9131164159728643,
+            "maximum": 1.0651158689942553
+          },
+          "process_cpu_us": {
+            "median": 0.99392592092835,
+            "minimum": 0.9521634814933296,
+            "maximum": 1.0610552302646437
+          },
+          "p50_ms": {
+            "median": 0.9920935399446347,
+            "minimum": 0.9640979461594001,
+            "maximum": 1.0441677765372552
+          },
+          "p99_ms": {
+            "median": 0.9821655448228757,
+            "minimum": 0.1691456918567107,
+            "maximum": 3.5185406831077257
+          }
+        },
+        "wait_delta": {
+          "row_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          }
+        }
+      },
+      "unrelated": {
+        "arms": {
+          "control": {
+            "goodput": {
+              "median": 1294.809823820426,
+              "minimum": 1150.4236535504685,
+              "maximum": 1414.3132068843906
+            },
+            "p50_ms": {
+              "median": 5.743096999992758,
+              "minimum": 5.451933000017561,
+              "maximum": 5.944477000014103
+            },
+            "p99_ms": {
+              "median": 12.438974000019698,
+              "minimum": 10.75852600001781,
+              "maximum": 25.08123099998727
+            },
+            "lua_bytes": {
+              "median": 41848.309158684475,
+              "minimum": 41716.54781758287,
+              "maximum": 42114.4952403393
+            },
+            "tx_cpu_us": {
+              "median": 531.2246553122466,
+              "minimum": 514.3207662907564,
+              "maximum": 576.1850430453271
+            },
+            "process_cpu_us": {
+              "median": 1257.6758197196152,
+              "minimum": 1210.650329877474,
+              "maximum": 1322.476921481174
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          },
+          "candidate": {
+            "goodput": {
+              "median": 1307.2757011960462,
+              "minimum": 1276.1486110249598,
+              "maximum": 1367.0767732722238
+            },
+            "p50_ms": {
+              "median": 5.66529799999671,
+              "minimum": 5.559049999988019,
+              "maximum": 5.867535999982465
+            },
+            "p99_ms": {
+              "median": 11.890811000000667,
+              "minimum": 10.944312999981776,
+              "maximum": 33.85670099999061
+            },
+            "lua_bytes": {
+              "median": 36499.3673490704,
+              "minimum": 36431.77356710043,
+              "maximum": 36559.7875127421
+            },
+            "tx_cpu_us": {
+              "median": 526.9693056521307,
+              "minimum": 498.7466053895968,
+              "maximum": 557.5942915392457
+            },
+            "process_cpu_us": {
+              "median": 1250.9750390015602,
+              "minimum": 1210.5702945477335,
+              "maximum": 1289.500509683996
+            },
+            "row_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            },
+            "commit_waits": {
+              "median": 0.0,
+              "minimum": 0.0,
+              "maximum": 0.0
+            }
+          }
+        },
+        "ratios": {
+          "goodput": {
+            "median": 1.0096275739852196,
+            "minimum": 0.9078171183607926,
+            "maximum": 1.109285789705797
+          },
+          "lua_bytes": {
+            "median": 0.8714358249020572,
+            "minimum": 0.8667808441176336,
+            "maximum": 0.876385737204571
+          },
+          "tx_cpu_us": {
+            "median": 0.9689572357803636,
+            "minimum": 0.9145834519877937,
+            "maximum": 1.0203707601357836
+          },
+          "process_cpu_us": {
+            "median": 0.9816777391120952,
+            "minimum": 0.947918904126665,
+            "maximum": 1.0333083039164308
+          },
+          "p50_ms": {
+            "median": 0.9906418475620942,
+            "minimum": 0.9599155653208868,
+            "maximum": 1.0391356606874043
+          },
+          "p99_ms": {
+            "median": 0.9974953047771571,
+            "minimum": 0.9011775408469473,
+            "maximum": 2.9074953204452343
+          }
+        },
+        "wait_delta": {
+          "row_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          },
+          "commit_waits": {
+            "median": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0
+          }
+        }
+      },
+      "hot": {
+        "arms": {
+          "control": {
+            "goodput": {
+              "median": 579.7989801297969,
+              "minimum": 531.6502041501814,
+              "maximum": 621.4921079439666
+            },
+            "p50_ms": {
+              "median": 13.059040999991112,
+              "minimum": 12.54239599995799,
+              "maximum": 13.771179000002576
+            },
+            "p99_ms": {
+              "median": 20.18957699999646,
+              "minimum": 18.086945000050036,
+              "maximum": 36.905063000006066
+            },
+            "lua_bytes": {
+              "median": 44010.23668713194,
+              "minimum": 43850.72768192048,
+              "maximum": 44157.94315216158
+            },
+            "tx_cpu_us": {
+              "median": 756.7973938102995,
+              "minimum": 710.5347765512807,
+              "maximum": 826.6129032258065
+            },
+            "process_cpu_us": {
+              "median": 1935.847638140584,
+              "minimum": 1832.6010073947061,
+              "maximum": 2058.823529411765
+            },
+            "row_waits": {
+              "median": 0.9998851102941176,
+              "minimum": 0.9998747024182433,
+              "maximum": 0.9998928303504447
+            },
+            "commit_waits": {
+              "median": 0.9998851102941176,
+              "minimum": 0.9998747024182433,
+              "maximum": 0.9998928303504447
+            }
+          },
+          "candidate": {
+            "goodput": {
+              "median": 572.9163947781153,
+              "minimum": 539.6641351590492,
+              "maximum": 579.1595436843179
+            },
+            "p50_ms": {
+              "median": 13.119700000004286,
+              "minimum": 12.840784999980315,
+              "maximum": 13.455609999994067
+            },
+            "p99_ms": {
+              "median": 21.224588999984917,
+              "minimum": 19.62987499996416,
+              "maximum": 93.08768500000042
+            },
+            "lua_bytes": {
+              "median": 38635.973710195016,
+              "minimum": 38563.49930986887,
+              "maximum": 38675.302770049595
+            },
+            "tx_cpu_us": {
+              "median": 752.2381118474595,
+              "minimum": 731.5389924085576,
+              "maximum": 785.2917294977381
+            },
+            "process_cpu_us": {
+              "median": 1933.4961051040575,
+              "minimum": 1878.3068783068782,
+              "maximum": 1984.6885512121562
+            },
+            "row_waits": {
+              "median": 0.9998837344494826,
+              "minimum": 0.9998765736855098,
+              "maximum": 0.9998849781458478
+            },
+            "commit_waits": {
+              "median": 0.9998837344494826,
+              "minimum": 0.9998765736855098,
+              "maximum": 0.9998849781458478
+            }
+          }
+        },
+        "ratios": {
+          "goodput": {
+            "median": 0.975915379785478,
+            "minimum": 0.8683362640667757,
+            "maximum": 1.0893620263159272
+          },
+          "lua_bytes": {
+            "median": 0.8771741163515505,
+            "minimum": 0.8734307357933662,
+            "maximum": 0.8816261963401006
+          },
+          "tx_cpu_us": {
+            "median": 0.9666246189424997,
+            "minimum": 0.9468172407761465,
+            "maximum": 1.0405171543960803
+          },
+          "process_cpu_us": {
+            "median": 0.9702761939007892,
+            "minimum": 0.9639915820173329,
+            "maximum": 1.0371953499316464
+          },
+          "p50_ms": {
+            "median": 0.9841430820732664,
+            "minimum": 0.9770848233104479,
+            "maximum": 1.028434200293562
+          },
+          "p99_ms": {
+            "median": 1.0251839637221467,
+            "minimum": 0.5751132033017103,
+            "maximum": 5.146678170345678
+          }
+        },
+        "wait_delta": {
+          "row_waits": {
+            "median": -2.796811155003631e-06,
+            "minimum": -1.625666493498823e-05,
+            "maximum": 1.02757276044807e-05
+          },
+          "commit_waits": {
+            "median": -2.796811155003631e-06,
+            "minimum": -1.625666493498823e-05,
+            "maximum": 1.02757276044807e-05
+          }
+        }
+      }
+    },
+    "mechanisms": {
+      "control": {
+        "0": {
+          "lua_allocated": {
+            "median": 2767.5,
+            "minimum": 2767.5,
+            "maximum": 2772.04
+          },
+          "elapsed_seconds": {
+            "median": 5.5322600000095e-06,
+            "minimum": 5.4483299999930005e-06,
+            "maximum": 6.156295000039501e-06
+          }
+        },
+        "1": {
+          "lua_allocated": {
+            "median": 5359.5,
+            "minimum": 5359.5,
+            "maximum": 5510.465
+          },
+          "elapsed_seconds": {
+            "median": 8.138195000029e-06,
+            "minimum": 7.992275000034999e-06,
+            "maximum": 1.0673869999991e-05
+          }
+        },
+        "2": {
+          "lua_allocated": {
+            "median": 7951.5,
+            "minimum": 7951.5,
+            "maximum": 7954.44
+          },
+          "elapsed_seconds": {
+            "median": 1.08959100000305e-05,
+            "minimum": 1.0449130000011999e-05,
+            "maximum": 1.1015239999992001e-05
+          }
+        },
+        "8": {
+          "lua_allocated": {
+            "median": 23503.74,
+            "minimum": 23503.5,
+            "maximum": 23635.325
+          },
+          "elapsed_seconds": {
+            "median": 2.5277430000017e-05,
+            "minimum": 2.403790999999e-05,
+            "maximum": 2.90266449999875e-05
+          }
+        },
+        "32": {
+          "lua_allocated": {
+            "median": 85713.74,
+            "minimum": 85711.925,
+            "maximum": 85799.885
+          },
+          "elapsed_seconds": {
+            "median": 0.00010238690499996,
+            "minimum": 9.904520999995499e-05,
+            "maximum": 0.00010822497500001501
+          }
+        }
+      },
+      "candidate": {
+        "0": {
+          "lua_allocated": {
+            "median": 2767.5,
+            "minimum": 2767.5,
+            "maximum": 2795.4
+          },
+          "elapsed_seconds": {
+            "median": 5.499654999994e-06,
+            "minimum": 5.446975000041e-06,
+            "maximum": 7.4130249998915e-06
+          }
+        },
+        "1": {
+          "lua_allocated": {
+            "median": 2767.5,
+            "minimum": 2767.5,
+            "maximum": 2775.64
+          },
+          "elapsed_seconds": {
+            "median": 5.5268950001165e-06,
+            "minimum": 5.422989999886e-06,
+            "maximum": 5.990045000033e-06
+          }
+        },
+        "2": {
+          "lua_allocated": {
+            "median": 2767.5,
+            "minimum": 2767.5,
+            "maximum": 2900.185
+          },
+          "elapsed_seconds": {
+            "median": 5.9415699999475e-06,
+            "minimum": 5.4449249999775e-06,
+            "maximum": 7.68558499999e-06
+          }
+        },
+        "8": {
+          "lua_allocated": {
+            "median": 2767.74,
+            "minimum": 2767.5,
+            "maximum": 2814.455
+          },
+          "elapsed_seconds": {
+            "median": 5.627600000082e-06,
+            "minimum": 5.5059150000145e-06,
+            "maximum": 5.9143299999675e-06
+          }
+        },
+        "32": {
+          "lua_allocated": {
+            "median": 2767.5,
+            "minimum": 2767.5,
+            "maximum": 2767.5
+          },
+          "elapsed_seconds": {
+            "median": 5.6189849999555e-06,
+            "minimum": 5.529399999915e-06,
+            "maximum": 5.678920000065e-06
+          }
+        }
+      }
+    }
+  }
+]

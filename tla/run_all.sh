@@ -61,6 +61,7 @@ for cfg in "$@"; do
     ReplicatedVinylBuild|Bug_VinylBuild*) module=ReplicatedVinylBuild.tla ;;
     ReplicatedBuildFence|Bug_BuildFence*|Tradeoff_BuildFence*) module=ReplicatedBuildFence.tla ;;
     ShadowUnique|Bug_ShadowUnique*) module=ShadowUnique.tla ;;
+    PlanGuardScalar|PlanGuardBatch|Bug_PlanGuard*) module=PlanGuardBatch.tla ;;
     *) module=MC.tla ;;
   esac
   start=$(date +%s)
