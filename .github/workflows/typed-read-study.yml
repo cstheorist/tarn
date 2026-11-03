@@ -7,8 +7,20 @@ on:
       - 'lua/**'
       - 'bench/pushdown*.py'
       - 'tests/sql/pushdowntest.py'
+      - 'tests/sql/pushdown_contracts*.py'
+      - 'tests/pushdown_contracts.py'
       - '.github/workflows/typed-read-study.yml'
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Run the release study, only live contracts, or reference captures
+        type: choice
+        options: [release, contracts, oracle]
+        default: release
+      observe_only:
+        description: Retain contract discrepancies for investigation without claiming a pass
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,7 +34,56 @@ defaults:
     shell: bash
 
 jobs:
+  oracle:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'oracle'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: '1'
+        ports: ['3407:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+      mysql:
+        image: mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_ROOT_HOST: '%'
+        ports: ['3408:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2
+      - name: Capture reference wire contracts
+        run: |
+          python3 - <<'PY'
+          import pymysql
+          for port in (3407, 3408):
+              with pymysql.connect(host='127.0.0.1', port=port, user='root', password='', autocommit=True) as c:
+                  with c.cursor() as q:
+                      q.execute("CREATE USER 'sb'@'%' IDENTIFIED BY ''")
+                      q.execute("GRANT ALL ON *.* TO 'sb'@'%'")
+          PY
+          python3 tests/sql/pushdown_contracts_test.py
+          python3 tests/sql/pushdown_contracts.py --oracle-only --mysql-profile \
+            --ref 127.0.0.1:3407 --mysql 127.0.0.1:3408 --out /tmp/pushdown-oracles.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pushdown-oracles-${{ github.run_id }}
+          path: /tmp/pushdown-oracles.json
+          retention-days: 30
+
   build:
+    if: inputs.scope != 'oracle'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -54,6 +115,14 @@ jobs:
         engine: [memtx, vinyl]
         native: [enabled, disabled]
     services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: '1'
+        ports: ['3407:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=30
       mysql:
         image: mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7
         env:
@@ -74,6 +143,7 @@ jobs:
           python-version: '3.12'
       - run: pip install PyMySQL==1.1.2
       - run: python3 bench/pushdown_matrix_test.py
+      - run: python3 tests/sql/pushdown_contracts_test.py
       - uses: actions/cache/restore@v6
         id: tarantool-cache
         with:
@@ -89,11 +159,11 @@ jobs:
           sha256sum -c /tmp/pushdown-build/binaries.sha256
           python3 - <<'PY'
           import pymysql
-          c=pymysql.connect(host='127.0.0.1',port=3408,user='root',password='',autocommit=True)
-          with c.cursor() as q:
-              q.execute("CREATE USER 'sb'@'%' IDENTIFIED BY ''")
-              q.execute("GRANT ALL ON *.* TO 'sb'@'%'")
-          c.close()
+          for port in (3407, 3408):
+              with pymysql.connect(host='127.0.0.1',port=port,user='root',password='',autocommit=True) as c:
+                  with c.cursor() as q:
+                      q.execute("CREATE USER 'sb'@'%' IDENTIFIED BY ''")
+                      q.execute("GRANT ALL ON *.* TO 'sb'@'%'")
           PY
       - uses: actions/cache/save@v6
         if: steps.tarantool-cache.outputs.cache-hit != 'true'
@@ -112,8 +182,17 @@ jobs:
           scripts/cluster.sh start -d /tmp/pushdown-cluster -n 2 -r 3 -w fsync -p 4000 -s 1 -m 256 -e '${{ matrix.engine }}'
           tarantool --version > /tmp/pushdown-results/tarantool.txt
           python3 tests/sql/pushdowntest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 | tee /tmp/pushdown-results/correctness.log
+      - name: Exact off/on wire contracts against both references
+        env:
+          OBSERVE_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.observe_only }}
+        run: |
+          extra=()
+          [ "$OBSERVE_ONLY" != true ] || extra+=(--observe-only)
+          python3 tests/pushdown_contracts.py --cluster-dir /tmp/pushdown-cluster \
+            --bin /tmp/pushdown-build/tarn-server --engine '${{ matrix.engine }}' \
+            --out /tmp/pushdown-results/wire "${extra[@]}"
       - name: Five alternating pairs per width and query, instrumented and direct
-        if: matrix.native == 'enabled'
+        if: matrix.native == 'enabled' && inputs.scope != 'contracts'
         run: |
           for width in 256 4096 65536; do
             python3 bench/pushdown_matrix.py --cluster-dir /tmp/pushdown-cluster \

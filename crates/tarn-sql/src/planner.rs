@@ -2313,7 +2313,13 @@ fn agg_type(a: &AggCall, src: &[ExprType], params: &[Value]) -> ExprType {
             }
             None => ExprType::of(C::NewDecimal),
         },
-        AggFunc::Min | AggFunc::Max | AggFunc::AnyValue => arg.unwrap_or_else(|| ExprType::of(C::VarString)),
+        AggFunc::Min | AggFunc::Max => {
+            let mut t = arg.unwrap_or_else(|| ExprType::of(C::VarString));
+            // Even a NOT NULL argument produces NULL for an empty input.
+            t.nullable = true;
+            t
+        }
+        AggFunc::AnyValue => arg.unwrap_or_else(|| ExprType::of(C::VarString)),
         AggFunc::GroupConcat => ExprType::of(C::Blob),
     }
 }
@@ -3520,6 +3526,68 @@ mod tests {
             _ => panic!(),
         }
         assert_eq!(&*p.columns[0].name, "c");
+    }
+
+    #[test]
+    fn min_max_result_metadata_is_nullable_and_preserves_argument_type() {
+        use tarn_common::column_flags;
+
+        let empty = Catalog::default();
+        let mut ctx = PlanCtx {
+            statistics: None,
+            catalog: &empty,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE t (id INT PRIMARY KEY, s BIGINT NOT NULL, u BIGINT UNSIGNED NOT NULL, \
+             n BIGINT, c VARCHAR(17) COLLATE utf8mb4_general_ci NOT NULL, d DECIMAL(12,3) NOT NULL)",
+            &ctx,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        ctx.catalog = &cat;
+        let select = |sql: &str| {
+            let Stmt::Select(p) = plan(sql, &ctx).unwrap() else {
+                panic!()
+            };
+            p
+        };
+        let source = select("SELECT s, u, n, c, d FROM t");
+        assert_ne!(source.columns[0].flags & column_flags::NOT_NULL, 0);
+        assert_ne!(source.columns[1].flags & column_flags::NOT_NULL, 0);
+        assert_ne!(source.columns[1].flags & column_flags::UNSIGNED, 0);
+        assert_eq!(source.columns[2].flags & column_flags::NOT_NULL, 0);
+
+        // A global aggregate can emit NULL on an empty qualifying range even
+        // for NOT NULL inputs. MariaDB also advertises nullable grouped extrema.
+        for suffix in ["", " WHERE id < 0", " GROUP BY id", " WHERE id < 0 GROUP BY id"] {
+            for func in ["MIN", "MAX"] {
+                let sql = format!("SELECT {func}(s), {func}(u), {func}(n), {func}(c), {func}(d) FROM t{suffix}");
+                let p = select(&sql);
+                assert!(p.agg.is_some());
+                for (actual, input) in p.columns.iter().zip(source.columns.iter()) {
+                    assert_eq!(actual.flags & column_flags::NOT_NULL, 0, "{sql}: {}", actual.name);
+                    assert_eq!(
+                        (actual.ty, actual.flags, actual.charset, actual.length, actual.decimals),
+                        (
+                            input.ty,
+                            input.flags & !column_flags::NOT_NULL,
+                            input.charset,
+                            input.length,
+                            input.decimals,
+                        ),
+                        "{sql}: {}",
+                        actual.name
+                    );
+                }
+            }
+        }
     }
 
     #[test]
