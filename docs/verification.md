@@ -3394,6 +3394,28 @@ retain ordinary reads without new validation; their reduction counter must
 stay unchanged. The ordinary differential suite adds 30
 cases. Bucket tests reject both new procedures on the wrong owner.
 
+`tests/sql/pushdown_contracts.py` compares gateways over the same shards
+with typed reads disabled and enabled. It retains full wire descriptors,
+typed values, affected rows, SQLSTATE/errno and diagnostics. Its reference
+comparison keeps semantic flags, including nullability and unsignedness,
+while excluding origin/index hints and diagnostic prose; the raw fields
+and text remain in the artifact. MariaDB 10.11 is authoritative for ordinary
+SQL and the pinned MySQL reference for the explicit MYSQL key profile.
+Empty/all-NULL inputs, integer widths, unsupported-expression fallback,
+failing predicates and rolled-back own writes are covered. A bounded
+COM_STMT_PREPARE/EXECUTE subset records both preparation and execution
+metadata; parameter binding and prepared-statement reuse are outside this
+probe. Offline negative controls reject altered types, descriptors,
+errors, diagnostics and path counters. Observation-only runs retain
+discrepancies and cannot establish a release pass.
+
+The performance matrix starts fresh storage processes after the correctness
+fixture exits. It checks effective test flags on every replica before and
+after measurement, along with RF3 membership, synchronous user spaces and
+fsync. Its source and binary receipts, alternating pairs, actual transfer
+and CPU measurements remain required; correctness runs with diagnostic
+checks enabled do not qualify production performance.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request:

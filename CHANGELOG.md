@@ -144,6 +144,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Aggregate result metadata describes the result rather than copying the
+  source column's constraints. `MIN` and `MAX` are nullable even over a
+  `NOT NULL` column; integer and decimal `SUM` report their widened decimal
+  precision, and `COUNT` reports a nonnullable integer. The typed-read
+  contract checks compare ordinary and pushed execution, including their
+  wire descriptors, with MariaDB 10.11
+  ([#135](https://github.com/cstheorist/tarn/issues/135)).
+
 - On a cluster where an `ALTER TABLE` copies the table, a shard whose copy
   ended first no longer leaves the other shards fenced while it catches
   up. Each shard's PREPARE first catches up on the writes to its rows, then

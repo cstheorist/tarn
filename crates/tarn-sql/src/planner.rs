@@ -2039,6 +2039,13 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
                     None => Column::new(name, et.ty),
                 };
                 c.decimals = et.decimals;
+                if let Some(metadata) = &et.metadata {
+                    c.flags = metadata.flags;
+                    if !et.nullable {
+                        c.flags |= tarn_common::column_flags::NOT_NULL;
+                    }
+                    c.length = metadata.length;
+                }
                 let stringy = matches!(et.ty, ColumnType::VarString | ColumnType::String | ColumnType::Blob);
                 if let Some(d) = &proj_derived[i] {
                     if stringy && d.coll != Collation::Binary && c.charset != tarn_common::CHARSET_BINARY {
@@ -2287,19 +2294,34 @@ fn col_source(scope: &Scope, c: usize) -> Option<(Arc<TableDef>, usize)> {
 }
 
 fn agg_type(a: &AggCall, src: &[ExprType], params: &[Value]) -> ExprType {
+    use tarn_common::column_flags;
     use ColumnType as C;
+    let metadata = |flags, length| Some(crate::expr::ExprMetadata { flags, length });
     let arg = a.arg.as_ref().map(|e| infer(e, src, params));
     match a.func {
         AggFunc::CountStar | AggFunc::Count => {
             let mut t = ExprType::of(C::LongLong);
             t.nullable = false;
+            t.metadata = metadata(column_flags::BINARY, 21);
             t
         }
         AggFunc::Sum => match &arg {
-            Some(t) if matches!(t.ty, C::Double | C::Float) => ExprType::of(C::Double),
+            Some(t) if t.ty == C::Double => {
+                let mut r = ExprType::of(C::Double);
+                r.metadata = metadata(column_flags::BINARY, 23);
+                r
+            }
+            Some(t) if t.ty == C::Float => ExprType::of(C::Double),
             Some(t) => {
                 let mut r = ExprType::of(C::NewDecimal);
                 r.decimals = t.decimals;
+                // SUM is signed even for an unsigned argument. Its decimal
+                // precision grows by 22 digits (capped at 65), with space for
+                // a sign and, when scaled, a decimal point. Keep unknown
+                // expression precision on the existing conservative fallback.
+                r.precision = t.precision.map(|p| p.saturating_add(22).min(65));
+                let length = r.precision.map(|p| p + 1 + u32::from(r.decimals > 0)).unwrap_or(255);
+                r.metadata = metadata(column_flags::BINARY, length);
                 r
             }
             None => ExprType::of(C::NewDecimal),
@@ -2317,6 +2339,19 @@ fn agg_type(a: &AggCall, src: &[ExprType], params: &[Value]) -> ExprType {
             let mut t = arg.unwrap_or_else(|| ExprType::of(C::VarString));
             // Even a NOT NULL argument produces NULL for an empty input.
             t.nullable = true;
+            if let Some(sql) = t.sql.as_ref().filter(|sql| sql.is_numeric()) {
+                let c = sql.result_column("", "", true, false);
+                let length = if t.ty == C::Double {
+                    23
+                } else if matches!(sql.base, BaseType::BigInt | BaseType::Decimal) {
+                    sql.exact_numeric_length().unwrap_or(c.length)
+                } else {
+                    // Smaller-integer extrema wire promotion/width needs its
+                    // own oracle qualification; retain the existing mapping.
+                    c.length
+                };
+                t.metadata = metadata((c.flags & !column_flags::NUM) | column_flags::BINARY, length);
+            }
             t
         }
         AggFunc::AnyValue => arg.unwrap_or_else(|| ExprType::of(C::VarString)),
@@ -3577,7 +3612,11 @@ mod tests {
                         (actual.ty, actual.flags, actual.charset, actual.length, actual.decimals),
                         (
                             input.ty,
-                            input.flags & !column_flags::NOT_NULL,
+                            if matches!(input.ty, ColumnType::LongLong | ColumnType::NewDecimal) {
+                                (input.flags & !(column_flags::NOT_NULL | column_flags::NUM)) | column_flags::BINARY
+                            } else {
+                                input.flags & !column_flags::NOT_NULL
+                            },
                             input.charset,
                             input.length,
                             input.decimals,
@@ -3586,6 +3625,82 @@ mod tests {
                         actual.name
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn aggregate_numeric_metadata_matches_reference() {
+        use tarn_common::{column_flags, CHARSET_BINARY};
+
+        let empty = Catalog::default();
+        let mut ctx = PlanCtx {
+            statistics: None,
+            catalog: &empty,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE t (id INT PRIMARY KEY, s BIGINT NOT NULL, u BIGINT UNSIGNED NOT NULL, \
+             n BIGINT, d DECIMAL(10,2), f DOUBLE)",
+            &ctx,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        ctx.catalog = &cat;
+        // Exact fields observed on MariaDB 10.11.19 and MySQL 8.4.13. The
+        // empty, all-NULL and grouped shapes share the same static metadata.
+        for suffix in ["", " WHERE id < 0", " WHERE n IS NULL", " GROUP BY id"] {
+            let sql = format!(
+                "SELECT SUM(s) AS total, SUM(u), SUM(n), COUNT(*), COUNT(n), SUM(d), MIN(d), MAX(d), \
+                 MIN(u), MAX(s), SUM(n+0), SUM(u+0), SUM(f), MIN(f), MAX(f) FROM t{suffix}"
+            );
+            let Stmt::Select(p) = plan(&sql, &ctx).unwrap() else {
+                panic!()
+            };
+            for (actual, (ty, flags, length, decimals)) in p.columns.iter().zip([
+                (ColumnType::NewDecimal, column_flags::BINARY, 42, 0),
+                (ColumnType::NewDecimal, column_flags::BINARY, 43, 0),
+                (ColumnType::NewDecimal, column_flags::BINARY, 42, 0),
+                (
+                    ColumnType::LongLong,
+                    column_flags::BINARY | column_flags::NOT_NULL,
+                    21,
+                    0,
+                ),
+                (
+                    ColumnType::LongLong,
+                    column_flags::BINARY | column_flags::NOT_NULL,
+                    21,
+                    0,
+                ),
+                (ColumnType::NewDecimal, column_flags::BINARY, 34, 2),
+                (ColumnType::NewDecimal, column_flags::BINARY, 12, 2),
+                (ColumnType::NewDecimal, column_flags::BINARY, 12, 2),
+                (
+                    ColumnType::LongLong,
+                    column_flags::BINARY | column_flags::UNSIGNED,
+                    20,
+                    0,
+                ),
+                (ColumnType::LongLong, column_flags::BINARY, 20, 0),
+                (ColumnType::NewDecimal, column_flags::BINARY, 43, 0),
+                (ColumnType::NewDecimal, column_flags::BINARY, 44, 0),
+                (ColumnType::Double, column_flags::BINARY, 23, 31),
+                (ColumnType::Double, column_flags::BINARY, 23, 31),
+                (ColumnType::Double, column_flags::BINARY, 23, 31),
+            ]) {
+                assert_eq!(
+                    (actual.ty, actual.flags, actual.charset, actual.length, actual.decimals),
+                    (ty, flags, CHARSET_BINARY, length, decimals),
+                    "{sql}: {}",
+                    actual.name
+                );
             }
         }
     }
