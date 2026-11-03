@@ -8124,6 +8124,7 @@ BK.production_functions = {
         'tarn_engine_capabilities',
         'tarn_engine_counter_alias',
         'tarn_engine_decision',
+        'tarn_engine_durable_capabilities',
         'tarn_engine_rebuild_aux_capabilities',
         'tarn_engine_rebuild_capabilities',
         'tarn_engine_rebuild_format_capabilities',

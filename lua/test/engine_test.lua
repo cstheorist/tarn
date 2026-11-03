@@ -227,7 +227,7 @@ end
 -- (7) and adds a unique index on the nullable c, one on (v, c) and a unique
 -- one on (bucket_id, c), whose keys have NULL in their last part, all of
 -- which the shadow has before its first row.
-local function rebuild(engine, tag, count, timeout)
+local function rebuild(engine, tag, count, timeout, volatile)
     local t = create(engine, tag, count)
     end_job(t) -- (create's job changes the engine)
     local nd = table.deepcopy(t.def)
@@ -245,7 +245,7 @@ local function rebuild(engine, tag, count, timeout)
             {14, 'b_c_u', true, {{field = 3, type = 'unsigned'}, c_part}}},
         drop = {11}, renames = {{7, 'v_u'}},
         engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = true,
-            durable = true}}
+            durable = not volatile or nil}}
     begin_job(t)
     return t
 end
@@ -417,10 +417,11 @@ local function exercise_rebuild(engine)
     check(label('that copy is published with the write made meanwhile'), clean(slow) and exact(slow, slow.new_id),
         difference(slow, slow.new_id))
 
-    -- A capture that writes outgrow after the deadline, past its limits in
-    -- the durable capture too, starts the copy again (reset), whose cut and
-    -- drain have deadlines of their own.
-    local lost = rebuild(engine, 'rebuild_lost', 260, 1)
+    -- A capture that writes outgrow after the deadline starts the copy
+    -- again (reset), whose cut and drain have deadlines of their own. (A
+    -- copy without a durable capture: engine_resume_test.lua has one that
+    -- resumes first.)
+    local lost = rebuild(engine, 'rebuild_lost', 260, 1, true)
     hook('engine_copy', 'hold')
     building = spawn(function() return call('build', lost) end)
     hook('engine_copy', 'reached')
@@ -428,6 +429,7 @@ local function exercise_rebuild(engine)
     fiber.sleep(1.2)
     tarn.cfg.engine_dirty_keys = 2
     ok(update(lost, 3, 2, 31)); ok(update(lost, 6, 2, 61)); ok(update(lost, 9, 2, 91))
+    tarn.cfg.engine_dirty_keys = nil
     hook('write', 'hold')
     writing = spawn(function() return update(lost, 12, 2, 121) end)
     hook('write', 'reached')
@@ -435,10 +437,9 @@ local function exercise_rebuild(engine)
     fiber.sleep(.2)
     hook('write', 'release')
     built = result(building)
-    tarn.cfg.engine_dirty_keys = nil
     check(label('a capture lost after the deadline starts the copy again'),
         built[1] == 'ok' and result(writing)[1] == 'ok' and phase(lost).phase == 'copied'
-        and phase(lost).capture ~= token, {built, phase(lost)})
+        and phase(lost).capture ~= token and phase(lost).resumes == nil, {built, phase(lost)})
     publish(lost)
     check(label('that copy is published with every write'), clean(lost) and exact(lost, lost.new_id),
         difference(lost, lost.new_id))

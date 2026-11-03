@@ -282,10 +282,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it settled. A copy whose capture is lost rebuilds it from the keys above
   that generation, once the writes in flight have ended, and goes on from
   its cursor, also behind its fence. Each write to the table during a copy
-  writes one row more. The SQL server asks for this only when every
-  replica can note its writes (`tarn_engine_durable_capabilities`).
-  `tla/EngineCopy.tla` models the durable capture, with six controls TLC
-  must fail ([#184](https://github.com/cstheorist/tarn/issues/184)).
+  writes one row more, and passes delete the entries they settled once
+  there are many. The SQL server asks for this only when every replica can
+  note its writes (`tarn_engine_durable_capabilities`), and logs a replica
+  that can't. `tla/EngineCopy.tla` models the durable capture, with ten
+  controls TLC must fail ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
 - A `COUNT` or aggregate read that yielded while a table copy was published
   could fail with a storage error (1105, "attempt to index a nil value")

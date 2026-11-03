@@ -574,7 +574,7 @@ mk_handback Bug_HandbackMalformedReply_Autocommit FALSE BugTrustMalformedReply
 # Online engine migration: local copy certificates and later publication.
 engine_flags () {
     case "$1" in
-      EngineCopy) echo 'BugBeforeCapture BugSkipPrefixDrain BugCaptureOnlyNewKeys BugUnconfirmedSource BugTailIgnoresDeletes BugSkipFinalDrain BugLostCaptureContinues BugStaleBatch BugRebuildPrepared BugPrepareWithoutIndexes BugLosePersistentFence BugPassWithoutSettle BugPassDropsKeys BugAbandonLosesKeys BugCaptureNotDurable BugResumeBeforeSettle BugSettleBeforeReread BugNoGenerationBump BugClearUnnoted BugHolderNoHole' ;;
+      EngineCopy) echo 'BugBeforeCapture BugSkipPrefixDrain BugCaptureOnlyNewKeys BugUnconfirmedSource BugTailIgnoresDeletes BugSkipFinalDrain BugLostCaptureContinues BugStaleBatch BugRebuildPrepared BugPrepareWithoutIndexes BugLosePersistentFence BugPassWithoutSettle BugPassDropsKeys BugAbandonLosesKeys BugCaptureNotDurable BugResumeBeforeSettle BugSettleBeforeReread BugNoGenerationBump BugClearUnnoted BugHolderNoHole BugResumeFailKeeps BugRebindAtSettled BugPruneUnsettled BugUnbindEarly' ;;
       EngineCutover) echo 'BugPublishBeforeDecision BugPublishBeforeAuxReady BugDropBeforePublish BugAbortAfterDecision BugApplyAfterAbort BugOldStreamValidates BugForgetOldObligations BugResetCounterIdentity BugRenameLosesOriginalIdentity BugCatalogByName BugAuxStreamOmitted BugKeptByNameOnly BugPublishBeforeKeptRename BugRetireKept BugRebindAfterPublish BugAbortRetiresKept BugNoPendingNew BugMadeUnbound BugAbortKeepsMade BugAbortSkipsMissing BugPendingOnlyKept BugReadyUnscanned BugPublishUnready' ;;
     esac
 }

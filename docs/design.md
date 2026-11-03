@@ -1941,7 +1941,9 @@ the copy over:
   entry arrives with its write.
 - **Generations.** A pass's swap starts the next generation. Once the pass
   has reread its keys, it records the generation it settled in the job's
-  record.
+  record. A node binds the durable capture before it admits a write to the
+  table, while the copy takes writes and may resume, at the generation
+  after the settled one: a new leader, or one restarted, too.
 - **Holes.** When the holder rule takes a captured row's copy out of the
   shadow, the same transaction notes that key as a hole, in a space of the
   shadow's engine (`_tarn_engine_holes_<id>_<token>`).
@@ -1950,27 +1952,58 @@ the copy over:
   only the keys the durable capture notes above the settled generation, as
   a key or a hole; the others' copies are the source's rows.
 - **Resume.** A BUILD or PREPARE that finds the capture lost rebuilds it
-  from the keys and holes above the settled generation. First, as a pass
+  from the keys and holes above the settled generation. It installs a new
+  capture in memory, which notes the writes from then on. Then, as a pass
   does, it waits for the commits in flight and writes a marker (the count
   of its resumes in the job's record). Then it reads the durable capture a
   page at a time, and the copy goes on from its cursor; a PREPARE behind
-  its fence goes on with its final pass.
+  its fence goes on with its final pass. Until the durable keys are in the
+  new capture, it is not the copy's: a resume that fails part way (a
+  deadline, another job's cut) leaves it lost, and so does one whose
+  capture is lost meanwhile, to a status change for one (1213). The step
+  sent again resumes again.
+- **Pruning.** A resume and a pass skip the entries and holes up to the
+  settled generation. Once the durable capture has noted more than twice
+  `engine_dirty_keys` keys since it was bound or last pruned, a pass that
+  settled deletes them. It then holds about the keys written since the
+  passes before, which a resume reads. A page's deletes go in one
+  transaction, and each delete reads its entry first, in that transaction.
+  A write that notes the key again either commits before it, and the
+  delete sees the newer entry, or after it, and puts its entry back;
+  otherwise the transaction fails with a conflict (memtx MVCC and vinyl
+  alike). The pruning is best effort: an entry left over is one that a
+  resume skips.
 - **Starting over.** Past the capture's limits, or with no durable capture
-  (one an older node began), the copy starts over, as before.
+  (one an older node began), the copy starts over, as before. Its record
+  says so first (no step resumes it then). Then the writes stop noting
+  their keys in the durable capture, and the copy's cut waits for those
+  that did, before it drops the spaces: dropping a space aborts an open
+  transaction that wrote to it. ABORT stops them before its cut too.
 - **Every replica.** A leader that does not note its writes would leave a
   later resume short of them. So the SQL server marks a copy durable
   (`engine_change.durable`) only when every replica answers
   `tarn_engine_durable_capabilities`; otherwise the copy keeps its capture
-  in memory only, as before.
+  in memory only, as before, and the SQL server logs the replica that does
+  not answer. The production profile grants the procedure.
 
 Both spaces take ids below the SQL server's (from 10001 up), are
 synchronous like every `_tarn_` space of a replicated shard, and are
 dropped with the copy: at cleanup, ABORT, or a new capture. A write to a
 table under copy writes one row more, its key's entry.
-`tla/EngineCopy.tla` models the durable capture. Each of
-`BugCaptureNotDurable`, `BugResumeBeforeSettle`, `BugSettleBeforeReread`,
-`BugNoGenerationBump`, `BugClearUnnoted` (a pass clears a key whose write
-rolled back) and `BugHolderNoHole` loses or keeps stale a row of the copy.
+`tla/EngineCopy.tla` models the durable capture, with the resume in two
+steps, the binding again at a restart, the pruning, and a reset in two
+steps. Each of the following loses or keeps stale a row of the copy:
+- `BugCaptureNotDurable`;
+- `BugResumeBeforeSettle`;
+- `BugSettleBeforeReread`;
+- `BugNoGenerationBump`;
+- `BugClearUnnoted`: a pass clears a key whose write rolled back;
+- `BugHolderNoHole`;
+- `BugResumeFailKeeps`: a resume that fails goes on with its new capture;
+- `BugRebindAtSettled`: a binding again at the settled generation;
+- `BugPruneUnsettled`: pruning the generation after the settled one;
+- `BugUnbindEarly`: a reset that stops the writes from noting their keys
+  before its record says that the copy starts over.
 
 A rebuild for an ALTER that also changes columns (issue #184) creates the
 shadow with the ALTER's format, and passes every row it writes, from a page
@@ -2517,7 +2550,7 @@ throughput measurements:
 | `lua/test/engine_lazy_test.lua` | rebuilds that keep a lazy index (issue #184), on both engines: writes to the old space during the copy, PREPARED, the lazy registry rebuilt between the renames and the catalog commit, APPLY interrupted there and before the catalog commit, a registry read then, a write between publication and cleanup, publication, a schema export, later writes, a second rebuild, an ALTER in place after it, ABORT, refused descriptors that ABORT still ends | 42 checks with the native module and with native disabled; the generation, its target and entries kept, bound to the copy at publication and to nothing else; the new space's writes refused until a registry knows it is published; ABORT retires nothing |
 | `lua/test/engine_lazy_made_test.lua` | rebuilds that make a lazy index (issue #184), on both engines: the online start before the copy, writes during a held scan batch and during the copy, the pending new space (also for a table's first lazy index), READY, APPLY interrupted before the catalog commit, publication, later writes, a schema export, ABORT before and after the copy, a late start, the scan behind the fence and its bound, APPLY without READY or the coordinator's batches, takeovers after the online scan and after the copy, refused descriptors | 74 checks with the native module and with native disabled; the generation built for the old space and bound with the kept ones at publication; ABORT retires it, and none of the kept ones |
 | `lua/test/engine_catchup_test.lua` | a copy's catch-up passes (issue #184), on both engines: passes during a copy written to more keys than its capture holds, a threshold of 0, the final pass's bound, unique values that change hands across a pass, a row written since a pass's swap that held a reread row's value, a write in flight at a pass's swap and one left in the synchronous queue, a pass that fails after its swap, after its deletes and through another job's cut, with and without room for its keys, passes in PREPARE over more keys than a batch, a capture lost during and after a pass, writes that outpace the passes during the copy and before the fence (1205); BUILD and PREPARE in slices, the budget of passes across sliced calls, a takeover and an ABORT between slices, a call that waited for the serial lock longer than its slice; PREPARE's own budget of passes after BUILD's, and the copy's restarts counted until it reaches the end of the table | 54 checks with the native module and with native disabled; the copy never restarts for its capture's size, and is exact |
-| `lua/test/engine_resume_test.lua` | a copy's durable capture (issue #184), on both engines: a capture lost during the copy, during a pass after its swap, and behind the fence resumes, with the rows written before and after the loss and after the resume; a pass's settled generation bounds the capture rebuilt; a pass and the final pass clear only the keys the durable capture notes, so a key whose write rolled back keeps its copy; a copy the holder rule takes out is a hole, which a resume puts back (and PREPARE meets the source's duplicate, 1062); a write rolled back leaves no entry; a resume waits for a write in flight and orders after one left in the synchronous queue; a copy not marked durable starts over; one past its limits starts over with a durable capture of its own; publication and ABORT drop the durable capture | 38 checks with the native module and with native disabled; every copy is exact |
+| `lua/test/engine_resume_test.lua` | a copy's durable capture (issue #184), on both engines: a capture lost during the copy, during a pass after its swap, and behind the fence resumes, with the rows written before and after the loss and after the resume; a pass's settled generation bounds the capture rebuilt; a pass and the final pass clear only the keys the durable capture notes, so a key whose write rolled back keeps its copy; a copy the holder rule takes out is a hole, which a resume puts back (and PREPARE meets the source's duplicate, 1062); a write rolled back leaves no entry; a resume waits for a write in flight and orders after one left in the synchronous queue; a copy not marked durable starts over; one past its limits starts over with a durable capture of its own; publication and ABORT drop the durable capture; a resume that fails part way (a deadline, another job's cut) leaves the capture lost, and one whose capture is lost meanwhile fails the step for now (1213), and the step sent again resumes; a durable capture bound again takes the generation after the settled one; a pass prunes the entries it settled once there are many; a write that began during ABORT's cut is not aborted by the drop of the durable capture; a reset after a resume has a deadline of its own, and one that fails leaves the copy to start over | 56 checks with the native module and with native disabled; every copy is exact |
 | `lua/test/engine_terminal_test.lua` | a detached shadow commit remains tracked after its caller ends; cleanup waits for the terminal/native queue cut; capture allocation failure cannot certify a lost tail | focused native-terminal fault gate, separate from process loss |
 | `lua/test/engine_replication.sh` | quorum-2/fsync replica sets: leader loss during copy resumes the copy from the durable capture, whose entry for a row written behind the cursor reached every replica with it (issue #184); a later leader loss preserves PREPARED and completes publication/cleanup | passes in both engine directions, with native enabled and disabled; eight owned leader terminations across four cohorts |
 
@@ -2623,26 +2656,30 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineBuildCallerOnlyCut | violates PreparedImage | 2058 | 4782 | 13 | 00s | 13 |
 | Bug_EngineBuildKeepPrefix | violates PreparedImage | 764 | 1673 | 9 | 00s | 9 |
 | Bug_EngineBuildReusePage | violates PreparedImage | 747 | 1651 | 10 | 00s | 10 |
-| Bug_EngineCopyAbandonLosesKeys | violates PreparedImage | 94856 | 306282 | 15 | 07s | 15 |
-| Bug_EngineCopyBeforeCapture | violates PreparedImage | 48927 | 144426 | 12 | 08s | 12 |
-| Bug_EngineCopyCaptureNotDurable | violates PreparedImage | 34880 | 110199 | 13 | 07s | 13 |
-| Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 47452 | 136793 | 13 | 08s | 13 |
-| Bug_EngineCopyClearUnnoted | violates PreparedImage | 156116 | 512375 | 16 | 09s | 16 |
-| Bug_EngineCopyHolderNoHole | violates PreparedImage | 55295 | 174978 | 14 | 07s | 14 |
-| Bug_EngineCopyLosePersistentFence | violates PreparedImage | 34490 | 97772 | 12 | 06s | 12 |
-| Bug_EngineCopyLostCaptureContinues | violates PreparedImage | 121940 | 379745 | 15 | 09s | 15 |
-| Bug_EngineCopyNoGenerationBump | violates PreparedImage | 79005 | 320526 | 18 | 07s | 18 |
-| Bug_EngineCopyPassDropsKeys | violates PreparedImage | 190550 | 662201 | 17 | 10s | 17 |
-| Bug_EngineCopyPassWithoutSettle | violates PreparedImage | 241295 | 840050 | 16 | 07s | 16 |
-| Bug_EngineCopyPrepareWithoutIndexes | violates PreparedImage | 10568 | 26372 | 10 | 03s | 10 |
-| Bug_EngineCopyRebuildPrepared | violates PreparedImage | 34490 | 97772 | 12 | 04s | 12 |
-| Bug_EngineCopyResumeBeforeSettle | violates PreparedImage | 144236 | 468131 | 15 | 08s | 15 |
-| Bug_EngineCopySettleBeforeReread | violates PreparedImage | 285990 | 962073 | 16 | 10s | 16 |
-| Bug_EngineCopySkipFinalDrain | violates PreparedImage | 54052 | 159111 | 13 | 06s | 13 |
-| Bug_EngineCopySkipPrefixDrain | violates PreparedImage | 44486 | 126649 | 13 | 07s | 13 |
-| Bug_EngineCopyStaleBatch | violates PreparedImage | 313567 | 1102628 | 18 | 17s | 18 |
-| Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 83110 | 256807 | 14 | 05s | 14 |
-| Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 394 | 652 | 6 | 01s | 6 |
+| Bug_EngineCopyAbandonLosesKeys | violates PreparedImage | 112481 | 352417 | 15 | 04s | 15 |
+| Bug_EngineCopyBeforeCapture | violates PreparedImage | 55986 | 160973 | 12 | 03s | 12 |
+| Bug_EngineCopyCaptureNotDurable | violates PreparedImage | 38079 | 122503 | 13 | 03s | 13 |
+| Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 56266 | 159700 | 13 | 03s | 13 |
+| Bug_EngineCopyClearUnnoted | violates PreparedImage | 271151 | 877196 | 17 | 08s | 17 |
+| Bug_EngineCopyHolderNoHole | violates PreparedImage | 67360 | 206853 | 14 | 04s | 14 |
+| Bug_EngineCopyLosePersistentFence | violates PreparedImage | 41908 | 115871 | 12 | 03s | 12 |
+| Bug_EngineCopyLostCaptureContinues | violates PreparedImage | 218118 | 683671 | 16 | 07s | 16 |
+| Bug_EngineCopyNoGenerationBump | violates PreparedImage | 116545 | 436145 | 18 | 05s | 18 |
+| Bug_EngineCopyPassDropsKeys | violates PreparedImage | 237585 | 791401 | 17 | 08s | 17 |
+| Bug_EngineCopyPassWithoutSettle | violates PreparedImage | 301939 | 1011784 | 16 | 09s | 16 |
+| Bug_EngineCopyPrepareWithoutIndexes | violates PreparedImage | 12445 | 30368 | 10 | 02s | 10 |
+| Bug_EngineCopyPruneUnsettled | violates PreparedImage | 159866 | 543845 | 14 | 05s | 14 |
+| Bug_EngineCopyRebindAtSettled | violates PreparedImage | 643858 | 2332461 | 21 | 20s | 21 |
+| Bug_EngineCopyRebuildPrepared | violates PreparedImage | 41908 | 115871 | 12 | 03s | 12 |
+| Bug_EngineCopyResumeBeforeSettle | violates PreparedImage | 247475 | 798476 | 16 | 07s | 16 |
+| Bug_EngineCopyResumeFailKeeps | violates PreparedImage | 256500 | 792134 | 16 | 07s | 16 |
+| Bug_EngineCopySettleBeforeReread | violates PreparedImage | 403462 | 1363666 | 16 | 11s | 16 |
+| Bug_EngineCopySkipFinalDrain | violates PreparedImage | 65687 | 189181 | 13 | 03s | 13 |
+| Bug_EngineCopySkipPrefixDrain | violates PreparedImage | 53076 | 149161 | 13 | 03s | 13 |
+| Bug_EngineCopyStaleBatch | violates PreparedImage | 514825 | 1763118 | 19 | 14s | 19 |
+| Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 102605 | 305474 | 14 | 04s | 14 |
+| Bug_EngineCopyUnbindEarly | violates PreparedImage | 354103 | 1193287 | 17 | 11s | 17 |
+| Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 411 | 652 | 6 | 01s | 6 |
 | Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 43487 | 242696 | 12 | 04s | 12 |
 | Bug_EngineCutoverAbortKeepsMade | violates AbortedMadeRetired | 1200 | 3313 | 4 | 01s | 4 |
 | Bug_EngineCutoverAbortRetiresKept | violates KeptLazyAlive | 288 | 468 | 3 | 01s | 3 |
@@ -2861,7 +2898,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineAlias | no errors | 12 | 13 | 7 | 00s |  |
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
 | EngineBuildReentry | no errors | 1500 | 2946 | 14 | 00s |  |
-| EngineCopy | no errors | 521352 | 2001274 | 30 | 22s |  |
+| EngineCopy | no errors | 1015638 | 4007132 | 35 | 32s |  |
 | EngineCutover | no errors | 70982 | 472752 | 26 | 05s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |

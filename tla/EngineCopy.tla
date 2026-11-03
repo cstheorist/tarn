@@ -37,7 +37,13 @@
    (a restart, a leader change) then leaves the copy where it was: once the
    writes in flight have terminated, the capture in memory is rebuilt from
    the keys and holes above the settled generation (Resume), or the copy
-   starts over (Reset), as before the durable capture. *)
+   starts over (Reset), as before the durable capture. A resume installs
+   the new capture before it waits and reads, and one that fails part way
+   leaves it lost; a reset records that the copy starts over before the
+   writes stop noting their keys in the durable capture; a node that binds
+   it again (a restart, a new leader) starts at the generation after the
+   settled one; and once a pass settled, the entries and holes up to its
+   generation may be deleted. *)
 EXTENDS Naturals, FiniteSets
 CONSTANTS BugBeforeCapture, BugSkipPrefixDrain, BugCaptureOnlyNewKeys,
           BugUnconfirmedSource, BugTailIgnoresDeletes, BugSkipFinalDrain,
@@ -45,7 +51,8 @@ CONSTANTS BugBeforeCapture, BugSkipPrefixDrain, BugCaptureOnlyNewKeys,
           BugPrepareWithoutIndexes, BugLosePersistentFence,
           BugPassWithoutSettle, BugPassDropsKeys, BugAbandonLosesKeys,
           BugCaptureNotDurable, BugResumeBeforeSettle, BugSettleBeforeReread,
-          BugNoGenerationBump, BugClearUnnoted, BugHolderNoHole
+          BugNoGenerationBump, BugClearUnnoted, BugHolderNoHole,
+          BugResumeFailKeeps, BugRebindAtSettled, BugPruneUnsettled, BugUnbindEarly
 
 Keys == {1, 2}
 Values == 0..2                 \* 0: absent, 1/2: committed row versions
@@ -61,14 +68,16 @@ Mutations == {
   [active |-> TRUE, keys |-> {2}, values |-> Rows(0, 2)],
   [active |-> TRUE, keys |-> Keys, values |-> Rows(0, 2)]}
 NoPage == [active |-> FALSE, key |-> 1, value |-> 0, gen |-> 0, dirty |-> FALSE]
-\* lost: the capture in memory was lost during the copy or behind the fence
-Phases == {"new", "capture", "copy", "fenced", "lost", "prepared", "published"}
+\* lost: the capture in memory was lost during the copy or behind the fence;
+\* resuming: a resume installed its new capture, and has not read the
+\* durable one yet; resetting: the job's record says the copy starts over.
+Phases == {"new", "capture", "copy", "fenced", "lost", "resuming", "resetting", "prepared", "published"}
 
 VARIABLES source, shadow, copied, dirty, indexes,
           phase, capture, generation, restarted, fenced,
           pending, started, page, late, unconfirmedCopied,
           swept, cleared, unsettled, tailCleared,
-          durable, entry, hole, gen, settled, swap
+          durable, entry, hole, gen, settled, swap, bound
 rvars == <<source, shadow, copied, dirty, indexes>>
 cvars == <<phase, capture, generation, restarted, fenced>>
 wvars == <<pending, started>>
@@ -77,9 +86,10 @@ pvars == <<swept, cleared, unsettled, tailCleared>>
 \* The durable capture: whether there is one, each key's entry (the
 \* generation of the last committed write noted, 0: none) and hole (the
 \* generation the copy took the key's row out of the shadow in, 0: none),
-\* the current generation, the settled one (in the job's record), and the
-\* generation the pass under way settles (0: none).
-dvars == <<durable, entry, hole, gen, settled, swap>>
+\* the current generation, the settled one (in the job's record), the
+\* generation the pass under way settles (0: none), and whether writes note
+\* their keys there (the leader binds it).
+dvars == <<durable, entry, hole, gen, settled, swap, bound>>
 vars == <<rvars, cvars, wvars, qvars, pvars, dvars>>
 NoEntries == [k \in Keys |-> 0]
 \* A key the durable capture notes above the settled generation.
@@ -87,6 +97,8 @@ Noted(k) == entry[k] > settled \/ hole[k] > settled
 \* The keys of a set a pass or the final pass clears and rereads: those the
 \* durable capture notes (all of them without one, or BugClearUnnoted).
 Kept(set) == IF durable /\ ~BugClearUnnoted THEN {k \in set : Noted(k)} ELSE set
+\* The generation a node that binds the durable capture again starts at.
+Rebound == IF BugRebindAtSettled /\ settled > 0 THEN settled ELSE settled + 1
 
 Init ==
     /\ source = Rows(1, 0) /\ shadow = Empty
@@ -97,6 +109,7 @@ Init ==
     /\ page = NoPage /\ late = NoPage /\ unconfirmedCopied = FALSE
     /\ swept = {} /\ cleared = FALSE /\ unsettled = FALSE /\ tailCleared = FALSE
     /\ durable = FALSE /\ entry = NoEntries /\ hole = NoEntries /\ gen = 1 /\ settled = 0 /\ swap = 0
+    /\ bound = FALSE
 
 (* Two writes permit delete/reinsert and a PK move. A pending operation can
    stand for a local/RC/native commit or a previously prepared APPLY: once
@@ -104,12 +117,13 @@ Init ==
    Its on_replace notes its keys in the capture in memory, if there is one,
    and in the durable capture, with the current generation: an entry its
    own transaction writes, so there only if it commits (BugCaptureNotDurable
-   notes nothing there). Writes go on while the capture in memory is lost. *)
+   notes nothing there), while it is bound. Writes go on while the capture
+   in memory is lost. *)
 StartWrite(m) ==
-    /\ phase \in {"new", "capture", "copy", "lost"} /\ ~fenced
+    /\ phase \in {"new", "capture", "copy", "lost", "resuming", "resetting"} /\ ~fenced
     /\ ~pending.active /\ started < 2 /\ m \in Mutations
     /\ pending' = [active |-> TRUE, keys |-> m.keys, values |-> m.values,
-                    gen |-> IF durable /\ ~BugCaptureNotDurable THEN gen ELSE 0]
+                    gen |-> IF durable /\ bound /\ ~BugCaptureNotDurable THEN gen ELSE 0]
     /\ started' = started + 1
     /\ dirty' = IF capture
                  THEN dirty \cup (IF BugCaptureOnlyNewKeys
@@ -130,7 +144,7 @@ FinishWrite(commit) ==
     \* pending at a time, so its end settles the pass.)
     /\ unsettled' = FALSE
     /\ UNCHANGED <<shadow, copied, dirty, indexes, cvars, started, qvars, swept, cleared, tailCleared,
-                   durable, hole, gen, settled, swap>>
+                   durable, hole, gen, settled, swap, bound>>
 
 (* A capture: in memory, and a durable one of its own, empty (the reset
    before a copy, or a copy started over). *)
@@ -138,6 +152,7 @@ InstallCapture ==
     /\ ~capture /\ phase \in {"new", "capture", "copy"}
     /\ capture' = TRUE /\ phase' = IF phase = "new" THEN "capture" ELSE phase
     /\ durable' = TRUE /\ entry' = NoEntries /\ hole' = NoEntries /\ gen' = 1 /\ settled' = 0 /\ swap' = 0
+    /\ bound' = TRUE
     /\ UNCHANGED <<rvars, generation, restarted, fenced, wvars, qvars, pvars>>
 
 BeginCopy ==
@@ -215,46 +230,100 @@ Publish ==
    kept separately so the stale-owner control has a real late delivery.
    The copy (shadow, cursor) and the durable capture are durable too: a
    capture lost during the copy, or behind the fence, leaves them for
-   Resume or Reset; one lost before the copy began starts it again. A pass
-   under way is lost with it, unsettled. *)
+   Resume or Reset; one lost before the copy began starts it again, as does
+   a copy whose record says it starts over. A pass under way is lost with
+   it, unsettled. The leader binds the durable capture of a copy that may
+   resume: a status change keeps the binding, and a node that binds it
+   again (a restart, a new leader) starts at the generation after the
+   settled one (BugRebindAtSettled at the settled one). *)
 Restart ==
     /\ ~restarted /\ phase # "new"
     /\ LET certified == phase \in {"prepared", "published"}
            wipe == certified /\ BugRebuildPrepared
+           next == IF certified \/ phase \in {"capture", "resetting"} THEN phase ELSE "lost"
        IN /\ shadow' = IF wipe THEN Empty ELSE shadow
           /\ copied' = IF wipe THEN {} ELSE copied
           /\ indexes' = IF wipe THEN FALSE ELSE indexes
-          /\ phase' = IF certified \/ phase = "capture" THEN phase ELSE "lost"
+          /\ phase' = next
           /\ fenced' = IF certified /\ BugLosePersistentFence THEN FALSE ELSE fenced
+          /\ bound' = (next = "lost")
+          /\ gen' \in IF next = "lost" THEN {gen, Rebound} ELSE {gen}
     /\ dirty' = {} /\ capture' = FALSE
     /\ generation' = 2 /\ restarted' = TRUE
     /\ late' = IF page.active THEN page ELSE NoPage
     /\ page' = NoPage
     /\ swept' = {} /\ cleared' = FALSE /\ unsettled' = FALSE /\ tailCleared' = FALSE /\ swap' = 0
-    /\ UNCHANGED <<source, pending, started, unconfirmedCopied, durable, entry, hole, gen, settled>>
+    /\ UNCHANGED <<source, pending, started, unconfirmedCopied, durable, entry, hole, settled>>
 
-(* The capture in memory rebuilt from the durable one: the keys and holes
-   above the settled generation. The writes noted only there may still be in flight,
-   which it waits for, as a pass does, before it reads the durable capture
-   (BugResumeBeforeSettle reads it with one in flight, whose entry it then
-   misses). BugLostCaptureContinues goes on without the durable capture's
-   keys. *)
-Resume ==
+(* The capture in memory rebuilt from the durable one, in two steps. First
+   a new one is installed, which notes the writes from then on, with the
+   durable capture bound at a generation above the settled one. Then the
+   keys and holes above the settled generation join it. The writes noted
+   only in the durable capture may still be in flight, which it waits for
+   between the two, as a pass does (BugResumeBeforeSettle reads with one in
+   flight, whose entry it then misses). BugLostCaptureContinues goes on
+   without the durable capture's keys. A resume may fail between the two
+   (a deadline, a lost cut, a status change): the new capture is then lost
+   too, and the copy resumes again (BugResumeFailKeeps goes on with it). *)
+ResumeBegin ==
     /\ phase = "lost" /\ durable
+    /\ capture' = TRUE /\ dirty' = {} /\ phase' = "resuming"
+    /\ bound' = TRUE /\ gen' = IF gen > settled THEN gen ELSE settled + 1
+    /\ UNCHANGED <<source, shadow, copied, indexes, generation, restarted, fenced, wvars, qvars, pvars,
+                   durable, entry, hole, settled, swap>>
+ResumeEnd ==
+    /\ phase = "resuming"
     /\ ~pending.active \/ BugResumeBeforeSettle
-    /\ capture' = TRUE
-    /\ dirty' = IF BugLostCaptureContinues THEN {} ELSE {k \in Keys : Noted(k)}
+    /\ dirty' = IF BugLostCaptureContinues THEN dirty ELSE dirty \cup {k \in Keys : Noted(k)}
     /\ phase' = IF fenced THEN "fenced" ELSE "copy"
+    /\ UNCHANGED <<source, shadow, copied, indexes, capture, generation, restarted, fenced, wvars, qvars, pvars,
+                   dvars>>
+ResumeFail ==
+    /\ phase = "resuming"
+    /\ IF BugResumeFailKeeps
+       THEN /\ phase' = IF fenced THEN "fenced" ELSE "copy"
+            /\ UNCHANGED <<capture, dirty>>
+       ELSE /\ phase' = "lost" /\ capture' = FALSE /\ dirty' = {}
     /\ UNCHANGED <<source, shadow, copied, indexes, generation, restarted, fenced, wvars, qvars, pvars, dvars>>
 
 (* Or the copy starts over (past the capture's limits, or no durable
-   capture), with a capture of its own (InstallCapture). *)
-Reset ==
+   capture), with a capture of its own (InstallCapture). Its record says so
+   first, and then the writes stop noting their keys in the durable capture
+   (whose spaces it drops once the writes in flight have ended). No resume
+   follows a reset begun, failed or not. BugUnbindEarly stops them before,
+   in a reset that then fails, and the copy resumes. *)
+ResetBegin ==
     /\ phase = "lost"
+    /\ phase' = "resetting" /\ bound' = FALSE
+    /\ UNCHANGED <<rvars, capture, generation, restarted, fenced, wvars, qvars, pvars,
+                   durable, entry, hole, gen, settled, swap>>
+UnbindEarly ==
+    /\ BugUnbindEarly /\ phase = "lost" /\ bound
+    /\ bound' = FALSE
+    /\ UNCHANGED <<rvars, cvars, wvars, qvars, pvars, durable, entry, hole, gen, settled, swap>>
+Reset ==
+    /\ phase = "resetting"
     /\ shadow' = Empty /\ copied' = {} /\ indexes' = FALSE
     /\ phase' = "capture" /\ durable' = FALSE
     /\ UNCHANGED <<source, dirty, capture, generation, restarted, fenced, wvars, qvars, pvars,
-                   entry, hole, gen, settled, swap>>
+                   entry, hole, gen, settled, swap, bound>>
+
+(* Once a pass settled its generation, a key's entry or hole up to it may be
+   deleted: a resume, and a pass, skip it. (A delete reads the entry in its
+   own transaction, so a write that notes the key again either commits
+   before, and the delete sees its newer entry, or after; or the delete
+   fails with a conflict. The implementation deletes them once the durable
+   capture has noted enough keys.) BugPruneUnsettled deletes those of the
+   generation after the settled one too. *)
+Prunable(g) == g > 0 /\ g <= (IF BugPruneUnsettled THEN settled + 1 ELSE settled)
+PruneEntry(k) ==
+    /\ durable /\ Prunable(entry[k])
+    /\ entry' = [entry EXCEPT ![k] = 0]
+    /\ UNCHANGED <<rvars, cvars, wvars, qvars, pvars, durable, hole, gen, settled, swap, bound>>
+PruneHole(k) ==
+    /\ durable /\ Prunable(hole[k])
+    /\ hole' = [hole EXCEPT ![k] = 0]
+    /\ UNCHANGED <<rvars, cvars, wvars, qvars, pvars, durable, entry, gen, settled, swap, bound>>
 
 DeliverOldPage ==
     /\ late.active
@@ -281,7 +350,7 @@ BeginPass ==
     /\ swept' = dirty /\ dirty' = {} /\ unsettled' = pending.active
     /\ swap' = gen /\ gen' = IF BugNoGenerationBump THEN gen ELSE gen + 1
     /\ UNCHANGED <<source, shadow, copied, indexes, cvars, wvars, qvars, cleared, tailCleared,
-                   durable, entry, hole, settled>>
+                   durable, entry, hole, settled, bound>>
 ClearPass ==
     /\ swept # {} /\ ~cleared /\ (~unsettled \/ BugPassWithoutSettle)
     /\ LET keep == Kept(swept)
@@ -299,7 +368,7 @@ SettlePass ==
     /\ swap > 0 /\ (swept = {} \/ BugSettleBeforeReread)
     /\ settled' = IF swap > settled THEN swap ELSE settled
     /\ swap' = 0
-    /\ UNCHANGED <<rvars, cvars, wvars, qvars, pvars, durable, entry, hole, gen>>
+    /\ UNCHANGED <<rvars, cvars, wvars, qvars, pvars, durable, entry, hole, gen, bound>>
 
 (* The holder rule (tla/ShadowUnique.tla), here for any captured row: a
    page's row, or a pass's reread one, needs a unique key a captured row's
@@ -310,7 +379,8 @@ HolderDelete(k) ==
     /\ phase = "copy" /\ capture /\ ~page.active /\ k \in dirty /\ k \in copied
     /\ shadow' = [shadow EXCEPT ![k] = 0]
     /\ hole' = IF durable /\ ~BugHolderNoHole THEN [hole EXCEPT ![k] = gen] ELSE hole
-    /\ UNCHANGED <<source, copied, dirty, indexes, cvars, wvars, qvars, pvars, durable, entry, gen, settled, swap>>
+    /\ UNCHANGED <<source, copied, dirty, indexes, cvars, wvars, qvars, pvars, durable, entry, gen, settled, swap,
+                   bound>>
 
 (* A pass that fails at any step (a lost cut, a deadline, a cancelled
    fiber) puts the keys it has not reread back into the capture: they may
@@ -322,12 +392,13 @@ AbandonPass ==
     /\ dirty' = IF BugAbandonLosesKeys THEN dirty ELSE dirty \cup swept
     /\ swept' = {} /\ cleared' = FALSE /\ unsettled' = FALSE /\ swap' = 0
     /\ UNCHANGED <<source, shadow, copied, indexes, cvars, wvars, qvars, tailCleared,
-                   durable, entry, hole, gen, settled>>
+                   durable, entry, hole, gen, settled, bound>>
 
 Next == (\E m \in Mutations : StartWrite(m)) \/ FinishWrite(TRUE) \/ FinishWrite(FALSE)
         \/ InstallCapture \/ BeginCopy \/ (\E k \in Keys : ReadPage(k)) \/ WritePage
         \/ Fence \/ TailClear \/ (\E k \in Keys : Tail(k)) \/ BuildIndexes \/ Prepare \/ Publish
-        \/ Restart \/ Resume \/ Reset \/ DeliverOldPage
+        \/ Restart \/ ResumeBegin \/ ResumeEnd \/ ResumeFail \/ ResetBegin \/ UnbindEarly \/ Reset
+        \/ (\E k \in Keys : PruneEntry(k) \/ PruneHole(k)) \/ DeliverOldPage
         \/ BeginPass \/ ClearPass \/ (\E k \in Keys : RereadPass(k)) \/ SettlePass \/ AbandonPass
         \/ (\E k \in Keys : HolderDelete(k))
 Spec == Init /\ [][Next]_vars
@@ -345,7 +416,7 @@ TypeOK == /\ source \in [Keys -> Values] /\ shadow \in [Keys -> Values]
           /\ tailCleared \in BOOLEAN
           /\ durable \in BOOLEAN /\ entry \in [Keys -> 0..MaxGen] /\ hole \in [Keys -> 0..MaxGen]
           /\ gen \in 1..MaxGen
-          /\ settled \in 0..MaxGen /\ swap \in 0..MaxGen
+          /\ settled \in 0..MaxGen /\ swap \in 0..MaxGen /\ bound \in BOOLEAN
 ConfirmedCopies == ~unconfirmedCopied
 PreparedImage == phase \in {"prepared", "published"} =>
                   /\ shadow = source /\ copied = Keys /\ indexes /\ fenced

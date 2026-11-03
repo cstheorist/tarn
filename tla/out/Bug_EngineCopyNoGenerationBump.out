@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 1 and seed 3270221248386571670 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 4053] (Linux 6.18.44-fc-v230 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 84 and seed -6904796094861919560 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 22123] (Linux 6.18.44-fc-v230 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-durable/tla/EngineCopy.tla
-Parsing file /tmp/tlc-16866881084116788780/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-16866881084116788780/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-16866881084116788780/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-16866881084116788780/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-16866881084116788780/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-16866881084116788780/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-16866881084116788780/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-10525269084160436786/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-10525269084160436786/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-10525269084160436786/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-10525269084160436786/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-10525269084160436786/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-10525269084160436786/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-10525269084160436786/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,10 +19,10 @@ Semantic processing of module EngineCopy
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCopy
-Starting... (2026-11-03 07:15:14)
+Starting... (2026-11-03 10:07:35)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-03 07:15:14.
-Progress(13) at 2026-11-03 07:15:17: 77,442 states generated (77,442 s/min), 23,881 distinct states found (23,881 ds/min), 7,842 states left on queue.
+Finished computing initial states: 1 distinct state generated at 2026-11-03 10:07:35.
+Progress(16) at 2026-11-03 10:07:38: 239,326 states generated (239,326 s/min), 69,535 distinct states found (69,535 ds/min), 17,728 states left on queue.
 Error: Invariant PreparedImage is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -31,6 +31,7 @@ State 1: <Initial predicate>
 /\ dirty = {}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = FALSE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -52,12 +53,13 @@ State 1: <Initial predicate>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 2: <InstallCapture line 138, col 5 to line 141, col 78 of module EngineCopy>
+State 2: <InstallCapture line 152, col 5 to line 156, col 78 of module EngineCopy>
 /\ phase = "capture"
 /\ durable = TRUE
 /\ dirty = {}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -79,12 +81,13 @@ State 2: <InstallCapture line 138, col 5 to line 141, col 78 of module EngineCop
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 3: <StartWrite([active |-> TRUE, keys |-> {1}, values |-> <<0, 0>>]) line 109, col 5 to line 118, col 80 of module EngineCopy>
+State 3: <StartWrite([active |-> TRUE, keys |-> {1}, values |-> <<0, 0>>]) line 123, col 5 to line 132, col 80 of module EngineCopy>
 /\ phase = "capture"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -106,12 +109,13 @@ State 3: <StartWrite([active |-> TRUE, keys |-> {1}, values |-> <<0, 0>>]) line 
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 4: <FinishWrite(FALSE) line 121, col 5 to line 133, col 54 of module EngineCopy>
+State 4: <FinishWrite(FALSE) line 135, col 5 to line 147, col 61 of module EngineCopy>
 /\ phase = "capture"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -133,12 +137,13 @@ State 4: <FinishWrite(FALSE) line 121, col 5 to line 133, col 54 of module Engin
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 5: <BeginCopy line 144, col 5 to line 148, col 94 of module EngineCopy>
+State 5: <BeginCopy line 159, col 5 to line 163, col 94 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -160,12 +165,13 @@ State 5: <BeginCopy line 144, col 5 to line 148, col 94 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 6: <ReadPage(1) line 151, col 5 to line 157, col 79 of module EngineCopy>
+State 6: <ReadPage(1) line 166, col 5 to line 172, col 79 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -187,12 +193,13 @@ State 6: <ReadPage(1) line 151, col 5 to line 157, col 79 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 7: <WritePage line 160, col 5 to line 167, col 77 of module EngineCopy>
+State 7: <WritePage line 175, col 5 to line 182, col 77 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -214,12 +221,13 @@ State 7: <WritePage line 160, col 5 to line 167, col 77 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 8: <ReadPage(2) line 151, col 5 to line 157, col 79 of module EngineCopy>
+State 8: <ReadPage(2) line 166, col 5 to line 172, col 79 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -241,12 +249,13 @@ State 8: <ReadPage(2) line 151, col 5 to line 157, col 79 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 9: <WritePage line 160, col 5 to line 167, col 77 of module EngineCopy>
+State 9: <WritePage line 175, col 5 to line 182, col 77 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -268,12 +277,13 @@ State 9: <WritePage line 160, col 5 to line 167, col 77 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 10: <BuildIndexes line 195, col 5 to line 199, col 85 of module EngineCopy>
+State 10: <BuildIndexes line 210, col 5 to line 214, col 85 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -295,12 +305,13 @@ State 10: <BuildIndexes line 195, col 5 to line 199, col 85 of module EngineCopy
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 11: <BeginPass line 279, col 5 to line 284, col 50 of module EngineCopy>
+State 11: <BeginPass line 348, col 5 to line 353, col 57 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -322,12 +333,13 @@ State 11: <BeginPass line 279, col 5 to line 284, col 50 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 12: <StartWrite([active |-> TRUE, keys |-> {1}, values |-> <<0, 0>>]) line 109, col 5 to line 118, col 80 of module EngineCopy>
+State 12: <StartWrite([active |-> TRUE, keys |-> {1}, values |-> <<0, 0>>]) line 123, col 5 to line 132, col 80 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -349,12 +361,13 @@ State 12: <StartWrite([active |-> TRUE, keys |-> {1}, values |-> <<0, 0>>]) line
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 13: <ClearPass line 286, col 5 to line 291, col 103 of module EngineCopy>
+State 13: <ClearPass line 355, col 5 to line 360, col 103 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<0, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -376,12 +389,13 @@ State 13: <ClearPass line 286, col 5 to line 291, col 103 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 14: <FinishWrite(TRUE) line 121, col 5 to line 133, col 54 of module EngineCopy>
+State 14: <FinishWrite(TRUE) line 135, col 5 to line 147, col 61 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<1, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -403,12 +417,13 @@ State 14: <FinishWrite(TRUE) line 121, col 5 to line 133, col 54 of module Engin
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 15: <SettlePass line 299, col 5 to line 302, col 81 of module EngineCopy>
+State 15: <SettlePass line 368, col 5 to line 371, col 88 of module EngineCopy>
 /\ phase = "copy"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = FALSE
 /\ entry = <<1, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -430,12 +445,13 @@ State 15: <SettlePass line 299, col 5 to line 302, col 81 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 16: <Fence line 170, col 5 to line 172, col 86 of module EngineCopy>
+State 16: <Fence line 185, col 5 to line 187, col 86 of module EngineCopy>
 /\ phase = "fenced"
 /\ durable = TRUE
 /\ dirty = {1}
 /\ fenced = TRUE
 /\ entry = <<1, 0>>
+/\ bound = TRUE
 /\ tailCleared = FALSE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -457,12 +473,13 @@ State 16: <Fence line 170, col 5 to line 172, col 86 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 17: <TailClear line 178, col 5 to line 185, col 99 of module EngineCopy>
+State 17: <TailClear line 193, col 5 to line 200, col 99 of module EngineCopy>
 /\ phase = "fenced"
 /\ durable = TRUE
 /\ dirty = {}
 /\ fenced = TRUE
 /\ entry = <<1, 0>>
+/\ bound = TRUE
 /\ tailCleared = TRUE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -484,12 +501,13 @@ State 17: <TailClear line 178, col 5 to line 185, col 99 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-State 18: <Prepare line 202, col 5 to line 206, col 85 of module EngineCopy>
+State 18: <Prepare line 217, col 5 to line 221, col 85 of module EngineCopy>
 /\ phase = "prepared"
 /\ durable = TRUE
 /\ dirty = {}
 /\ fenced = TRUE
 /\ entry = <<1, 0>>
+/\ bound = TRUE
 /\ tailCleared = TRUE
 /\ unsettled = FALSE
 /\ cleared = FALSE
@@ -511,7 +529,7 @@ State 18: <Prepare line 202, col 5 to line 206, col 85 of module EngineCopy>
 /\ unconfirmedCopied = FALSE
 /\ hole = <<0, 0>>
 
-320526 states generated, 79005 distinct states found, 10838 states left on queue.
+436145 states generated, 116545 distinct states found, 22448 states left on queue.
 The depth of the complete state graph search is 18.
-Finished in 07s at (2026-11-03 07:15:20)
-Trace exploration spec path: ./EngineCopy_TTrace_1793708113.tla
+Finished in 05s at (2026-11-03 10:07:40)
+Trace exploration spec path: ./EngineCopy_TTrace_1793718454.tla

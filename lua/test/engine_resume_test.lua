@@ -159,6 +159,22 @@ local function mirror(t)
     return out
 end
 local function same(a, b) return json.encode(a) == json.encode(b) end
+-- Whether the capture in memory is one BUILD would take for the copy's.
+local function current(t)
+    local track = tarn.engine.tracks[t.old_id]
+    return track ~= nil and track.valid == true and track.token == record(t).capture
+end
+-- The durable capture's entries, {key[1], generation} each, sorted.
+local function entries(t)
+    local r = record(t)
+    local sp = box.space[PREFIX .. t.old_id .. '_' .. (r.capture:gsub('-', ''))]
+    local out = {}
+    for _, e in ipairs(sp and confirmed(function() return sp:select() end) or {}) do
+        out[#out + 1] = {mp.decode(e[1])[1], e[2]}
+    end
+    table.sort(out, function(x, y) return x[1] < y[1] end)
+    return out
+end
 -- A copy held after its first page (rows 1 to 4).
 local function held_copy(t)
     hook('engine_copy', 'hold')
@@ -175,7 +191,7 @@ end
 
 local function exercise(engine)
     local label = function(s) return engine .. ': ' .. s end
-    local restore, t, building, built, prepared, exact, resumes, names
+    local restore, t, building, built, prepared, exact, resumes, names, resets
 
     -- The capture lost during the copy: rows written before the loss, after
     -- it and after the resume all reach the copy, which goes on from its
@@ -478,11 +494,229 @@ local function exercise(engine)
     check(label('that copy is exact, and ABORT drops its durable capture'),
         exact and ended[1] == 'ok' and #durables(t) == 0, {prepared, ended, durables(t)})
     restore()
+
+    -- A resume that fails part way (here its wait for a write in flight past
+    -- the call's deadline, or its marker after another job's cut) leaves the
+    -- capture lost, not an empty one BUILD would take for current. The
+    -- BUILD sent again resumes, with row 2's key.
+    for _, variant in ipairs({'deadline', 'meter'}) do
+        restore = set{engine_copy_rows = 4, engine_fence_keys = 64}
+        t = table_and_copy(engine, 'resume_' .. variant, 40)
+        if variant == 'deadline' then t.args.timeout = 1 end
+        building = held_copy(t)
+        ok(set_v(t, 2, 2002))
+        tarn.engine.tracks[t.old_id].valid = false
+        hook('written', 'hold')
+        local writer = spawn(function() return set_v(t, 30, 3003) end)
+        hook('written', 'reached')
+        hook('engine_copy', 'release')
+        fiber.sleep(variant == 'deadline' and 1.5 or 0.2)
+        if variant == 'meter' then tarn.engine.tickets.invalidate() end
+        hook('written', 'release')
+        local wrote = join(writer)
+        first = join(building)
+        local left = current(t)
+        built = call('build', t)
+        prepared, exact = publish(t)
+        check(label('a resume that fails part way (' .. variant .. ') leaves the capture lost; BUILD sent again resumes'),
+            wrote[1] == 'ok' and first[1] ~= 'ok' and first[2] == (variant == 'deadline' and 1205 or 1213)
+            and not left and built[1] == 'ok' and prepared[1] == 'ok' and exact, {first, left, built, prepared})
+        restore()
+    end
+
+    -- A capture lost while it resumes, to a status change, fails the step
+    -- for now (1213): the copy does not start over, and the step sent again
+    -- resumes.
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 64}
+    t = table_and_copy(engine, 'lost_resuming', 40)
+    building = held_copy(t)
+    token, resets = record(t).capture, record(t).resets
+    ok(set_v(t, 2, 2002))
+    tarn.engine.invalidate(true)
+    hook('engine_resume_marked', 'hold')
+    hook('engine_copy', 'release')
+    hook('engine_resume_marked', 'reached')
+    tarn.engine.invalidate(true)
+    hook('engine_resume_marked', 'release')
+    first = join(building)
+    r = record(t)
+    built = call('build', t)
+    prepared, exact = publish(t)
+    check(label('a capture lost while it resumes fails the step for now; the copy goes on with the same capture'),
+        first[1] ~= 'ok' and first[2] == 1213 and r.capture == token and r.resets == resets
+        and built[1] == 'ok' and prepared[1] == 'ok' and exact, {first, r, built, prepared})
+    restore()
+
+    -- A new leader binds the durable capture with the generation after the
+    -- settled one: a write there is above it, and in the capture a resume
+    -- rebuilds. (Here the binding is dropped, as on a new leader, after a
+    -- pass settled.)
+    restore = set{engine_copy_rows = 4, engine_catchup_keys = 2, engine_fence_keys = 64}
+    t = table_and_copy(engine, 'rebind', 40)
+    building = held_copy(t)
+    ok(set_v(t, 1, 1001)); ok(set_v(t, 2, 2002))
+    hook('engine_catch_up', 'hold')
+    hook('engine_copy', 'release')
+    hook('engine_catch_up', 'reached')
+    settled = record(t).settled or 0
+    tarn.engine.durable[t.old_id] = nil
+    tarn.engine.invalidate(true)
+    ok(set_v(t, 3, 3003))
+    local e3 = entry(t, {3})
+    tarn.engine.tracks[t.old_id].valid = false
+    hook('engine_resumed', 'hold')
+    hook('engine_catch_up', 'release')
+    hook('engine_resumed', 'reached')
+    resumed = mirror(t)
+    hook('engine_resumed', 'release')
+    built = join(building)
+    prepared, exact = publish(t)
+    check(label('a durable capture bound again takes the generation after the settled one, which a resume reads'),
+        settled >= 1 and e3 ~= nil and e3[2] == settled + 1 and same(resumed, {3}) and built[1] == 'ok'
+        and prepared[1] == 'ok' and exact, {settled, e3, resumed, built, prepared})
+    restore()
+
+    -- Once a binding has noted more than twice the mirror's limit of keys, a
+    -- pass that settled deletes the entries up to its generation: the
+    -- capture keeps those above it, which a resume still reads. (Rows 5 to
+    -- 7 are written between passes; row 1 during the last pass, after its
+    -- swap, so above the generation it settles.)
+    restore = set{engine_copy_rows = 4, engine_dirty_keys = 4, engine_catchup_keys = 2, engine_fence_keys = 64}
+    t = table_and_copy(engine, 'prune', 40)
+    building = held_copy(t)
+    local prunes = tarn.engine.prunes or 0
+    for round = 1, 3 do
+        ok(set_v(t, 4 + round, 5000 + round)); ok(set_v(t, 10 + round, 6000 + round)); ok(set_v(t, 20 + round, 7000 + round))
+        if round < 3 then
+            hook('engine_catch_up', 'hold')
+            hook('engine_copy', 'release')
+            hook('engine_catch_up', 'reached')
+            hook('engine_copy', 'hold')
+            hook('engine_catch_up', 'release')
+            hook('engine_copy', 'reached')
+        end
+    end
+    hook('engine_catch_up_swapped', 'hold')
+    hook('engine_pruned', 'hold')
+    hook('engine_copy', 'release')
+    hook('engine_catch_up_swapped', 'reached')
+    ok(set_v(t, 1, 1001))
+    hook('engine_catch_up_swapped', 'release')
+    hook('engine_pruned', 'reached')
+    settled = record(t).settled or 0
+    local kept = entries(t)
+    tarn.engine.tracks[t.old_id].valid = false
+    hook('engine_resumed', 'hold')
+    hook('engine_pruned', 'release')
+    hook('engine_resumed', 'reached')
+    resumed = mirror(t)
+    hook('engine_resumed', 'release')
+    built = join(building)
+    prepared, exact = publish(t)
+    local above = #kept > 0
+    for _, e in ipairs(kept) do above = above and e[2] > settled end
+    check(label('a pass deletes the entries up to the generation it settled once the capture noted enough keys'),
+        (tarn.engine.prunes or 0) == prunes + 1 and settled >= 3 and above and same(kept, {{1, settled + 1}}),
+        {prunes, tarn.engine.prunes, settled, kept})
+    check(label('a resume after it rebuilds the capture with the keys above that generation, and the copy is exact'),
+        same(resumed, {1}) and built[1] == 'ok' and prepared[1] == 'ok' and exact, {resumed, built, prepared})
+    restore()
+
+    -- ABORT stops the writes from noting their keys in the durable capture
+    -- before its cut: a write that began during the cut, and is in flight
+    -- when the durable capture's spaces are dropped, is not aborted by the
+    -- drop. (The write in flight at the cut is held before its statement.)
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 64}
+    t = table_and_copy(engine, 'abort_in_flight', 40)
+    ok(call('build', t))
+    hook('write', 'hold')
+    local before = spawn(function() return set_v(t, 5, 5005) end)
+    hook('write', 'reached')
+    decide(t, 'abort')
+    local aborting = spawn(function() return call('abort', t) end)
+    fiber.sleep(0.2)
+    hook('written', 'hold')
+    local during = spawn(function() return set_v(t, 7, 7007) end)
+    hook('written', 'reached')
+    hook('write', 'release')
+    ended = join(aborting)
+    local names_after = durables(t)
+    hook('written', 'release')
+    local wrote_before, wrote_during = join(before), join(during)
+    end_job(t)
+    check(label('a write that began during ABORT\'s cut is not aborted by the drop of the durable capture'),
+        ended[1] == 'ok' and #names_after == 0 and wrote_before[1] == 'ok' and wrote_during[1] == 'ok'
+        and box.space[t.old_id]:get{7}[2] == 7007, {ended, names_after, wrote_before, wrote_during})
+    restore()
+
+    -- A capture past its limits after a resume starts the copy over, whose
+    -- cut has a deadline of its own: here the resume took the call's (1 s),
+    -- and the cut meets a commit in flight.
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 64}
+    t = table_and_copy(engine, 'reset_deadline', 40)
+    t.args.timeout = 1
+    building = held_copy(t)
+    token = record(t).capture
+    tarn.cfg.engine_dirty_keys = 2
+    ok(set_v(t, 13, 13013)); ok(set_v(t, 16, 16016)); ok(set_v(t, 19, 19019))
+    hook('engine_resume_marked', 'hold')
+    hook('engine_copy', 'release')
+    hook('engine_resume_marked', 'reached')
+    fiber.sleep(1.2)
+    hook('written', 'hold')
+    writer = spawn(function() return set_v(t, 22, 22022) end)
+    hook('written', 'reached')
+    hook('engine_resume_marked', 'release')
+    fiber.sleep(0.2)
+    hook('written', 'release')
+    built = join(building)
+    tarn.cfg.engine_dirty_keys = nil
+    wrote = join(writer)
+    r = record(t)
+    prepared, exact = publish(t)
+    check(label('a copy started over after a resume past its limits has a deadline of its own for its cut'),
+        built[1] == 'ok' and wrote[1] == 'ok' and r.capture ~= token and r.resumes == 1
+        and prepared[1] == 'ok' and exact, {built, wrote, r, prepared})
+    restore()
+
+    -- A reset records that the copy starts over before the writes stop
+    -- noting their keys in the durable capture: once it fails (here its cut,
+    -- past its deadline), the step sent again starts the copy over too,
+    -- rather than resume a capture that missed the writes meanwhile (row 2).
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 64}
+    t = table_and_copy(engine, 'reset_failed', 40)
+    t.args.timeout = 1
+    building = held_copy(t)
+    token = record(t).capture
+    tarn.cfg.engine_dirty_keys = 2
+    ok(set_v(t, 13, 13013)); ok(set_v(t, 16, 16016)); ok(set_v(t, 19, 19019))
+    hook('engine_resume_marked', 'hold')
+    hook('engine_copy', 'release')
+    hook('engine_resume_marked', 'reached')
+    hook('written', 'hold')
+    writer = spawn(function() return set_v(t, 22, 22022) end)
+    hook('written', 'reached')
+    hook('engine_resume_marked', 'release')
+    fiber.sleep(0.2)
+    local meanwhile = set_v(t, 2, 2002)
+    first = join(building)
+    hook('written', 'release')
+    wrote = join(writer)
+    tarn.cfg.engine_dirty_keys = nil
+    local phase_after = record(t).phase
+    built = call('build', t)
+    r = record(t)
+    prepared, exact = publish(t)
+    check(label('a reset that fails leaves the copy to start over, not to resume a capture missing the writes meanwhile'),
+        meanwhile[1] == 'ok' and wrote[1] == 'ok' and first[1] ~= 'ok' and first[2] == 1205
+        and phase_after == 'resetting' and built[1] == 'ok' and r.capture ~= token and prepared[1] == 'ok' and exact,
+        {meanwhile, first, phase_after, built, r, prepared})
+    restore()
 end
 
 local function cleanup()
     for _, name in ipairs({'engine_copy', 'engine_catch_up', 'engine_catch_up_swapped', 'engine_resumed',
-                           'engine_resume_marked', 'engine_tail', 'written'}) do
+                           'engine_resume_marked', 'engine_pruned', 'engine_tail', 'write', 'written'}) do
         pcall(tarn_test_hook, name, 'release')
     end
     for _, t in pairs(jobs) do

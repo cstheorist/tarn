@@ -1345,16 +1345,35 @@ rereads. A pass, and the final pass (now a clear of its keys, then their
 rereads), clear only the keys the durable capture notes above the settled
 generation. `HolderDelete` takes any captured, copied row's copy out of
 the shadow during the copy, which over-approximates the unique conflicts
-`ShadowUnique` checks. A restart keeps the copy and the durable capture;
-`Resume` rebuilds the capture from the keys and holes above the settled
-generation once no write is pending, and `Reset` starts the copy over.
-`BugLostCaptureContinues` resumes without the durable keys.
-`BugCaptureNotDurable` notes no entry. `BugResumeBeforeSettle` resumes
-with a write pending, whose entry it misses. `BugSettleBeforeReread`
-settles a pass's generation before its rereads. `BugNoGenerationBump`
-leaves the writes after a swap in the generation the pass settles.
-`BugClearUnnoted` clears a key whose write rolled back, which a resume
-then misses. `BugHolderNoHole` notes no hole. Each breaks `PreparedImage`.
+`ShadowUnique` checks. A restart keeps the copy and the durable capture.
+A status change keeps the leader's binding of it (`bound`: whether writes
+note their keys there), and a node that binds it again starts at the
+generation after the settled one. A resume takes two steps.
+`ResumeBegin` installs a new capture, which notes the writes from then on.
+`ResumeEnd` adds the keys and holes above the settled generation once no
+write is pending. `ResumeFail` between the two leaves the capture lost
+again. A reset takes two steps too: `ResetBegin` records that the copy
+starts over and only then stops the writes from noting their keys, and
+`Reset` starts the copy over. `PruneEntry` and `PruneHole` delete an entry
+or a hole up to the settled generation at any time, which
+over-approximates the passes' pruning. Each control breaks
+`PreparedImage`:
+- `BugLostCaptureContinues` resumes without the durable keys;
+- `BugCaptureNotDurable` notes no entry;
+- `BugResumeBeforeSettle` resumes with a write pending, whose entry it
+  misses;
+- `BugSettleBeforeReread` settles a pass's generation before its rereads;
+- `BugNoGenerationBump` leaves the writes after a swap in the generation
+  the pass settles;
+- `BugClearUnnoted` clears a key whose write rolled back, which a resume
+  then misses;
+- `BugHolderNoHole` notes no hole;
+- `BugResumeFailKeeps` goes on with the capture a failed resume installed;
+- `BugRebindAtSettled` binds again at the settled generation, so a write
+  after it is not above it;
+- `BugPruneUnsettled` prunes the generation after the settled one;
+- `BugUnbindEarly` stops the writes from noting their keys in a reset that
+  fails before its record says so, and the copy resumes without them.
 
 `EngineCutover` separates all-shard preparation/auxiliary readiness, a
 confirmed central decision, native rename, local catalog publication and
@@ -1686,7 +1705,7 @@ so orders the reread after a detached write without the marker; the
 marker doesn't rely on that.
 
 [A suite for the durable capture](../lua/test/engine_resume_test.lua)
-(issue #184) runs copies on both engines, 38 checks with the native module
+(issue #184) runs copies on both engines, 56 checks with the native module
 and as many without:
 - a capture lost during the copy resumes with the same capture and cursor,
   and the capture rebuilt holds the rows written before the loss, after it,
@@ -1713,13 +1732,34 @@ and as many without:
 - a copy the SQL server does not mark durable keeps no durable capture,
   and a capture lost starts it over;
 - a capture rebuilt past its limits starts the copy over, with a durable
-  capture of its own, which ABORT drops.
+  capture of its own, which ABORT drops;
+- a resume that fails part way, at its wait for a write in flight past the
+  call's deadline (1205) or at its marker after another job's cut (1213),
+  leaves the capture lost, and BUILD sent again resumes;
+- a capture lost while it resumes, to a status change, fails the step for
+  now (1213), and the copy goes on with the same capture;
+- a durable capture bound again, as on a new leader, takes the generation
+  after the settled one, and a resume reads a write made then;
+- once the durable capture has noted more than twice the mirror's limit, a
+  pass deletes the entries up to the generation it settled and keeps those
+  above it, and a resume after it is exact;
+- a write that began during ABORT's cut is not aborted by the drop of the
+  durable capture;
+- a copy started over after a resume past its limits has a deadline of its
+  own for its cut, which meets a commit in flight;
+- a reset whose cut fails leaves the copy to start over, rather than resume
+  a capture that missed the writes meanwhile.
 
-Each of nine mutations fails it: no durable entry for a write, a resume
+Each of sixteen mutations fails it: no durable entry for a write, a resume
 that waits for no commit in flight, one that writes no marker, a pass that
 records its generation at its swap, no new generation at a swap, a pass
 that clears every key it took, a final pass that does, a holder rule that
-notes no hole, and a resume that leaves the holes out. `engine_test.lua`,
+notes no hole, a resume that leaves the holes out, a resume that keeps its
+capture when it fails, one that starts the copy over when its capture is
+lost meanwhile, a binding again at the settled generation, pruning the
+generation after the settled one, a reset with the deadline a resume
+took, an ABORT that stops the writes from noting their keys only after
+its cut, and a reset that stops them before its record says so. `engine_test.lua`,
 `engine_terminal_test.lua`, `engine_restart_test.lua` and
 `engine_replication.sh` now check that a capture lost during the copy
 resumes from the durable capture: after a status change, after a write
@@ -1758,7 +1798,9 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
   Bug_EngineCopyPassDropsKeys Bug_EngineCopyAbandonLosesKeys \
   Bug_EngineCopyCaptureNotDurable Bug_EngineCopyResumeBeforeSettle \
   Bug_EngineCopySettleBeforeReread Bug_EngineCopyNoGenerationBump \
-  Bug_EngineCopyClearUnnoted Bug_EngineCopyHolderNoHole EngineCutover \
+  Bug_EngineCopyClearUnnoted Bug_EngineCopyHolderNoHole \
+  Bug_EngineCopyResumeFailKeeps Bug_EngineCopyRebindAtSettled \
+  Bug_EngineCopyPruneUnsettled Bug_EngineCopyUnbindEarly EngineCutover \
   Bug_EngineCutoverPublishBeforeDecision Bug_EngineCutoverPublishBeforeAuxReady \
   Bug_EngineCutoverDropBeforePublish Bug_EngineCutoverAbortAfterDecision \
   Bug_EngineCutoverApplyAfterAbort Bug_EngineCutoverOldStreamValidates \
@@ -1775,27 +1817,31 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 
 | Configuration | Distinct states | Depth | Expected result |
 |---|---:|---:|---|
-| `EngineCopy` | 521,352 | 30 | passes |
-| `Bug_EngineCopyBeforeCapture` | 48,927 | 12 | violates `PreparedImage` |
-| `Bug_EngineCopyCaptureOnlyNewKeys` | 47,452 | 13 | violates `PreparedImage` |
-| `Bug_EngineCopyLosePersistentFence` | 34,490 | 12 | violates `PreparedImage` |
-| `Bug_EngineCopyLostCaptureContinues` | 121,940 | 15 | violates `PreparedImage` |
-| `Bug_EngineCopyPrepareWithoutIndexes` | 10,568 | 10 | violates `PreparedImage` |
-| `Bug_EngineCopyRebuildPrepared` | 34,490 | 12 | violates `PreparedImage` |
-| `Bug_EngineCopySkipFinalDrain` | 54,052 | 13 | violates `PreparedImage` |
-| `Bug_EngineCopySkipPrefixDrain` | 44,486 | 13 | violates `PreparedImage` |
-| `Bug_EngineCopyStaleBatch` | 313,567 | 18 | violates `PreparedImage` |
-| `Bug_EngineCopyTailIgnoresDeletes` | 83,110 | 14 | violates `PreparedImage` |
-| `Bug_EngineCopyUnconfirmedSource` | 394 | 6 | violates `ConfirmedCopies` |
-| `Bug_EngineCopyPassDropsKeys` | 190,550 | 17 | violates `PreparedImage`: a pass removes its keys' copies without rereading them |
-| `Bug_EngineCopyPassWithoutSettle` | 241,295 | 16 | violates `PreparedImage`: a pass rereads a key whose write is still pending, which then commits with its key in neither set |
-| `Bug_EngineCopyAbandonLosesKeys` | 94,856 | 15 | violates `PreparedImage`: a row deleted after its page was read is copied stale, and a pass that takes its key fails before rereading it |
-| `Bug_EngineCopyCaptureNotDurable` | 34,880 | 13 | violates `PreparedImage`: a write the durable capture does not note is missing from the capture rebuilt after a restart |
-| `Bug_EngineCopyResumeBeforeSettle` | 144,236 | 15 | violates `PreparedImage`: a resume reads the durable capture while a write is pending, whose entry then commits unread |
-| `Bug_EngineCopySettleBeforeReread` | 285,990 | 16 | violates `PreparedImage`: a pass records its generation settled before its rereads, and a restart leaves those keys out |
-| `Bug_EngineCopyNoGenerationBump` | 79,005 | 18 | violates `PreparedImage`: a write after a swap takes the generation the pass settles, and a restart leaves it out |
-| `Bug_EngineCopyClearUnnoted` | 156,116 | 16 | violates `PreparedImage`: a pass clears a key whose write rolled back, and the capture rebuilt after a restart misses it |
-| `Bug_EngineCopyHolderNoHole` | 55,295 | 14 | violates `PreparedImage`: a copy the holder rule took out of the shadow is missing from the capture rebuilt after a restart |
+| `EngineCopy` | 1,015,638 | 35 | passes |
+| `Bug_EngineCopyBeforeCapture` | 55,986 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyCaptureOnlyNewKeys` | 56,266 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopyLosePersistentFence` | 41,908 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyLostCaptureContinues` | 218,118 | 16 | violates `PreparedImage` |
+| `Bug_EngineCopyPrepareWithoutIndexes` | 12,445 | 10 | violates `PreparedImage` |
+| `Bug_EngineCopyRebuildPrepared` | 41,908 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopySkipFinalDrain` | 65,687 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopySkipPrefixDrain` | 53,076 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopyStaleBatch` | 514,825 | 19 | violates `PreparedImage` |
+| `Bug_EngineCopyTailIgnoresDeletes` | 102,605 | 14 | violates `PreparedImage` |
+| `Bug_EngineCopyUnconfirmedSource` | 411 | 6 | violates `ConfirmedCopies` |
+| `Bug_EngineCopyPassDropsKeys` | 237,585 | 17 | violates `PreparedImage`: a pass removes its keys' copies without rereading them |
+| `Bug_EngineCopyPassWithoutSettle` | 301,939 | 16 | violates `PreparedImage`: a pass rereads a key whose write is still pending, which then commits with its key in neither set |
+| `Bug_EngineCopyAbandonLosesKeys` | 112,481 | 15 | violates `PreparedImage`: a row deleted after its page was read is copied stale, and a pass that takes its key fails before rereading it |
+| `Bug_EngineCopyCaptureNotDurable` | 38,079 | 13 | violates `PreparedImage`: a write the durable capture does not note is missing from the capture rebuilt after a restart |
+| `Bug_EngineCopyResumeBeforeSettle` | 247,475 | 16 | violates `PreparedImage`: a resume reads the durable capture while a write is pending, whose entry then commits unread |
+| `Bug_EngineCopySettleBeforeReread` | 403,462 | 16 | violates `PreparedImage`: a pass records its generation settled before its rereads, and a restart leaves those keys out |
+| `Bug_EngineCopyNoGenerationBump` | 116,545 | 18 | violates `PreparedImage`: a write after a swap takes the generation the pass settles, and a restart leaves it out |
+| `Bug_EngineCopyClearUnnoted` | 271,151 | 17 | violates `PreparedImage`: a pass clears a key whose write rolled back, and the capture rebuilt after a restart misses it |
+| `Bug_EngineCopyHolderNoHole` | 67,360 | 14 | violates `PreparedImage`: a copy the holder rule took out of the shadow is missing from the capture rebuilt after a restart |
+| `Bug_EngineCopyResumeFailKeeps` | 256,500 | 16 | violates `PreparedImage`: a resume that fails before it reads the durable capture leaves the capture it installed, and the copy goes on without the durable keys |
+| `Bug_EngineCopyRebindAtSettled` | 643,858 | 21 | violates `PreparedImage`: a node that binds the durable capture again notes a write at the settled generation, which a resume then skips |
+| `Bug_EngineCopyPruneUnsettled` | 159,866 | 14 | violates `PreparedImage`: an entry of the generation after the settled one is deleted, and the capture rebuilt after a restart misses it |
+| `Bug_EngineCopyUnbindEarly` | 354,103 | 17 | violates `PreparedImage`: a reset stops the writes from noting their keys and fails before its record says the copy starts over, and the copy resumes without a write made then |
 | `EngineCutover` | 70,982 | 26 | passes |
 | `Bug_EngineCutoverAbortAfterDecision` | 43,487 | 12 | violates `NoAbortPublished` |
 | `Bug_EngineCutoverApplyAfterAbort` | 49,386 | 13 | violates `CatalogHasSpace` |
