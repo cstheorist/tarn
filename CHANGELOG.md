@@ -210,6 +210,31 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it has read the publication
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
+- On a cluster with replicated shards, an `ALTER TABLE` that adds a lazy
+  index now copies the table too, so that no follower builds the index's
+  local index, which serves strong reads, in its applier. The new
+  incarnation is built as in place, online against the table's space
+  before the copy, and the copy's publication binds it to the new space
+  with the table's other lazy indexes; an ABORT retires it. A shard that
+  did not build it online scans the table behind the copy's fence, within
+  `alter_check_rows`. A lazy index on a column the same `ALTER` adds or
+  retypes, or added together with an index on a column added with a
+  non-NULL default, still builds in place, as does any such change while
+  a replica lacks `tarn_engine_rebuild_lazy_made_capabilities`. An SQL
+  server from before this that takes such an ALTER over sends no READY:
+  APPLY then ends the incarnation's scan and waits for its deliveries
+  itself. Storage from before this refuses such a copy before it begins,
+  and its ABORT retires nothing: finish or abort these ALTERs before
+  downgrading storage. `tla/EngineCutover.tla` models the new
+  incarnation's binding, publication and retirement
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
+- An `ALTER TABLE` whose new lazy index had finished its online scan, taken
+  over by another SQL server before READY, failed with 1412 ("Stale lazy
+  bootstrap owner") and rolled back: the new owner's start now takes the
+  build over, and its scan's next call finds it done
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
 - A `COUNT` or aggregate read that yielded while a table copy was published
   could fail with a storage error (1105, "attempt to index a nil value")
   instead of running again. Both engine changes and ALTERs that copy the

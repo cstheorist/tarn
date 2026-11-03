@@ -1361,8 +1361,7 @@ Such a rebuild keeps the table's lazy generations too (`rebuild = 'lazy'`):
 their targets, entries, outbox and deliveries name the generation, but
 each generation's descriptor and the table's capture name the table's
 space. APPLY binds them to the new space in the transaction that publishes
-it, the one that moves the capture, and ABORT retires none, since a rebuild
-makes no generation. `KeptLazyBound` says that a kept generation is bound
+it, the one that moves the capture, and ABORT retires none of them. `KeptLazyBound` says that a kept generation is bound
 to the space the catalog names, so that the space's writes are captured
 for it and a later change of the table finds it, and `KeptLazyAlive` that
 nothing retires it. `BugRebindAfterPublish`, which binds it in a step of
@@ -1377,6 +1376,30 @@ its writes, as it takes an engine change's through its new generations'
 descriptors. `KeptLazyCaptured` says that the new space never takes a
 write uncaptured; `BugNoPendingNew`, a registry that does not know the
 new space before publication, breaks it.
+
+A rebuild that adds a lazy index makes its generation as an ALTER in place
+makes it: online against the old space before the copy, or, on a shard
+that did not start it, scanned behind PREPARE's fence. Its descriptor
+names the old space until publication binds it with the kept ones, READY
+follows its scan, and ABORT retires it. The model starts with the
+generation building on either shard, its scan ended or not, or not
+started there, and lets a start of its build come at any time, also from
+a worker whose job was aborted. `MadeBound` says that while it lives it is
+bound to the space the catalog names, `MadePublished` that it is published
+ready with its scan ended, and `AbortedMadeRetired` that nothing of an
+aborted copy's made generation lives on, since it would capture the old
+space's writes and hold up its bucket moves. `BugMadeUnbound` binds only
+the kept generations at publication; `BugAbortKeepsMade` retires none on
+ABORT; `BugAbortSkipsMissing` writes no retired descriptor for a
+generation that was never started, so that a late start of its build
+starts it once a later job of the table has replaced the aborted job's
+record. The registry's pending new space covers a copy that keeps no
+generation and only makes one, which `BugPendingOnlyKept` breaks
+(`KeptLazyCaptured`). The model also has coordinators that send no READY,
+as from before such copies, for which APPLY makes the generation ready
+itself: `BugReadyUnscanned`, a READY that does not wait for the scan's
+end, and `BugPublishUnready`, an APPLY that publishes the generation as it
+is, break `MadePublished`.
 
 Implementation refinement obligations remain explicit:
 
@@ -1507,6 +1530,61 @@ registry before the confirmation and the engine registry after it took an
 uncaptured write in three of four vinyl runs before this, and none in ten
 runs after it.
 
+[Another suite](../lua/test/engine_lazy_made_test.lua) runs rebuilds that
+make a lazy index on both engines, 74 checks with the native module and
+as many without:
+- the online start, before the copy, binds the new generation to the old
+  space, turns its capture on there, and holds bucket moves; the lazy
+  registry captures the old space's writes for it as well as the kept
+  generation;
+- writes while a scan batch is held between its read and its write, and
+  writes during the copy, reach both generations;
+- the copy's record lists the generation it makes, and the new space is
+  pending until publication, also for a table's first lazy index, which
+  the copy only makes;
+- PREPARED, the generation is still the old space's; READY marks it ready
+  after its deliveries; an APPLY interrupted before the catalog commit
+  leaves it bound to the old space, and a registry read then refuses the
+  new space's writes;
+- publication binds it, with the kept generation, to the new space, and
+  ends its online build; both keep their targets and entries, take later
+  writes, and a schema export takes both as the new space's;
+- ABORT after the copy, and before it, retires it and leaves the kept one;
+  a late start of an aborted job is refused;
+- without the online build, PREPARE takes the generation for the old space
+  and the coordinator's batches scan that space behind the fence, writes
+  before it included; the copy refuses such a scan over `alter_check_rows`
+  (1846) before it copies;
+- with no coordinator's batches or READY, as from a coordinator from before
+  such copies, APPLY runs the scan (waiting out the outbox's admission
+  limit while deliveries go on), waits for the deliveries, refusing for
+  now (1213) while they are pending, and publishes the generation ready;
+- a takeover once the online scan has ended: the next worker's start owns
+  the generation and its scan call finds it done; after the copy, the next
+  worker's PREPARE owns it; the previous workers' scan and READY are
+  refused;
+- the online start refuses an index on a column the copy retypes (1846),
+  and BUILD refuses a copy that would make a generation its definition
+  does not name, make the one it keeps, or make one without saying so, or
+  whose generation differs from the one built online; the online start
+  refuses one that would make a generation it does not list, and builds
+  none of its generations; one that makes a generation without saying it
+  keeps the table's, materializes fields of the rows the scan reads, or
+  lists generations that are not numbers, is refused at every step,
+  online start included. ABORT retires the generation each named, and
+  writes a retired descriptor for one never started.
+
+`lua/test/lazy_online_test.lua` also takes an ALTER in place over once its
+online scan has ended, in the coordinator's order. Each of twenty
+mutations of the new code fails the suite: no takeover at the start or at
+PREPARE, an ABORT that keeps the made generation or writes no retired
+descriptor, a publication that binds only the kept ones, an APPLY that
+neither scans nor makes the generation ready, or does not wait out the
+outbox's limit, no scan bound or no early one, each refusal at the online
+start and at BUILD, no pending new space for made generations, a late
+start after ABORT, an online start always refused, and a build bound to
+the new space.
+
 Without the padding of either path, the new format, the refusals, ABORT's
 leniency, either read fix, the kept spaces' renames or their lookup through
 the catalog, the suite fails. It verifies
@@ -1542,7 +1620,10 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
   Bug_EngineCutoverAuxStreamOmitted Bug_EngineCutoverKeptByNameOnly \
   Bug_EngineCutoverPublishBeforeKeptRename Bug_EngineCutoverRetireKept \
   Bug_EngineCutoverRebindAfterPublish Bug_EngineCutoverAbortRetiresKept \
-  Bug_EngineCutoverNoPendingNew
+  Bug_EngineCutoverNoPendingNew Bug_EngineCutoverMadeUnbound \
+  Bug_EngineCutoverAbortKeepsMade Bug_EngineCutoverAbortSkipsMissing \
+  Bug_EngineCutoverPendingOnlyKept Bug_EngineCutoverReadyUnscanned \
+  Bug_EngineCutoverPublishUnready
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
@@ -1559,28 +1640,34 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 | `Bug_EngineCopyStaleBatch` | 11,291 | 17 | violates `PreparedImage` |
 | `Bug_EngineCopyTailIgnoresDeletes` | 6,372 | 13 | violates `PreparedImage` |
 | `Bug_EngineCopyUnconfirmedSource` | 288 | 6 | violates `ConfirmedCopies` |
-| `EngineCutover` | 5,563 | 26 | passes |
-| `Bug_EngineCutoverAbortAfterDecision` | 1,188 | 12 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverApplyAfterAbort` | 1,430 | 13 | violates `CatalogHasSpace` |
-| `Bug_EngineCutoverDropBeforePublish` | 3 | 2 | violates `CatalogHasSpace` |
-| `Bug_EngineCutoverForgetOldObligations` | 4 | 2 | violates `OldObligationsRetained` |
-| `Bug_EngineCutoverOldStreamValidates` | 887 | 12 | violates `OldStreamsRejected` |
-| `Bug_EngineCutoverPublishBeforeAuxReady` | 1,022 | 9 | violates `PublishedReady` |
-| `Bug_EngineCutoverPublishBeforeDecision` | 1,234 | 11 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 1,272 | 14 | violates `CatalogHasSpace` |
-| `Bug_EngineCutoverResetCounterIdentity` | 890 | 12 | violates `CounterNeverReuses` |
-| `Bug_EngineCutoverCatalogByName` | 517 | 8 | violates `CatalogObservationBound` |
-| `Bug_EngineCutoverAuxStreamOmitted` | 887 | 12 | violates `OldStreamsRejected` |
-| `Bug_EngineCutoverKeptByNameOnly` | 515 | 8 | violates `KeptFound`: the copy has the table's name, and a lookup by name finds the kept index under neither |
-| `Bug_EngineCutoverPublishBeforeKeptRename` | 754 | 10 | violates `KeptNamedAfterCatalog`: the catalog names the copy while the kept index is still named after the old space |
-| `Bug_EngineCutoverRetireKept` | 884 | 12 | violates `KeptAlive`: cleanup drops the kept index with the old space |
-| `Bug_EngineCutoverRebindAfterPublish` | 816 | 11 | violates `KeptLazyBound`: the catalog names the copy while the kept lazy generation is still bound to the old space |
-| `Bug_EngineCutoverAbortRetiresKept` | 32 | 3 | violates `KeptLazyAlive`: ABORT retires the generation the table keeps |
-| `Bug_EngineCutoverNoPendingNew` | 449 | 13 | violates `KeptLazyCaptured`: a lazy registry read while the catalog's transaction waits for its quorum, used once it is confirmed, takes a write to the new space uncaptured |
+| `EngineCutover` | 70,982 | 26 | passes |
+| `Bug_EngineCutoverAbortAfterDecision` | 43,487 | 12 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverApplyAfterAbort` | 49,386 | 13 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverDropBeforePublish` | 38 | 2 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverForgetOldObligations` | 39 | 2 | violates `OldObligationsRetained` |
+| `Bug_EngineCutoverOldStreamValidates` | 41,228 | 12 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverPublishBeforeAuxReady` | 26,144 | 9 | violates `PublishedReady` |
+| `Bug_EngineCutoverPublishBeforeDecision` | 40,207 | 11 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 46,886 | 14 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverResetCounterIdentity` | 41,231 | 12 | violates `CounterNeverReuses` |
+| `Bug_EngineCutoverCatalogByName` | 15,782 | 8 | violates `CatalogObservationBound` |
+| `Bug_EngineCutoverAuxStreamOmitted` | 41,228 | 12 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverKeptByNameOnly` | 15,780 | 8 | violates `KeptFound`: the copy has the table's name, and a lookup by name finds the kept index under neither |
+| `Bug_EngineCutoverPublishBeforeKeptRename` | 30,339 | 10 | violates `KeptNamedAfterCatalog`: the catalog names the copy while the kept index is still named after the old space |
+| `Bug_EngineCutoverRetireKept` | 41,225 | 12 | violates `KeptAlive`: cleanup drops the kept index with the old space |
+| `Bug_EngineCutoverRebindAfterPublish` | 36,605 | 11 | violates `KeptLazyBound`: the catalog names the copy while the kept lazy generation is still bound to the old space |
+| `Bug_EngineCutoverAbortRetiresKept` | 288 | 3 | violates `KeptLazyAlive`: ABORT retires the generation the table keeps |
+| `Bug_EngineCutoverNoPendingNew` | 18,236 | 13 | violates `KeptLazyCaptured`: a lazy registry read while the catalog's transaction waits for its quorum, used once it is confirmed, takes a write to the new space uncaptured |
+| `Bug_EngineCutoverMadeUnbound` | 36,605 | 11 | violates `MadeBound`: the catalog names the copy while the generation the copy made is still bound to the old space |
+| `Bug_EngineCutoverAbortKeepsMade` | 1,200 | 4 | violates `AbortedMadeRetired`: ABORT leaves the generation the copy made building on the old space |
+| `Bug_EngineCutoverAbortSkipsMissing` | 5,450 | 6 | violates `AbortedMadeRetired`: ABORT writes no retired descriptor for a generation never started, and a late start of its build, once a later job replaced the record, starts it |
+| `Bug_EngineCutoverPendingOnlyKept` | 31,211 | 13 | violates `KeptLazyCaptured`: for a copy that keeps no generation, a registry read before the catalog commit does not know the new space, and the new space takes a write uncaptured |
+| `Bug_EngineCutoverReadyUnscanned` | 41,875 | 11 | violates `MadePublished`: READY marks the made generation ready before its scan has ended, and publication follows |
+| `Bug_EngineCutoverPublishUnready` | 36,605 | 11 | violates `MadePublished`: with a coordinator that sends no READY, APPLY publishes the made generation still building |
 
 The three configurations for kept global index spaces are generated by
-`gen_cfgs.sh` and bring the default check list from 337 to 340, and the
-three for kept lazy generations to 343.
+`gen_cfgs.sh` and bring the default check list from 337 to 340, the three
+for kept lazy generations to 343, and the six for made ones to 349.
 
 ### Unique indexes on an engine copy's shadow (issue #267)
 
@@ -1640,7 +1727,12 @@ new primary keys, and checks the rows against those sessions' models; it
 fails when the final pass is skipped. It also copies, on each engine, a
 table with a global unique index and one with a lazy index, and checks
 that every replica keeps the index's space, or the generation and its
-target, bound to the copy, and that they find every row.
+target, bound to the copy, and that they find every row. Last, two ALTERs
+on another table each make a lazy index by way of the copy, the table's
+first and then a second one with an ordinary index, while a session
+writes; every replica then has each generation ready and bound to the
+copy, with the table's rows as its target's live entries, and each index
+finds rows by its key on the lazy path.
 The four configurations are generated by `gen_cfgs.sh` and bring the
 default check list from 333 to 337.
 

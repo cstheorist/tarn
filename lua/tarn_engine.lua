@@ -12,6 +12,9 @@
 -- them. Publication only renames them after the new space's id. It keeps
 -- the table's lazy indexes too, whose targets name only their generation:
 -- publication binds them to the new space (L.rebind in lua/tarn_lazy.lua).
+-- The lazy indexes it makes (a.lazy_made) are built online against the old
+-- space before the copy, as an ALTER in place builds them, and published
+-- with the kept ones.
 local fiber, clock, mp, uuid = require('fiber'), require('clock'), require('msgpack'), require('uuid')
 local M = {}
 local RC = {txn_isolation = 'read-confirmed'}
@@ -62,10 +65,47 @@ function M.new(c)
            or (a.def.engine ~= 'memtx' and a.def.engine ~= 'vinyl')
            or (x.rebuild ~= nil and x.rebuild ~= true and x.rebuild ~= 'layout' and x.rebuild ~= 'aux'
                and x.rebuild ~= 'lazy')
-           or (x.old_engine == a.def.engine) ~= (x.rebuild ~= nil) or a.def.name ~= x.old_name then
+           or (x.old_engine == a.def.engine) ~= (x.rebuild ~= nil) or a.def.name ~= x.old_name
+           or (not nilish(a.lazy_made) and (x.rebuild ~= 'lazy' or type(a.lazy_made) ~= 'table'
+                                             or a.materialize == true)) then
             fail(1210, 'Malformed engine-change descriptor')
         end
+        for _, gen in ipairs(type(a.lazy_made) == 'table' and a.lazy_made or {}) do
+            if type(gen) ~= 'number' or gen % 1 ~= 0 or gen < 1 then fail(1210, 'Malformed engine-change descriptor') end
+        end
         return x
+    end
+    -- The lazy generations a copy makes (a.lazy_made), as a set. Their
+    -- build reads the old space's rows, so a copy that materializes fields
+    -- missing from them makes none (above): the SQL server builds such a
+    -- change in place, where PREPARE materializes the rows before the scan.
+    local function made_set(a)
+        local out = {}
+        for _, gen in ipairs(type(a.lazy_made) == 'table' and a.lazy_made or {}) do out[gen] = true end
+        return out
+    end
+    local function makes(a) return next(made_set(a)) ~= nil end
+    -- The ALTER's arguments as the online build of its made generations
+    -- takes them: in place, on the old space (L.made_def).
+    local function made_args(a, x)
+        local o = {}
+        for k, v in pairs(a) do o[k] = v end
+        o.engine_change = nil
+        o.def = c.lazy.made_def(a.def, x.old_id)
+        return o
+    end
+    -- A made generation whose online scan has not ended (the shard did not
+    -- start it: an ineligible change, or a replica that does not capture
+    -- building incarnations) scans the old space behind the final fence, as
+    -- an ALTER in place does: after PREPARE, in batches the coordinator
+    -- sends (tarn_lazy_bootstrap), within tarn.cfg.alter_check_rows, which
+    -- the copy checks when it begins and again in PREPARE.
+    local function scan_bound(a, x)
+        local sp = box.space[x.old_id]
+        if sp ~= nil and c.lazy.needs_scan(made_args(a, x).def) and sp.index[0]:len() > c.cfg.alter_check_rows then
+            fail(1846, string.format('A lazy index this ALTER builds behind its fence would scan %d rows, over '
+                .. 'tarn.cfg.alter_check_rows (%d)', sp.index[0]:len(), c.cfg.alter_check_rows))
+        end
     end
     local function none(v) return nilish(v) or (type(v) == 'table' and next(v) == nil) end
     local function keeps_aux(x) return x.rebuild == 'aux' or x.rebuild == 'lazy' end
@@ -515,18 +555,20 @@ function M.new(c)
         if r ~= nil and (r.ver >= a.ver or not terminal(r.phase)) then fail(1412, 'A different engine job owns the source') end
         local sp = check_source(a)
         if not aborting then admissible(x, a) end
-        local schema, pad, kept, kept_lazy = box.NULL, box.NULL, {}, {}
+        local schema, pad, kept, kept_lazy, made_lazy = box.NULL, box.NULL, {}, {}, {}
         if not aborting then
             schema = x.rebuild ~= nil and rebuilt(sp, a) or snapshot(sp)
             pad = x.rebuild ~= nil and padding(a) or box.NULL
             if keeps_aux(x) then kept = kept_globals(x, a) end
-            if x.rebuild == 'lazy' then kept_lazy = c.lazy.keep(a.def, x.old_id) end
+            if x.rebuild == 'lazy' then kept_lazy, made_lazy = c.lazy.keep(a.def, x.old_id, made_set(a)) end
+            if #made_lazy > 0 then scan_bound(a, x) end
         end
         local old_aux, new_aux, old_uix = {}, {}, {}
         for _, id in ipairs(a.uix_drop or {}) do old_aux[#old_aux + 1], old_uix[#old_uix + 1] = id, id end
         for _, id in ipairs(a.lazy_drop or {}) do old_aux[#old_aux + 1] = id end
         for _, d in ipairs(a.uix or {}) do new_aux[#new_aux + 1] = d.id end
-        -- (A rebuild makes no lazy generation: those it names are kept.)
+        -- (A rebuild's lazy generations take deliveries throughout: those it
+        -- keeps, and those it makes, built online before the copy.)
         if x.rebuild == nil then
             for _, d in ipairs(a.def.lazy or {}) do new_aux[#new_aux + 1] = d.gen end
         end
@@ -535,6 +577,7 @@ function M.new(c)
             shadow_name = '_tarn_engine_' .. x.old_id .. '_' .. a.def.id,
             retired_name = '_tarn_engine_old_' .. x.old_id .. '_' .. a.def.id,
             schema = schema, rebuild = x.rebuild ~= nil, pad = pad, kept_uix = kept, kept_lazy = kept_lazy,
+            made_lazy = made_lazy,
             cursor = box.NULL, copied = 0, capture = '',
             old_aux = old_aux, new_aux = new_aux, old_uix = old_uix}
         transaction(function() replace_record(r) end)
@@ -654,11 +697,54 @@ function M.new(c)
             fiber.sleep(0)
         until false
     end
-    -- An engine change's new lazy generations, bound to the new space. A
-    -- rebuild makes none: the generations it names are the table's, kept
-    -- and bound to the old space until publication (L.rebind).
+    -- The lazy generations the job makes, taken by its current worker, also
+    -- in a PREPARE sent again after a takeover (READY takes only the
+    -- worker's): an engine change's, bound to the new space, and a copy's,
+    -- bound to the old space until publication (L.rebind). The others a
+    -- copy names are the table's, kept as they are.
     local function new_lazy(a, gen)
-        if bound(a).rebuild == nil then c.lazy.prepare(a.def, gen) end
+        local x = bound(a)
+        if x.rebuild == nil then c.lazy.prepare(a.def, gen)
+        elseif makes(a) then c.writable(); c.lazy.prepare(made_args(a, x).def, gen) end
+    end
+    -- A batch refused before it wrote anything, which waits: a conflict,
+    -- the outbox's admission limit (its deliveries go on), a busy shard.
+    local function waits(r)
+        return r[2] == 1213 or (r[2] == 1041 and tostring(r[3]):find('admission limit') ~= nil)
+            or (r[2] == 1205 and tostring(r[3]):find('admission refused') ~= nil)
+    end
+    -- READY of the generations a copy makes, in APPLY, when no coordinator
+    -- sent it: one from before such copies sends none, nor the batches of a
+    -- scan behind the fence. This runs that scan, waits for the deliveries
+    -- and marks them ready, as READY does, and otherwise refuses for now
+    -- (1213), which APPLY's sender waits out: each APPLY goes on from the
+    -- scan's durable cursor.
+    local function made_ready(name, a, gen, deadline)
+        local x = bound(a)
+        local made, waiting = made_set(a), false
+        for _, s in ipairs(a.def.lazy or {}) do
+            local d = made[s.gen] and box.space._tarn_lazy_defs:get{s.gen}
+            if made[s.gen] and (d == nil or d.phase ~= 'ready') then waiting = true end
+        end
+        if not waiting then return end
+        local m = made_args(a, x)
+        c.writable(); c.lazy.prepare(m.def, gen)
+        repeat
+            local r = c.lazy.bootstrap(name, m, gen)
+            if r[1] == 'ok' and r[2] == true then break end
+            if r[1] ~= 'ok' and not waits(r) then fail(r[2] or 1412, r[3] or 'Lazy scan failed') end
+            if clock.monotonic() > deadline then fail(1213, 'A lazy scan behind the fence is under way; retry') end
+            fiber.sleep(r[1] == 'ok' and 0 or 0.01)
+        until false
+        repeat
+            local s = c.lazy.bootstrap_status(name, a, gen)
+            if s[1] ~= 'ok' then fail(s[2] or 1412, s[3] or 'Lazy READY failed') end
+            if s[2] and s[3] == 0 then break end
+            if clock.monotonic() > deadline then fail(1213, 'Lazy deliveries are pending; retry') end
+            fiber.sleep(0.01)
+        until false
+        local r = c.lazy.ready(name, a, gen)
+        if r[1] ~= 'ok' then fail(r[2] or 1412, r[3] or 'Lazy READY failed') end
     end
     function E.prepare(name, a, gen, deadline)
         local r = start(name, a, gen, deadline)
@@ -732,6 +818,7 @@ function M.new(c)
         end
         for _, d in ipairs(a.uix or {}) do c.create_space(d) end
         new_lazy(a, gen)
+        if makes(a) then scan_bound(a, bound(a)) end
         cut(deadline)
         update(a, gen, {preparing = true}, function(v)
             if not capture_valid(t) then fail(1213, 'Engine capture was lost') end
@@ -781,6 +868,7 @@ function M.new(c)
         central(name, a, gen, 'apply')
         r = start(name, a, gen, deadline)
         if r.phase ~= 'prepared' and r.phase ~= 'applying' then fail(1412, 'Engine replacement is not prepared') end
+        if makes(a) then made_ready(name, a, gen, deadline) end
         local guard = c.lazy.ddl_guard('apply', name, a)
         if guard then return guard end
         update(a, gen, {prepared = true, applying = true}, function(v) v.phase = 'applying' end)
@@ -809,7 +897,10 @@ function M.new(c)
             local v = owned(a, gen, {applying = true})
             c.lazy.retire(a.lazy_drop)
             c.lazy.activate(a.def)
-            c.lazy.rebind(a.def, v.kept_lazy)
+            local bind = {}
+            for _, gen_ in ipairs(v.kept_lazy or {}) do bind[#bind + 1] = gen_ end
+            for _, gen_ in ipairs(v.made_lazy or {}) do bind[#bind + 1] = gen_ end
+            c.lazy.rebind(a.def, bind)
             box.space._tarn_lazy_capture:delete{v.old_id}
             box.space._tarn_catalog:replace{name, a.def}
             v.phase, v.cleaned = 'published', false; replace_record(v)
@@ -846,9 +937,10 @@ function M.new(c)
         for _, d in ipairs(a.uix or {}) do if box.space[d.id] ~= nil then box.space[d.id]:drop() end end
         transaction(function()
             local v = owned(a, gen, {aborting = true})
-            -- (A rebuild makes no lazy generation, so it retires none: those
-            -- it names are the table's, and kept.)
-            if x.rebuild == nil then c.lazy.abort(a.def) end
+            -- (A rebuild retires only the lazy generations it made: those it
+            -- keeps are the table's.)
+            if x.rebuild == nil then c.lazy.abort(a.def)
+            elseif makes(a) then c.lazy.retire_made(a.def, x.old_id, made_set(a)) end
             v.phase = 'aborted'; replace_record(v)
             for _, old in ipairs({true, false}) do
                 for _, sid in ipairs(group(v, old)) do
@@ -867,6 +959,27 @@ function M.new(c)
         c.writable(); c.bk.fresh()
         local deadline = within(a)
         ready(deadline); E.fresh()
+        -- The online build of a copy's made generations, against the old
+        -- space, before the copy (tarn_lazy_start, tarn_lazy_bootstrap). An
+        -- engine change builds its new generations behind its fence instead.
+        if (op == 'lazy_start' or op == 'bootstrap') and makes(a) then
+            local x = bound(a)
+            local r = read(function() return record(x.old_id) end)
+            if r and r.ver == a.ver and r.new_id == a.def.id then
+                if r.phase == 'published' then return op == 'bootstrap' and {'ok', true} or {'ok', 'applied'} end
+                if r.phase == 'aborted' then fail(1412, 'Engine replacement was aborted') end
+            elseif r and not terminal(r.phase) then
+                fail(1412, 'A different engine job owns the source')
+            end
+            -- (The descriptor as the copy will take it, before anything
+            -- starts: a generation it would refuse is never built.)
+            c.lazy.keep(a.def, x.old_id, made_set(a))
+            local m = made_args(a, x)
+            if op == 'bootstrap' then return c.lazy.bootstrap(name, m, gen) end
+            return c.lazy_start(name, m, gen)
+        elseif op == 'lazy_start' then
+            return {'error', 1846, 'This change builds its lazy indexes behind the ALTER fence'}
+        end
         if op == 'bootstrap' or op == 'ready' then
             read(function() owned(a, gen, {prepared = true}) end)
             return op == 'bootstrap' and c.lazy.bootstrap(name, a, gen) or c.lazy.ready(name, a, gen)

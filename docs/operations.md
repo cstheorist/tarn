@@ -159,16 +159,19 @@ cache it must resolve the table's name again afterwards.
 shard has replicas, `copy` always copies, and `in_place` builds on the
 table's own space. A change that checks existing rows against a new type,
 renames the table, makes or drops a global index (a unique key without the
-shard key) or a lazy index, or changes a lazy index (making a column of
-its key nullable, for one) builds in place, as does any change while a
-replica does not answer or runs a version without the copy (a change of
-the stored layout, a new format or rows padded with fills, needs
-`tarn_engine_rebuild_format_capabilities` on every replica too, one of a
-table with global indexes, whose spaces the copy keeps,
-`tarn_engine_rebuild_aux_capabilities`, and one of a table with lazy
-indexes, whose generations it keeps,
-`tarn_engine_rebuild_lazy_capabilities`); the rest of this section is about
-those builds. It builds the new
+shard key), drops or changes a lazy index (making a column of its key
+nullable, for one), or adds a lazy index on a column it adds or retypes, or
+together with an index on a column added with a non-NULL default, builds
+in place, as does any change while a replica does not answer or runs a
+version without the copy (a change of the stored layout, a new format or
+rows padded with fills, needs `tarn_engine_rebuild_format_capabilities` on
+every replica too, one of a table with global indexes, whose spaces the
+copy keeps, `tarn_engine_rebuild_aux_capabilities`, one of a table with
+lazy indexes, whose generations it keeps,
+`tarn_engine_rebuild_lazy_capabilities`, and one that adds a lazy index,
+whose generation it builds online before the copy,
+`tarn_engine_rebuild_lazy_made_capabilities`); the rest of this section is
+about those builds. It builds the new
 index in its applier fiber,
 which handles nothing else from the leader until the build ends: no rows,
 no heartbeats, no votes. While both followers build, no synchronous write

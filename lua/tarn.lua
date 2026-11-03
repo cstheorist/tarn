@@ -8126,6 +8126,7 @@ BK.production_functions = {
         'tarn_engine_rebuild_capabilities',
         'tarn_engine_rebuild_format_capabilities',
         'tarn_engine_rebuild_lazy_capabilities',
+        'tarn_engine_rebuild_lazy_made_capabilities',
         'tarn_estimate',
         'tarn_fence',
         'tarn_info',
@@ -8235,6 +8236,7 @@ M.engine = require('tarn_engine').new{
     cfg = M.cfg, bk = BK, writable = writable, failure = failure, atomic = atomic,
     key_def = index_key_def, serial = UIX.serial_sid, drain = drain, wait_commits = wait_commits,
     lazy = M.lazy, create_space = create_space, create_index = build_native_index,
+    lazy_start = function(...) return UIX.lazy_start(...) end,
     uix_spaces = UIX.spaces, uix_prefix = UIX.prefix, call = on_shard, hook = yield_point,
     doom = doom_readers, exclude = BK.ns_engine, invalidate_defs = invalidate_key_defs,
     refresh = function() M.stale_fences(); fence_fresh() end,
@@ -8264,6 +8266,10 @@ function tarn_engine_rebuild_aux_capabilities() return {'ok', 1} end
 -- (rebuild = 'lazy'). A node that answers only the calls above refuses it,
 -- ABORT included, which would otherwise retire them.
 function tarn_engine_rebuild_lazy_capabilities() return {'ok', 1} end
+-- A rebuild that also makes lazy indexes (a.lazy_made), built online
+-- against the old space and published with the kept ones. A node that
+-- answers only the calls above refuses the job before its copy begins.
+function tarn_engine_rebuild_lazy_made_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()
     return M.engine.decision(name, old_id, new_id, ver, gen)
@@ -8288,8 +8294,13 @@ function UIX.lazy_start(name, a, gen)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     local cur = catalog_ver(sp.name)
     if cur >= a.ver then return {OK, 'applied'} end
-    -- No new incarnation, or its scan is done already.
-    if type(a.def) == 'table' and not M.lazy.needs_scan(a.def) then return {OK} end
+    -- No new incarnation, or its scan is done already: the caller takes the
+    -- incarnations for its own (a takeover), whose later steps take only
+    -- their owner's (L.bootstrap, L.ready).
+    if type(a.def) == 'table' and not M.lazy.needs_scan(a.def) then
+        M.lazy.prepare(a.def, gen)
+        return {OK}
+    end
     if a.materialize == true or type(a.def) ~= 'table' or not M.lazy.online_eligible(sp, a.def) then
         return {'error', 1846, 'This change builds its lazy indexes behind the ALTER fence'}
     end
@@ -8351,9 +8362,9 @@ function UIX.lazy_start(name, a, gen)
 end
 function tarn_lazy_start(name, a, gen)
     a.ver = a.ver or a.def.ver or 0
-    if type(a.engine_change) == 'table' then
-        return {'error', 1846, 'This change builds its lazy indexes behind the ALTER fence'}
-    end
+    -- An engine change builds its lazy indexes behind its fence (1846); a
+    -- copy that makes some builds them online against the old space.
+    if type(a.engine_change) == 'table' then return M.engine.run('lazy_start', name, a, gen) end
     return UIX.alter_serial(UIX.lazy_start, 'lazy_start', name, a, gen)
 end
 function tarn_lazy_bootstrap(name, a, gen)

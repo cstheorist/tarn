@@ -375,7 +375,7 @@ layout rules. A lazy index also has a local index on each shard, which
 serves strong reads. On an unreplicated shard, vinyl builds that index in
 BUILD while writes go on. Memtx, and vinyl on a replicated shard, build it
 in PREPARE behind the fence, as for any index ([design](design.md),
-issue #263).
+issue #263), unless the ALTER copies the table (below).
 
 A baseline assignment takes the counter of its row's bucket, read before
 the row, as its sequence. Any value up to the counter would do: every
@@ -422,11 +422,24 @@ copied into a target. Each incarnation's descriptor and the table's
 capture configuration name the space: the copy's publication binds them
 to the new space, in the transaction that publishes it, and an ABORT
 leaves them bound to the table. Until a shard's capture registry has read
-that transaction, it refuses writes to the new space. Such a copy makes,
-drops and changes no lazy index: an ALTER that adds or drops one, or
-changes one, builds in place (making a column of its key nullable gives
-the index a new ID, and so a new incarnation), as does any change while a
-replica lacks `tarn_engine_rebuild_lazy_capabilities`. An engine change
+that transaction, it refuses writes to the new space.
+
+An ALTER that adds a lazy index copies the table too, and builds the new
+incarnation as in place: online, against the table's current space,
+before the copy begins, with that space's writes captured for it. The
+copy's new space has the index's local index before its rows, and the
+copy's publication binds the new incarnation to it with the kept ones; an
+ABORT retires it. A shard that did not build it online, because a
+replica there lacks the capability or the start was refused, scans the
+table behind the copy's fence, within the per-shard ALTER scan limit
+(1846). Such a copy drops and changes no lazy index: an ALTER that drops
+or changes one builds in place (making a column of its key nullable gives
+the index a new ID, and so a new incarnation). So does one that adds a
+lazy index on a column it adds or retypes, or together with an index on a
+column added with a non-NULL default (the online build reads the rows as
+they are stored, which may lack that field), and any change while a
+replica lacks `tarn_engine_rebuild_lazy_capabilities`, or for a new lazy
+index `tarn_engine_rebuild_lazy_made_capabilities`. An engine change
 instead rotates the table's lazy indexes to new incarnations, built
 behind its fence.
 

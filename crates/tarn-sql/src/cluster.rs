@@ -2223,10 +2223,10 @@ impl Cluster {
     /// copying the table (`ClusterConfig::index_build`): it must be one
     /// `alter::rebuild_eligible` takes, and every replica of every shard
     /// must know the rebuild, since any of them may take over the job; a
-    /// rebuild that changes the stored layout, or keeps global or lazy
-    /// indexes, needs the replicas to know that too
+    /// rebuild that changes the stored layout, keeps global or lazy indexes,
+    /// or makes lazy indexes, needs the replicas to know that too
     /// (`alter::rebuild_changes_layout`, `alter::rebuild_keeps_globals`,
-    /// `alter::rebuild_keeps_lazy`). A replica that does not
+    /// `alter::rebuild_keeps_lazy`, `alter::rebuild_makes_lazy`). A replica that does not
     /// answer, or predates what the change needs, leaves the change to build
     /// in place.
     async fn copy_index_builds(&self, def: &TableDef, ch: &crate::alter::Change) -> bool {
@@ -2245,8 +2245,12 @@ impl Cluster {
         if crate::alter::rebuild_keeps_globals(&ch.def) {
             needed.push("tarn_engine_rebuild_aux_capabilities");
         }
-        if crate::alter::rebuild_keeps_lazy(&ch.def) {
+        let makes_lazy = crate::alter::rebuild_makes_lazy(ch);
+        if crate::alter::rebuild_keeps_lazy(&ch.def) || makes_lazy {
             needed.push("tarn_engine_rebuild_lazy_capabilities");
+        }
+        if makes_lazy {
+            needed.push("tarn_engine_rebuild_lazy_made_capabilities");
         }
         for shard in self.live_shards() {
             for addr in self.shards[shard].replicas() {
@@ -2705,7 +2709,19 @@ impl Cluster {
         let mut failed: Option<SqlError> = None;
         let mut phase = job.phase.as_str();
         if phase == "prepare" || phase == "run" {
-            if job.kind == JobKind::Alter {
+            // New lazy indexes are built while writes go on (issue #184),
+            // before PREPARE fences the table. A copy that makes some builds
+            // them before its BUILD, against the old space, so that its
+            // capture of the table's writes is not held through the scan.
+            let mut lazy_checked = false;
+            let lazy_first = job.kind == JobKind::Alter && crate::lazy::job_makes_lazy(&job.args)?;
+            if lazy_first {
+                match self.online_lazy(job, &call.0, &live).await {
+                    Ok(checked) => lazy_checked = checked,
+                    Err(e) => failed = Some(e),
+                }
+            }
+            if failed.is_none() && job.kind == JobKind::Alter {
                 for r in crate::topology::collect(
                     live.iter().map(|&i| {
                         retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || {
@@ -2726,10 +2742,7 @@ impl Cluster {
                     }
                 }
             }
-            // New lazy indexes are built while writes go on (issue #184),
-            // before PREPARE fences the table.
-            let mut lazy_checked = false;
-            if failed.is_none() && job.kind == JobKind::Alter {
+            if failed.is_none() && job.kind == JobKind::Alter && !lazy_first {
                 match self.online_lazy(job, &call.0, &live).await {
                     Ok(checked) => lazy_checked = checked,
                     Err(e) => failed = Some(e),

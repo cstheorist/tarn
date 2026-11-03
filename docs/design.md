@@ -1802,8 +1802,10 @@ indexes copies the table instead, through the engine change's copy below,
 in the table's own engine. That takes new indexes with drops and renames of
 others, and columns the same statement adds, renames or drops, but no
 change that checks existing rows against a new type, of the primary key or
-of the table's name, or that makes or drops a global or lazy index or
-changes a lazy one. The new space gets every
+of the table's name, or that makes or drops a global index or drops or
+changes a lazy one. It takes new lazy indexes on columns the statement
+neither adds nor retypes, unless it also materializes fields (below). The
+new space gets every
 index, and the new format, while it is empty, and the rows reach it in
 ordinary batches, which followers apply and acknowledge at once. When an
 index needs a field that older rows lack (an instant-added column's
@@ -1818,8 +1820,10 @@ default) copies on a cluster with replicated shards, `copy` always does,
 and `in_place` never does. A replica that does not answer
 `tarn_engine_rebuild_capabilities`, for a change of the stored layout
 `tarn_engine_rebuild_format_capabilities`, for a table with global indexes
-`tarn_engine_rebuild_aux_capabilities`, or for a table with lazy indexes
-`tarn_engine_rebuild_lazy_capabilities`, makes the change build in place.
+`tarn_engine_rebuild_aux_capabilities`, for a table with lazy indexes
+`tarn_engine_rebuild_lazy_capabilities`, or for a change that makes them
+`tarn_engine_rebuild_lazy_made_capabilities`, makes the change build in
+place.
 
 Built in place on a replicated shard, writes to the table wait for the
 build however long it takes (it is not bounded by
@@ -1941,6 +1945,36 @@ each ready, built and published, with no build of it in progress, as the
 new definition names it but for the space, and make, drop or change none.
 A rebuild of a table with lazy indexes that does not say so is refused
 before the copy begins.
+
+Such a rebuild also makes the lazy indexes the change adds, as an ALTER in
+place makes them. Before the copy begins, the SQL server builds each new
+generation online against the old space (`tarn_lazy_start`, then the
+baseline scan while the old space's writes are captured for it): its
+descriptor and online capture name the old space (`L.made_def`). The copy
+then keeps those generations as it keeps the others; its descriptor names
+them (`lazy_made`), its record lists them (`made_lazy`), and the registry
+takes the new space as pending for them too (`KeptLazyCaptured`). PREPARE
+takes them for the job's current worker. A scan that has not ended, on a
+shard where the online start was refused or where a replica does not
+capture building generations, goes on behind the copy's fence in the
+coordinator's batches, as in place, within `tarn.cfg.alter_check_rows`,
+which the copy checks as it begins and again in PREPARE. READY follows
+their deliveries, and APPLY's catalog transaction binds them with the kept
+ones (`MadeBound`). A coordinator from before such copies sends neither
+those batches nor READY, so APPLY does both for generations no READY made
+ready: it ends the scan, waits for the deliveries and marks them ready
+before it publishes, and otherwise refuses for now (1213), going on from
+the scan's durable cursor when it is sent again (`MadePublished`). ABORT
+retires them, and writes a retired descriptor for one never started, so
+that a late start of the job's build finds it retired
+(`AbortedMadeRetired`); it retires none of the kept ones. The build
+reads the old space's rows as they are stored, so a new lazy index may
+read no column whose stored field, weight, type or collation the change
+alters, and the change may materialize no field: a descriptor that names
+generations it makes and materializes is refused at every step. Storage
+from before refuses a copy that makes generations before it begins, and
+the SQL server sends one only when every replica answers
+`tarn_engine_rebuild_lazy_made_capabilities`.
 
 The global job's confirmed APPLY decision precedes native renames and
 catalog publication. Recovery uses the explicit old/new IDs even if a
@@ -2502,23 +2536,29 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineCopyStaleBatch | violates PreparedImage | 11291 | 38236 | 17 | 01s | 17 |
 | Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 6372 | 19884 | 13 | 01s | 13 |
 | Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 288 | 568 | 6 | 00s | 6 |
-| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 1188 | 5537 | 12 | 00s | 12 |
-| Bug_EngineCutoverAbortRetiresKept | violates KeptLazyAlive | 32 | 60 | 3 | 00s | 3 |
-| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 1430 | 6632 | 13 | 00s | 13 |
-| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 887 | 4525 | 12 | 00s | 12 |
-| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 517 | 2122 | 8 | 00s | 8 |
-| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 3 | 3 | 2 | 00s | 2 |
-| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 4 | 4 | 2 | 00s | 2 |
-| Bug_EngineCutoverKeptByNameOnly | violates KeptFound | 515 | 2120 | 8 | 00s | 8 |
-| Bug_EngineCutoverNoPendingNew | violates KeptLazyCaptured | 449 | 2011 | 13 | 00s | 13 |
-| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 887 | 4525 | 12 | 00s | 12 |
-| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 1022 | 4523 | 9 | 00s | 9 |
-| Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 1234 | 5677 | 11 | 00s | 11 |
-| Bug_EngineCutoverPublishBeforeKeptRename | violates KeptNamedAfterCatalog | 754 | 3637 | 10 | 00s | 10 |
-| Bug_EngineCutoverRebindAfterPublish | violates KeptLazyBound | 816 | 4122 | 11 | 00s | 11 |
-| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 1272 | 5934 | 14 | 00s | 14 |
-| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 890 | 4531 | 12 | 00s | 12 |
-| Bug_EngineCutoverRetireKept | violates KeptAlive | 884 | 4522 | 12 | 00s | 12 |
+| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 43487 | 242696 | 12 | 04s | 12 |
+| Bug_EngineCutoverAbortKeepsMade | violates AbortedMadeRetired | 1200 | 3313 | 4 | 01s | 4 |
+| Bug_EngineCutoverAbortRetiresKept | violates KeptLazyAlive | 288 | 468 | 3 | 01s | 3 |
+| Bug_EngineCutoverAbortSkipsMissing | violates AbortedMadeRetired | 5450 | 20321 | 6 | 01s | 6 |
+| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 49386 | 279743 | 13 | 04s | 13 |
+| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 41228 | 235663 | 12 | 03s | 12 |
+| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 15782 | 70057 | 8 | 01s | 8 |
+| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 38 | 38 | 2 | 00s | 2 |
+| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 39 | 39 | 2 | 00s | 2 |
+| Bug_EngineCutoverKeptByNameOnly | violates KeptFound | 15780 | 70055 | 8 | 02s | 8 |
+| Bug_EngineCutoverMadeUnbound | violates MadeBound | 36605 | 199495 | 11 | 03s | 11 |
+| Bug_EngineCutoverNoPendingNew | violates KeptLazyCaptured | 18236 | 102791 | 13 | 02s | 13 |
+| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 41228 | 235663 | 12 | 03s | 12 |
+| Bug_EngineCutoverPendingOnlyKept | violates KeptLazyCaptured | 31211 | 181755 | 13 | 03s | 13 |
+| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 26144 | 122608 | 9 | 03s | 9 |
+| Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 40207 | 212970 | 11 | 03s | 11 |
+| Bug_EngineCutoverPublishBeforeKeptRename | violates KeptNamedAfterCatalog | 30339 | 155590 | 10 | 02s | 10 |
+| Bug_EngineCutoverPublishUnready | violates MadePublished | 36605 | 199495 | 11 | 02s | 11 |
+| Bug_EngineCutoverReadyUnscanned | violates MadePublished | 41875 | 225687 | 11 | 03s | 11 |
+| Bug_EngineCutoverRebindAfterPublish | violates KeptLazyBound | 36605 | 199495 | 11 | 02s | 11 |
+| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 46886 | 279936 | 14 | 03s | 14 |
+| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 41231 | 235670 | 12 | 03s | 12 |
+| Bug_EngineCutoverRetireKept | violates KeptAlive | 41225 | 235660 | 12 | 03s | 12 |
 | Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FairnessPrefix | violates BoundedWait | 1281 | 1281 | 6 | 00s | 6 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
@@ -2713,7 +2753,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
 | EngineBuildReentry | no errors | 1500 | 2946 | 14 | 00s |  |
 | EngineCopy | no errors | 9667 | 34257 | 20 | 01s |  |
-| EngineCutover | no errors | 5563 | 39103 | 26 | 01s |  |
+| EngineCutover | no errors | 70982 | 472752 | 26 | 05s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |
