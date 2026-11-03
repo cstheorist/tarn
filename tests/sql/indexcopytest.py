@@ -144,6 +144,13 @@ def check(name, cond, detail=None):
               flush=True)
 
 
+def vinyl_refusal(e):
+    """Vinyl admission's documented refusal of a fresh write, 1205: throttled
+    while dump or compaction catches up (docs/operations.md). Nothing was
+    written, and the remedy is to retry."""
+    return e.args[0] == 1205 and "Vinyl" in str(e.args[1])
+
+
 def owned_by_model(i):
     """Rows the model's writer owns: the original rows of every fourth round
     of tenants (some in each tenant), and the rows it inserts or moves. The
@@ -689,7 +696,7 @@ def main():
         # (tenant_id, id) -> [k, j, u, w]
         model = {(i % TENANTS, i): [i % keys, i % keys, i, i] for i in range(n)}
         fresh = {"id": 6 * FRESH_ID, "u": 6 * FRESH_C}
-        errors, writes = [], [0]
+        errors, writes, throttled = [], [0], [0]
         shard_of = {node: g_["id"] for g_ in groups for node in g_["replicas"]}
 
         def new(what):
@@ -728,7 +735,12 @@ def main():
                         model[a][2:4] = [u, w]
                     writes[0] += 1
                 except pymysql.MySQLError as e:
-                    errors.append(f"dropped: {e.args}")
+                    # (vinyl admission's refusal wrote nothing: the model
+                    # stays as it was, and the next write comes after a pause)
+                    if vinyl_refusal(e):
+                        throttled[0] += 1
+                    else:
+                        errors.append(f"dropped: {e.args}")
                     time.sleep(0.05)
                 time.sleep(0.003)
 
@@ -783,8 +795,11 @@ def main():
         stop.set()
         th.join(30)
         check(f"{engine}: {sql}", alter_error is None, alter_error)
-        check(f"{engine}: writes went on through every index during it, and none failed", during > 0 and not errors,
-              {"during": during, "errors": errors[:5]})
+        check(f"{engine}: writes went on through every index during it, and none failed (vinyl admission may "
+              f"refuse one, which writes nothing)", during > 0 and not errors,
+              {"during": during, "errors": errors[:5], "vinyl refusals": throttled[0]})
+        if throttled[0]:
+            print(f"  ({engine}: vinyl admission refused {throttled[0]} writes, which wrote nothing)", flush=True)
         check(f"{engine}: no replica changed its election term", terms() == before_terms,
               {"before": before_terms, "after": terms()})
         drained()
