@@ -129,9 +129,10 @@ the original, and the source of the latency variation remains unresolved.
 Both Vinyl/native-enabled SQL runs have negative hot-key goodput medians,
 although every range crosses one. Allocation savings are repeatable; a
 Vinyl throughput benefit or absence of regression is not established.
-The default scope is Jeremiah's decision. A memtx-only initial default is
-the conservative recommendation and would need its own matched check before
-landing; the currently measured proposal batches all planned-space guards.
+On November 3, Jeremiah chose to enable batching for both engines after
+reviewing these results. This is the all-engine candidate already measured
+here; no memtx-only variant is needed. The decision accepts the unresolved
+Vinyl throughput and tail-latency evidence, without claiming a Vinyl speedup.
 
 ## Why the other candidate stays experimental
 
@@ -154,8 +155,9 @@ The early production head `bd86fbd` passed Rust unit/IPROTO tests and 79 focused
 live guard checks. The old scalar body, skipped-last-space and retained-mode
 controls each failed their intended assertion. Independent static review
 covered implementation, test/control logic and benchmark matching. The final
-combined PR still requires all exact-head CI, native/Lua storage suites,
-MariaDB 10.11 contracts, RF3 faults, model checks and Jeremiah's default decision.
+combined PR passed all required CI on `429e0ca`, including native/Lua storage
+suites, MariaDB 10.11 contracts, RF3 faults and model checks. Main subsequently
+advanced, so the rebased head must pass those gates again before merge.
 
 `PlanGuardBatch` checks one two-space decision under an atomic-guard assumption.
 Its skip-space and across-yield controls fail `NoUnsafeAcceptance`; actual
