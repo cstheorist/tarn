@@ -19,13 +19,22 @@
    them, so they are neither doomed nor retired. They are named after the
    space that has the table's name, and found by that name or through the
    catalog entry of the table whose name a space has (UIX.spaces); APPLY
-   renames them after the native renames and before the catalog commit. For
-   other jobs the kept set is empty, and its invariants hold vacuously. *)
+   renames them after the native renames and before the catalog commit.
+   It keeps the table's lazy generations too: their targets, entries and
+   deliveries name only the generation, but each generation's descriptor
+   and the capture name the table's space. Publication binds them to the
+   new space in its catalog transaction, and ABORT retires none, since a
+   rebuild makes no generation. The shard's lazy registry, a cache of what
+   is captured, is read from confirmed state: one read while the catalog's
+   transaction waits for its quorum, and used after it, must not take the
+   new space's writes uncaptured. For other jobs the kept sets are empty,
+   and their invariants hold vacuously. *)
 EXTENDS Naturals, FiniteSets
 CONSTANTS BugPublishBeforeDecision, BugPublishBeforeAuxReady, BugDropBeforePublish,
           BugAbortAfterDecision, BugApplyAfterAbort, BugOldStreamValidates, BugForgetOldObligations,
           BugResetCounterIdentity, BugRenameLosesOriginalIdentity, BugCatalogByName,
-          BugAuxStreamOmitted, BugKeptByNameOnly, BugPublishBeforeKeptRename, BugRetireKept
+          BugAuxStreamOmitted, BugKeptByNameOnly, BugPublishBeforeKeptRename, BugRetireKept,
+          BugRebindAfterPublish, BugAbortRetiresKept, BugNoPendingNew
 
 Shards == {"A", "B"}
 Old == 1
@@ -34,7 +43,7 @@ Ids == {Old, New}
 VARIABLES prepared, auxReady, decision, catalog, spaces, renamed, oldRef, nameGone,
           awake, crashed, retired, pendingOld, ackedOld, doomed, streamCommitted,
           allocated, counter, allocatedNew, reused, observation, auxDoomed, auxStreamCommitted,
-          keptName, keptAlive
+          keptName, keptAlive, lazyBase, lazyAlive, publishing, lazyView, uncaptured
 jvars == <<prepared, auxReady, decision>>
 pvars == <<catalog, spaces, renamed, oldRef, nameGone>>
 fvars == <<awake, crashed>>
@@ -42,7 +51,9 @@ avars == <<retired, pendingOld, ackedOld>>
 rvars == <<doomed, streamCommitted, observation, auxDoomed, auxStreamCommitted>>
 cvars == <<allocated, counter, allocatedNew, reused>>
 kvars == <<keptName, keptAlive>>
-vars == <<jvars, pvars, fvars, avars, rvars, cvars, kvars>>
+lvars == <<lazyBase, lazyAlive>>
+wvars == <<publishing, lazyView, uncaptured>>
+vars == <<jvars, pvars, fvars, avars, rvars, cvars, kvars, lvars, wvars>>
 
 Init ==
     /\ prepared = {} /\ auxReady = {} /\ decision = "none"
@@ -58,39 +69,43 @@ Init ==
     /\ allocated = {1, 2} /\ counter = 2 /\ allocatedNew = FALSE /\ reused = FALSE
     \* The kept space is named after the space with the table's name.
     /\ keptName = [s \in Shards |-> Old] /\ keptAlive = [s \in Shards |-> TRUE]
+    \* The space a kept lazy generation's descriptor and capture name.
+    /\ lazyBase = [s \in Shards |-> Old] /\ lazyAlive = [s \in Shards |-> TRUE]
+    \* What each shard's lazy registry last read of the new space: nothing yet.
+    /\ publishing = {} /\ lazyView = [s \in Shards |-> "none"] /\ uncaptured = FALSE
 
 Prepared(s) ==
     /\ s \in awake \ prepared /\ decision = "none"
     /\ prepared' = prepared \cup {s}
-    /\ UNCHANGED <<auxReady, decision, pvars, fvars, avars, rvars, cvars, kvars>>
+    /\ UNCHANGED <<auxReady, decision, pvars, fvars, avars, rvars, cvars, kvars, lvars, wvars>>
 ReadyAux(s) ==
     /\ s \in (awake \cap prepared) \ auxReady /\ decision = "none"
     /\ auxReady' = auxReady \cup {s}
-    /\ UNCHANGED <<prepared, decision, pvars, fvars, avars, rvars, cvars, kvars>>
+    /\ UNCHANGED <<prepared, decision, pvars, fvars, avars, rvars, cvars, kvars, lvars, wvars>>
 
 DecideApply ==
     /\ decision = "none" \/ (BugApplyAfterAbort /\ decision = "abort")
     /\ prepared = Shards
     /\ auxReady = Shards \/ BugPublishBeforeAuxReady
     /\ decision' = "apply"
-    /\ UNCHANGED <<prepared, auxReady, pvars, fvars, avars, rvars, cvars, kvars>>
+    /\ UNCHANGED <<prepared, auxReady, pvars, fvars, avars, rvars, cvars, kvars, lvars, wvars>>
 DecideAbort ==
     /\ decision = "none" \/ (BugAbortAfterDecision /\ decision = "apply")
     /\ decision' = "abort"
-    /\ UNCHANGED <<prepared, auxReady, pvars, fvars, avars, rvars, cvars, kvars>>
+    /\ UNCHANGED <<prepared, auxReady, pvars, fvars, avars, rvars, cvars, kvars, lvars, wvars>>
 
 Unname(s) ==
     /\ s \in (awake \cap prepared) \ nameGone
     /\ auxReady = Shards \/ BugPublishBeforeAuxReady
     /\ decision = "apply" \/ (BugPublishBeforeDecision /\ decision = "none")
     /\ nameGone' = nameGone \cup {s}
-    /\ UNCHANGED <<jvars, catalog, spaces, renamed, oldRef, fvars, avars, rvars, cvars, kvars>>
+    /\ UNCHANGED <<jvars, catalog, spaces, renamed, oldRef, fvars, avars, rvars, cvars, kvars, lvars, wvars>>
 Rename(s) ==
     /\ s \in (awake \cap prepared \cap nameGone) \ renamed
     /\ auxReady = Shards \/ BugPublishBeforeAuxReady
     /\ decision = "apply" \/ (BugPublishBeforeDecision /\ decision = "none")
     /\ renamed' = renamed \cup {s}
-    /\ UNCHANGED <<jvars, catalog, spaces, oldRef, nameGone, fvars, avars, rvars, cvars, kvars>>
+    /\ UNCHANGED <<jvars, catalog, spaces, oldRef, nameGone, fvars, avars, rvars, cvars, kvars, lvars, wvars>>
 (* The space with the table's name, if one has it: the one whose kept
    spaces a name lookup and the catalog both find. *)
 Named(s) == IF s \in renamed THEN New ELSE IF s \in nameGone THEN 0 ELSE Old
@@ -98,63 +113,79 @@ Named(s) == IF s \in renamed THEN New ELSE IF s \in nameGone THEN 0 ELSE Old
 RenameKept(s) ==
     /\ s \in awake \cap renamed /\ catalog[s] = Old /\ keptName[s] = Old
     /\ keptName' = [keptName EXCEPT ![s] = New]
-    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, cvars, keptAlive>>
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, cvars, keptAlive, lvars, wvars>>
+(* The catalog's transaction drops the shard's lazy registry before it
+   commits, then waits for its quorum (Publish confirms it): a registry
+   read meanwhile (ReadLazy) reads the confirmed state, from before it. *)
+BeginPublish(s) ==
+    /\ s \in (awake \cap renamed) \ publishing /\ catalog[s] = Old
+    /\ decision = "apply" \/ (BugPublishBeforeDecision /\ decision = "none")
+    /\ keptName[s] = New \/ BugPublishBeforeKeptRename
+    /\ publishing' = publishing \cup {s}
+    /\ lazyView' = [lazyView EXCEPT ![s] = "stale"]
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, cvars, kvars, lvars, uncaptured>>
 Publish(s) ==
-    /\ s \in awake \cap renamed /\ catalog[s] = Old
+    /\ s \in awake \cap publishing /\ catalog[s] = Old
     /\ decision = "apply" \/ (BugPublishBeforeDecision /\ decision = "none")
     /\ keptName[s] = New \/ BugPublishBeforeKeptRename
     /\ catalog' = [catalog EXCEPT ![s] = New]
+    /\ lazyBase' = IF BugRebindAfterPublish THEN lazyBase ELSE [lazyBase EXCEPT ![s] = New]
     /\ retired' = retired \cup {s}
     /\ doomed' = IF BugOldStreamValidates THEN doomed ELSE doomed \cup {s}
     /\ auxDoomed' = IF BugAuxStreamOmitted THEN auxDoomed ELSE auxDoomed \cup {s}
+    /\ publishing' = publishing \ {s}
+    \* (A registry read before the confirmation may stay in use after it.)
     /\ UNCHANGED <<jvars, spaces, renamed, oldRef, nameGone, fvars, pendingOld, ackedOld,
-                   streamCommitted, observation, auxStreamCommitted, cvars, kvars>>
+                   streamCommitted, observation, auxStreamCommitted, cvars, kvars, lazyAlive,
+                   lazyView, uncaptured>>
 DropOriginal(s) ==
     /\ s \in awake /\ oldRef[s] \in spaces[s]
     /\ (decision = "apply" /\ catalog[s] = New) \/ BugDropBeforePublish
     /\ spaces' = [spaces EXCEPT ![s] = @ \ {oldRef[s]}]
     \* (Cleanup drops the retired global index spaces, never the kept ones.)
     /\ keptAlive' = IF BugRetireKept THEN [keptAlive EXCEPT ![s] = FALSE] ELSE keptAlive
-    /\ UNCHANGED <<jvars, catalog, renamed, oldRef, nameGone, fvars, avars, rvars, cvars, keptName>>
+    /\ UNCHANGED <<jvars, catalog, renamed, oldRef, nameGone, fvars, avars, rvars, cvars, keptName, lvars, wvars>>
 AbortShadow(s) ==
     /\ s \in awake /\ decision = "abort" /\ New \in spaces[s]
     /\ spaces' = [spaces EXCEPT ![s] = @ \ {New}]
-    /\ UNCHANGED <<jvars, catalog, renamed, oldRef, nameGone, fvars, avars, rvars, cvars, kvars>>
+    /\ UNCHANGED <<jvars, catalog, renamed, oldRef, nameGone, fvars, avars, rvars, cvars, kvars, lvars, wvars>>
 
 Crash(s) ==
     /\ ~crashed /\ s \in awake
     /\ awake' = awake \ {s} /\ crashed' = TRUE
-    /\ UNCHANGED <<jvars, pvars, avars, rvars, cvars, kvars>>
+    \* (The unconfirmed transaction is lost; a restart reads the registry anew.)
+    /\ publishing' = publishing \ {s} /\ lazyView' = [lazyView EXCEPT ![s] = "stale"]
+    /\ UNCHANGED <<jvars, pvars, avars, rvars, cvars, kvars, lvars, uncaptured>>
 Resume(s) ==
     /\ s \in Shards \ awake
     /\ awake' = awake \cup {s}
     /\ oldRef' = IF BugRenameLosesOriginalIdentity /\ s \in renamed
                   THEN [oldRef EXCEPT ![s] = New] ELSE oldRef
-    /\ UNCHANGED <<jvars, catalog, spaces, renamed, nameGone, crashed, avars, rvars, cvars, kvars>>
+    /\ UNCHANGED <<jvars, catalog, spaces, renamed, nameGone, crashed, avars, rvars, cvars, kvars, lvars, wvars>>
 
 (* Explicit durable retirement certifies an obsolete generation; lack of
    a current source space or a not-ready replacement never certifies ACK. *)
 AckOld(s) ==
     /\ s \in pendingOld /\ s \in retired
     /\ pendingOld' = pendingOld \ {s} /\ ackedOld' = ackedOld \cup {s}
-    /\ UNCHANGED <<jvars, pvars, fvars, retired, rvars, cvars, kvars>>
+    /\ UNCHANGED <<jvars, pvars, fvars, retired, rvars, cvars, kvars, lvars, wvars>>
 ForgetOld(s) ==
     /\ BugForgetOldObligations /\ s \in pendingOld
     /\ pendingOld' = pendingOld \ {s}
-    /\ UNCHANGED <<jvars, pvars, fvars, retired, ackedOld, rvars, cvars, kvars>>
+    /\ UNCHANGED <<jvars, pvars, fvars, retired, ackedOld, rvars, cvars, kvars, lvars, wvars>>
 
 ValidateOldStream(s) ==
     /\ s \in awake \ streamCommitted /\ s \notin doomed
     /\ catalog[s] = New
     /\ streamCommitted' = streamCommitted \cup {s}
-    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, observation, auxDoomed, auxStreamCommitted, cvars, kvars>>
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, observation, auxDoomed, auxStreamCommitted, cvars, kvars, lvars, wvars>>
 (* A missing strong-global-index key reads only the old auxiliary space:
    there is no base fetch/read tracker to make the base watermark suffice. *)
 ValidateOldAuxStream(s) ==
     /\ s \in awake \ auxStreamCommitted /\ s \notin auxDoomed
     /\ catalog[s] = New
     /\ auxStreamCommitted' = auxStreamCommitted \cup {s}
-    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, streamCommitted, observation, auxDoomed, cvars, kvars>>
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, streamCommitted, observation, auxDoomed, cvars, kvars, lvars, wvars>>
 (* Definition bytes/version and SID belong to the SAME confirmed catalog
    observation. A native rename changes names before that metadata changes;
    resolving the public name can return 0 or New paired with Old's JSON.
@@ -165,19 +196,48 @@ ObserveCatalog(s) ==
            named == Named(s)
        IN observation' = [sid |-> IF BugCatalogByName THEN named ELSE committed,
                           def_id |-> committed, json_version |-> IF committed = Old THEN 0 ELSE 1]
-    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, streamCommitted, auxDoomed, auxStreamCommitted, cvars, kvars>>
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, streamCommitted, auxDoomed, auxStreamCommitted, cvars, kvars, lvars, wvars>>
 AllocateNew ==
     /\ ~allocatedNew /\ \E s \in Shards : catalog[s] = New
     /\ LET n == IF BugResetCounterIdentity THEN 2 ELSE counter + 1
        IN /\ reused' = (n \in allocated)
           /\ allocated' = allocated \cup {n} /\ counter' = n
     /\ allocatedNew' = TRUE
-    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, kvars>>
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, kvars, lvars, wvars>>
 
-Next == (\E s \in Shards : Prepared(s) \/ ReadyAux(s) \/ Unname(s) \/ Rename(s) \/ RenameKept(s) \/ Publish(s)
+(* Controls: binding the kept generation after the catalog commit, in a step
+   of its own; an ABORT that retires the generations the job names. *)
+RebindLazy(s) ==
+    /\ BugRebindAfterPublish /\ s \in awake /\ catalog[s] = New /\ lazyBase[s] = Old
+    /\ lazyBase' = [lazyBase EXCEPT ![s] = New]
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, cvars, kvars, lazyAlive, wvars>>
+AbortLazy(s) ==
+    /\ BugAbortRetiresKept /\ s \in awake /\ decision = "abort" /\ lazyAlive[s]
+    /\ lazyAlive' = [lazyAlive EXCEPT ![s] = FALSE]
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, cvars, kvars, lazyBase, wvars>>
+
+(* The shard's lazy registry, read from confirmed state at any time: the
+   new space is a captured source once the catalog names it, and until then
+   pending (refused), since the job's record keeps its generations for it;
+   BugNoPendingNew leaves it unknown. A write to the new space with the new
+   definition, which the engine registry admits once published, is refused
+   by a stale or pending view, captured by a bound one, and taken uncaptured
+   by one that does not know the space. *)
+ReadLazy(s) ==
+    /\ s \in awake
+    /\ lazyView' = [lazyView EXCEPT ![s] = IF catalog[s] = New THEN "bound"
+                                          ELSE IF BugNoPendingNew THEN "none" ELSE "pending"]
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, cvars, kvars, lvars, publishing, uncaptured>>
+WriteNew(s) ==
+    /\ s \in awake /\ catalog[s] = New /\ lazyView[s] \in {"none", "bound"}
+    /\ uncaptured' = (uncaptured \/ lazyView[s] = "none")
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, cvars, kvars, lvars, publishing, lazyView>>
+
+Next == (\E s \in Shards : Prepared(s) \/ ReadyAux(s) \/ Unname(s) \/ Rename(s) \/ RenameKept(s)
+                 \/ BeginPublish(s) \/ Publish(s)
                  \/ DropOriginal(s) \/ AbortShadow(s) \/ Crash(s) \/ Resume(s)
                  \/ AckOld(s) \/ ForgetOld(s) \/ ValidateOldStream(s) \/ ValidateOldAuxStream(s)
-                 \/ ObserveCatalog(s))
+                 \/ ObserveCatalog(s) \/ RebindLazy(s) \/ AbortLazy(s) \/ ReadLazy(s) \/ WriteNew(s))
         \/ DecideApply \/ DecideAbort \/ AllocateNew
 Spec == Init /\ [][Next]_vars
 
@@ -193,6 +253,9 @@ TypeOK == /\ prepared \subseteq Shards /\ auxReady \subseteq Shards
           /\ allocatedNew \in BOOLEAN /\ reused \in BOOLEAN
           /\ observation \in [sid : 0..2, def_id : Ids, json_version : 0..1]
           /\ keptName \in [Shards -> Ids] /\ keptAlive \in [Shards -> BOOLEAN]
+          /\ lazyBase \in [Shards -> Ids] /\ lazyAlive \in [Shards -> BOOLEAN]
+          /\ publishing \subseteq Shards /\ uncaptured \in BOOLEAN
+          /\ lazyView \in [Shards -> {"stale", "none", "pending", "bound"}]
 CatalogHasSpace == \A s \in Shards : catalog[s] \in spaces[s]
 PublishedReady == \A s \in Shards : catalog[s] = New => s \in auxReady
 NoAbortPublished == decision = "abort" => \A s \in Shards : catalog[s] = Old
@@ -218,4 +281,11 @@ KeptFound == \A s \in Shards : Named(s) # 0 => KeptFoundBy(s, Named(s))
    as the catalog's definition names them. *)
 KeptNamedAfterCatalog == \A s \in Shards : catalog[s] = New => keptName[s] = New
 KeptAlive == \A s \in Shards : keptAlive[s]
+(* A kept lazy generation is bound to the space the catalog names: writes
+   to that space are captured for it, and a later change of the table finds
+   it bound to the table. ABORT leaves it to the table. *)
+KeptLazyBound == \A s \in Shards : lazyBase[s] = catalog[s]
+KeptLazyAlive == \A s \in Shards : lazyAlive[s]
+(* Every write the new space takes is captured for the kept generation. *)
+KeptLazyCaptured == ~uncaptured
 =============================================================================

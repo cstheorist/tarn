@@ -9,7 +9,9 @@
 -- copy pads each row it writes with the fills its indexes need. A rebuild
 -- keeps the table's global index spaces as they are: their entries hold
 -- keys and primary keys, which the copy keeps, and both definitions write
--- them. Publication only renames them after the new space's id.
+-- them. Publication only renames them after the new space's id. It keeps
+-- the table's lazy indexes too, whose targets name only their generation:
+-- publication binds them to the new space (L.rebind in lua/tarn_lazy.lua).
 local fiber, clock, mp, uuid = require('fiber'), require('clock'), require('msgpack'), require('uuid')
 local M = {}
 local RC = {txn_isolation = 'read-confirmed'}
@@ -47,30 +49,35 @@ function M.new(c)
         local x = type(a) == 'table' and a.engine_change
         -- A rebuild keeps the engine; an engine change changes it. A rebuild
         -- is `true`; 'layout' when it also changes the stored layout; 'aux'
-        -- when it keeps the table's global index spaces (and may change the
-        -- layout too). Storage from before one of them refuses such a job
-        -- (every step, ABORT too) rather than copy the old layout, or leave
-        -- the kept spaces under names it no longer finds them by.
+        -- when it keeps the table's global index spaces; 'lazy' when it keeps
+        -- its lazy indexes, and global ones if any ('aux' and 'lazy' may
+        -- change the layout too). Storage from before one of them refuses
+        -- such a job (every step, ABORT too) rather than copy the old layout,
+        -- leave the kept spaces under names it no longer finds them by, or
+        -- retire the kept lazy generations as an aborted engine change's.
         if type(x) ~= 'table' or type(a.def) ~= 'table'
            or type(x.old_id) ~= 'number' or type(a.def.id) ~= 'number'
            or x.old_id == a.def.id or type(x.old_name) ~= 'string'
            or (x.old_engine ~= 'memtx' and x.old_engine ~= 'vinyl')
            or (a.def.engine ~= 'memtx' and a.def.engine ~= 'vinyl')
-           or (x.rebuild ~= nil and x.rebuild ~= true and x.rebuild ~= 'layout' and x.rebuild ~= 'aux')
+           or (x.rebuild ~= nil and x.rebuild ~= true and x.rebuild ~= 'layout' and x.rebuild ~= 'aux'
+               and x.rebuild ~= 'lazy')
            or (x.old_engine == a.def.engine) ~= (x.rebuild ~= nil) or a.def.name ~= x.old_name then
             fail(1210, 'Malformed engine-change descriptor')
         end
         return x
     end
     local function none(v) return nilish(v) or (type(v) == 'table' and next(v) == nil) end
+    local function keeps_aux(x) return x.rebuild == 'aux' or x.rebuild == 'lazy' end
     -- What a new job's descriptor may ask of the copy, checked when the job
     -- starts its copy (not at ABORT, which must end a job however it was
-    -- refused): only a 'layout' or 'aux' rebuild changes the stored layout
-    -- (format and padding). A rebuild neither checks rows nor renames the
-    -- table; it makes and drops no global index and has no lazy one, and
-    -- only an 'aux' rebuild has global indexes, which it keeps.
+    -- refused): only a 'layout', 'aux' or 'lazy' rebuild changes the stored
+    -- layout (format and padding). A rebuild neither checks rows nor renames
+    -- the table, and makes and drops no global or lazy index. Only an 'aux'
+    -- or 'lazy' rebuild has global indexes, and only a 'lazy' one lazy
+    -- indexes, which they keep.
     local function admissible(x, a)
-        if x.rebuild ~= 'layout' and x.rebuild ~= 'aux' and (not nilish(a.format) or not nilish(a.pad)) then
+        if x.rebuild ~= 'layout' and not keeps_aux(x) and (not nilish(a.format) or not nilish(a.pad)) then
             fail(1210, x.rebuild and 'A rebuild that changes the stored layout must say so'
                 or 'An engine change keeps the stored layout')
         end
@@ -79,11 +86,14 @@ function M.new(c)
                 if type(ch) ~= 'table' or ch[3] ~= 'indexed' then fail(1210, 'An engine rebuild checks no rows') end
             end
             if not nilish(a.rename) then fail(1210, "An engine rebuild keeps the table's name") end
-            if not none(a.uix) or not none(a.uix_drop) or not none(a.lazy_drop) or not none(a.def.lazy) then
-                fail(1210, 'An engine rebuild makes and drops no global index, and has no lazy one')
+            if not none(a.uix) or not none(a.uix_drop) or not none(a.lazy_drop) then
+                fail(1210, 'An engine rebuild makes and drops no global or lazy index')
             end
-            if x.rebuild ~= 'aux' and (not none(a.def.uix) or #c.uix_spaces(x.old_id) > 0) then
+            if not keeps_aux(x) and (not none(a.def.uix) or #c.uix_spaces(x.old_id) > 0) then
                 fail(1210, 'A rebuild that keeps global indexes must say so')
+            end
+            if x.rebuild ~= 'lazy' and (not none(a.def.lazy) or #c.lazy.live(x.old_id) > 0) then
+                fail(1210, 'A rebuild that keeps lazy indexes must say so')
             end
         end
     end
@@ -505,22 +515,26 @@ function M.new(c)
         if r ~= nil and (r.ver >= a.ver or not terminal(r.phase)) then fail(1412, 'A different engine job owns the source') end
         local sp = check_source(a)
         if not aborting then admissible(x, a) end
-        local schema, pad, kept = box.NULL, box.NULL, {}
+        local schema, pad, kept, kept_lazy = box.NULL, box.NULL, {}, {}
         if not aborting then
             schema = x.rebuild ~= nil and rebuilt(sp, a) or snapshot(sp)
             pad = x.rebuild ~= nil and padding(a) or box.NULL
-            if x.rebuild == 'aux' then kept = kept_globals(x, a) end
+            if keeps_aux(x) then kept = kept_globals(x, a) end
+            if x.rebuild == 'lazy' then kept_lazy = c.lazy.keep(a.def, x.old_id) end
         end
         local old_aux, new_aux, old_uix = {}, {}, {}
         for _, id in ipairs(a.uix_drop or {}) do old_aux[#old_aux + 1], old_uix[#old_uix + 1] = id, id end
         for _, id in ipairs(a.lazy_drop or {}) do old_aux[#old_aux + 1] = id end
         for _, d in ipairs(a.uix or {}) do new_aux[#new_aux + 1] = d.id end
-        for _, d in ipairs(a.def.lazy or {}) do new_aux[#new_aux + 1] = d.gen end
+        -- (A rebuild makes no lazy generation: those it names are kept.)
+        if x.rebuild == nil then
+            for _, d in ipairs(a.def.lazy or {}) do new_aux[#new_aux + 1] = d.gen end
+        end
         r = {old_id = x.old_id, old_ver = x.old_ver, old_engine = x.old_engine, old_name = name,
             new_id = a.def.id, engine = a.def.engine, ver = a.ver, gen = gen, phase = 'resetting',
             shadow_name = '_tarn_engine_' .. x.old_id .. '_' .. a.def.id,
             retired_name = '_tarn_engine_old_' .. x.old_id .. '_' .. a.def.id,
-            schema = schema, rebuild = x.rebuild ~= nil, pad = pad, kept_uix = kept,
+            schema = schema, rebuild = x.rebuild ~= nil, pad = pad, kept_uix = kept, kept_lazy = kept_lazy,
             cursor = box.NULL, copied = 0, capture = '',
             old_aux = old_aux, new_aux = new_aux, old_uix = old_uix}
         transaction(function() replace_record(r) end)
@@ -640,11 +654,17 @@ function M.new(c)
             fiber.sleep(0)
         until false
     end
+    -- An engine change's new lazy generations, bound to the new space. A
+    -- rebuild makes none: the generations it names are the table's, kept
+    -- and bound to the old space until publication (L.rebind).
+    local function new_lazy(a, gen)
+        if bound(a).rebuild == nil then c.lazy.prepare(a.def, gen) end
+    end
     function E.prepare(name, a, gen, deadline)
         local r = start(name, a, gen, deadline)
         if r.phase == 'published' then return {'ok', 'applied'} end
         if r.phase == 'prepared' or r.phase == 'applying' then
-            c.lazy.prepare(a.def, gen)
+            new_lazy(a, gen)
             return {'ok'}
         end
         if r.phase == 'preparing' and E.tracks[r.old_id] then E.tracks[r.old_id].valid = false end
@@ -711,7 +731,7 @@ function M.new(c)
             c.writable(); schema_index(box.space[r.new_id], ix)
         end
         for _, d in ipairs(a.uix or {}) do c.create_space(d) end
-        c.lazy.prepare(a.def, gen)
+        new_lazy(a, gen)
         cut(deadline)
         update(a, gen, {preparing = true}, function(v)
             if not capture_valid(t) then fail(1213, 'Engine capture was lost') end
@@ -789,6 +809,7 @@ function M.new(c)
             local v = owned(a, gen, {applying = true})
             c.lazy.retire(a.lazy_drop)
             c.lazy.activate(a.def)
+            c.lazy.rebind(a.def, v.kept_lazy)
             box.space._tarn_lazy_capture:delete{v.old_id}
             box.space._tarn_catalog:replace{name, a.def}
             v.phase, v.cleaned = 'published', false; replace_record(v)
@@ -797,6 +818,9 @@ function M.new(c)
                     {ver = a.ver, gen = gen, phase = 'migrated', engine_retired = true}}
             end
         end)
+        -- A lazy registry read while that transaction waited for its quorum
+        -- has the new space pending (L.fresh): read it again, now published.
+        c.lazy.invalidate()
         c.hook('engine_published')
         r = read(function() return owned(a, gen, {published = true}) end)
         return clean_published(a, gen, r, deadline)
@@ -822,7 +846,9 @@ function M.new(c)
         for _, d in ipairs(a.uix or {}) do if box.space[d.id] ~= nil then box.space[d.id]:drop() end end
         transaction(function()
             local v = owned(a, gen, {aborting = true})
-            c.lazy.abort(a.def)
+            -- (A rebuild makes no lazy generation, so it retires none: those
+            -- it names are the table's, and kept.)
+            if x.rebuild == nil then c.lazy.abort(a.def) end
             v.phase = 'aborted'; replace_record(v)
             for _, old in ipairs({true, false}) do
                 for _, sid in ipairs(group(v, old)) do

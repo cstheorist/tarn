@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 128 and seed 5245932690709440108 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 20773] (Linux 6.18.44-fc-v185 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file EngineCutover.tla
-Parsing file /tmp/tlc-17577733533848792041/Naturals.tla (jar:file:tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-17577733533848792041/FiniteSets.tla (jar:file:tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-17577733533848792041/_TLCTrace.tla (jar:file:tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-17577733533848792041/Sequences.tla (jar:file:tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-17577733533848792041/TLC.tla (jar:file:tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-17577733533848792041/TLCExt.tla (jar:file:tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-17577733533848792041/Integers.tla (jar:file:tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 55 and seed 4445355156531500795 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 5493] (Linux 6.18.44-fc-v185 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-lazy/tla/EngineCutover.tla
+Parsing file /tmp/tlc-16970047121301700017/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-16970047121301700017/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-16970047121301700017/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-16970047121301700017/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-16970047121301700017/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-16970047121301700017/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-16970047121301700017/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,17 +19,20 @@ Semantic processing of module EngineCutover
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCutover
-Starting... (2026-11-02 17:24:05)
+Starting... (2026-11-02 19:21:40)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 17:24:05.
+Finished computing initial states: 1 distinct state generated at 2026-11-02 19:21:41.
 Error: Invariant KeptAlive is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "none"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
@@ -40,22 +43,27 @@ State 1: <Initial predicate>
 /\ auxReady = {}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "none", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {}
+/\ uncaptured = FALSE
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 2: <Prepared("A") line 63, col 5 to line 65, col 81 of module EngineCutover>
+State 2: <Prepared("A") line 78, col 5 to line 80, col 95 of module EngineCutover>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "none"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
@@ -66,22 +74,27 @@ State 2: <Prepared("A") line 63, col 5 to line 65, col 81 of module EngineCutove
 /\ auxReady = {}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "none", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A"}
+/\ uncaptured = FALSE
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 3: <ReadyAux("A") line 67, col 5 to line 69, col 81 of module EngineCutover>
+State 3: <ReadyAux("A") line 82, col 5 to line 84, col 95 of module EngineCutover>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "none"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
@@ -92,22 +105,27 @@ State 3: <ReadyAux("A") line 67, col 5 to line 69, col 81 of module EngineCutove
 /\ auxReady = {"A"}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "none", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A"}
+/\ uncaptured = FALSE
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 4: <Prepared("B") line 63, col 5 to line 65, col 81 of module EngineCutover>
+State 4: <Prepared("B") line 78, col 5 to line 80, col 95 of module EngineCutover>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "none"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
@@ -118,22 +136,27 @@ State 4: <Prepared("B") line 63, col 5 to line 65, col 81 of module EngineCutove
 /\ auxReady = {"A"}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "none", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
+/\ uncaptured = FALSE
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 5: <ReadyAux("B") line 67, col 5 to line 69, col 81 of module EngineCutover>
+State 5: <ReadyAux("B") line 82, col 5 to line 84, col 95 of module EngineCutover>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "none"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
@@ -144,22 +167,27 @@ State 5: <ReadyAux("B") line 67, col 5 to line 69, col 81 of module EngineCutove
 /\ auxReady = {"A", "B"}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "none", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
+/\ uncaptured = FALSE
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 6: <DecideApply line 72, col 5 to line 76, col 81 of module EngineCutover>
+State 6: <DecideApply line 87, col 5 to line 91, col 95 of module EngineCutover>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "apply"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
@@ -170,22 +198,27 @@ State 6: <DecideApply line 72, col 5 to line 76, col 81 of module EngineCutover>
 /\ auxReady = {"A", "B"}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "none", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
+/\ uncaptured = FALSE
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 7: <Unname("A") line 83, col 5 to line 87, col 95 of module EngineCutover>
+State 7: <Unname("A") line 98, col 5 to line 102, col 109 of module EngineCutover>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "apply"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
@@ -196,22 +229,27 @@ State 7: <Unname("A") line 83, col 5 to line 87, col 95 of module EngineCutover>
 /\ auxReady = {"A", "B"}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "none", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {"A"}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
+/\ uncaptured = FALSE
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 8: <Rename("A") line 89, col 5 to line 93, col 96 of module EngineCutover>
+State 8: <Rename("A") line 104, col 5 to line 108, col 110 of module EngineCutover>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "apply"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {"A"}
 /\ streamCommitted = {}
@@ -222,22 +260,27 @@ State 8: <Rename("A") line 89, col 5 to line 93, col 96 of module EngineCutover>
 /\ auxReady = {"A", "B"}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "none", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {"A"}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
+/\ uncaptured = FALSE
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 9: <RenameKept("A") line 99, col 5 to line 101, col 72 of module EngineCutover>
+State 9: <RenameKept("A") line 114, col 5 to line 116, col 86 of module EngineCutover>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "apply"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {"A"}
 /\ streamCommitted = {}
@@ -248,22 +291,58 @@ State 9: <RenameKept("A") line 99, col 5 to line 101, col 72 of module EngineCut
 /\ auxReady = {"A", "B"}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "none", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {"A"}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
+/\ uncaptured = FALSE
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 10: <Publish("A") line 103, col 5 to line 111, col 83 of module EngineCutover>
+State 10: <BeginPublish("A") line 121, col 5 to line 126, col 87 of module EngineCutover>
+/\ lazyBase = [A |-> 1, B |-> 1]
 /\ decision = "apply"
+/\ publishing = {"A"}
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 1, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
+/\ doomed = {}
+/\ renamed = {"A"}
+/\ streamCommitted = {}
+/\ auxDoomed = {}
+/\ auxStreamCommitted = {}
+/\ keptName = [A |-> 2, B |-> 1]
+/\ ackedOld = {}
+/\ auxReady = {"A", "B"}
+/\ keptAlive = [A |-> TRUE, B |-> TRUE]
+/\ crashed = FALSE
+/\ lazyView = [A |-> "stale", B |-> "none"]
+/\ reused = FALSE
+/\ nameGone = {"A"}
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A", "B"}
+/\ uncaptured = FALSE
+/\ retired = {}
+/\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
+
+State 11: <Publish("A") line 128, col 5 to line 140, col 41 of module EngineCutover>
+/\ lazyBase = [A |-> 2, B |-> 1]
+/\ decision = "apply"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 2, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {"A"}
 /\ renamed = {"A"}
 /\ streamCommitted = {}
@@ -274,22 +353,27 @@ State 10: <Publish("A") line 103, col 5 to line 111, col 83 of module EngineCuto
 /\ auxReady = {"A", "B"}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "stale", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {"A"}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
+/\ uncaptured = FALSE
 /\ retired = {"A"}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 11: <DropOriginal("A") line 113, col 5 to line 118, col 100 of module EngineCutover>
+State 12: <DropOriginal("A") line 142, col 5 to line 147, col 114 of module EngineCutover>
+/\ lazyBase = [A |-> 2, B |-> 1]
 /\ decision = "apply"
+/\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 2, B |-> 1]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
+/\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {"A"}
 /\ renamed = {"A"}
 /\ streamCommitted = {}
@@ -300,17 +384,19 @@ State 11: <DropOriginal("A") line 113, col 5 to line 118, col 100 of module Engi
 /\ auxReady = {"A", "B"}
 /\ keptAlive = [A |-> FALSE, B |-> TRUE]
 /\ crashed = FALSE
+/\ lazyView = [A |-> "stale", B |-> "none"]
 /\ reused = FALSE
 /\ nameGone = {"A"}
 /\ spaces = [A |-> {2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
+/\ uncaptured = FALSE
 /\ retired = {"A"}
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-762 states generated, 228 distinct states found, 16 states left on queue.
-The depth of the complete state graph search is 11.
-Finished in 01s at (2026-11-02 17:24:06)
-Trace exploration spec path: ./EngineCutover_TTrace_1793658244.tla
+4522 states generated, 884 distinct states found, 67 states left on queue.
+The depth of the complete state graph search is 12.
+Finished in 00s at (2026-11-02 19:21:41)
+Trace exploration spec path: ./EngineCutover_TTrace_1793665300.tla

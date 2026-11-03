@@ -102,10 +102,18 @@ function M.new(c)
             box.begin{txn_isolation = 'read-confirmed'}
             local ok, err = pcall(function()
             for _, t in box.space._tarn_catalog:pairs() do
-                local sp = box.space[t.name]
-                if sp ~= nil then
-                    sources[sp.id] = {ver = t.def.ver or 0, specs = {}, building = {}, declared = t.def.lazy or {}}
-                    sources[sp.id].requires = #sources[sp.id].declared > 0
+                -- The space the catalog entry names, not whichever space has
+                -- the table's name: an engine copy renames the spaces before
+                -- its catalog commit names the new one (tarn_engine.lua
+                -- E.apply), and the capture moves with that commit.
+                local sid = t.def.id
+                if sid == nil then
+                    local sp = box.space[t.name] -- (an older entry without its id)
+                    sid = sp and sp.id
+                end
+                if sid ~= nil and box.space[sid] ~= nil then
+                    sources[sid] = {ver = t.def.ver or 0, specs = {}, building = {}, declared = t.def.lazy or {}}
+                    sources[sid].requires = #sources[sid].declared > 0
                 end
             end
             for _, t in box.space._tarn_lazy_capture:pairs() do
@@ -129,13 +137,29 @@ function M.new(c)
                 end
             end
             -- Pending descriptors exclude native writes before publication.
+            local function pending(sid)
+                excluded[sid] = true
+                if sources[sid] == nil then
+                    sources[sid] = {ver = -1, specs = {}, building = {}, declared = {}}
+                end
+                sources[sid].requires = true
+            end
             for _, t in box.space._tarn_lazy_defs:pairs() do
-                if t.phase ~= 'retired' then
-                    excluded[t.base_id] = true
-                    if sources[t.base_id] == nil then
-                        sources[t.base_id] = {ver = -1, specs = {}, building = {}, declared = {}}
-                    end
-                    sources[t.base_id].requires = true
+                if t.phase ~= 'retired' then pending(t.base_id) end
+            end
+            -- A copy that keeps its table's generations (tarn_engine.lua,
+            -- rebuild = 'lazy') binds them to its new space in the catalog's
+            -- transaction. Until then the new space is pending too, as an
+            -- engine change's is through its new generations' descriptors:
+            -- a registry read before that transaction is confirmed, and used
+            -- after it, refuses the new space's writes rather than take them
+            -- uncaptured.
+            for _, m in box.space._tarn_meta:pairs({'engine:'}, {iterator = 'GE'}) do
+                if m.key:sub(1, 7) ~= 'engine:' then break end
+                local r = m.value
+                if type(r) == 'table' and r.phase ~= 'published' and r.phase ~= 'aborted'
+                   and type(r.kept_lazy) == 'table' and #r.kept_lazy > 0 and type(r.new_id) == 'number' then
+                    pending(r.new_id)
                 end
             end
             -- An online build's incarnations are captured from its start
@@ -570,6 +594,63 @@ function M.new(c)
             end
         end
         L.retire(retire)
+    end
+    -- A copy of a table into a new space keeps its lazy indexes (tarn_engine,
+    -- rebuild = 'lazy'): their targets, entries and outboxes name the
+    -- generation, never the table's space. Only these records name the
+    -- space: each generation's descriptor (_tarn_lazy_defs: base_id and
+    -- spec.base_space_id) and the capture, which publication moves.
+    --
+    -- The generations bound to space sid: published, or not yet retired.
+    function L.live(sid)
+        local out, seen = {}, {}
+        local cap = box.space._tarn_lazy_capture:get{sid}
+        for _, s in ipairs(cap and cap.specs or {}) do out[#out + 1], seen[s.gen] = s.gen, true end
+        for _, d in box.space._tarn_lazy_defs:pairs() do
+            if d.base_id == sid and d.phase ~= 'retired' and not seen[d.gen] then out[#out + 1] = d.gen end
+        end
+        return out
+    end
+    -- The generations a copy of space old_id into def.id keeps: every one
+    -- bound to old_id, published, ready and built, each as def.lazy names it,
+    -- the same but for the space. The list, or 1210.
+    local function identity_on(s, base)
+        return mp.encode({s.gen, base, s.local_index_id, s.route_parts, s.key_fields,
+                          s.key_types, s.pk_fields, s.pk_native_fields, s.pk_types, s.bucket_field})
+    end
+    function L.keep(def, old_id)
+        local live, published, online = {}, {}, box.space._tarn_lazy_online
+        local cap = box.space._tarn_lazy_capture:get{old_id}
+        for _, s in ipairs(cap and cap.specs or {}) do published[s.gen] = true end
+        for _, gen in ipairs(L.live(old_id)) do live[gen] = true end
+        local out = {}
+        for _, s in ipairs(type(def.lazy) == 'table' and def.lazy or {}) do
+            local d = valid_spec(s) and s.base_space_id == def.id and live[s.gen] and box.space._tarn_lazy_defs:get{s.gen}
+            if not d or not published[s.gen] or d.base_id ~= old_id or d.phase ~= 'ready' or d.done ~= true
+               or (online ~= nil and online:get{s.gen} ~= nil)
+               or identity_on(d.spec, 0) ~= identity_on(s, 0) then
+                bad(1210, 'Malformed kept lazy index')
+            end
+            out[#out + 1], live[s.gen] = s.gen, nil
+        end
+        if next(live) ~= nil then bad(1210, 'A rebuild keeps every lazy index of its table') end
+        return out
+    end
+    -- Publication of such a copy, in the transaction that names def.id in
+    -- the catalog: the kept generations are now bound to def.id.
+    function L.rebind(def, kept)
+        L.invalidate()
+        local keep = {}
+        for _, gen in ipairs(kept or {}) do keep[gen] = true end
+        for _, original in ipairs(def.lazy or {}) do
+            local d = keep[original.gen] and box.space._tarn_lazy_defs:get{original.gen}
+            if d and d.base_id ~= def.id then
+                local s = {}
+                for k, v in pairs(original) do s[k] = v end
+                s.engine = def.engine or 'memtx'
+                box.space._tarn_lazy_defs:update(s.gen, {{'=', 2, def.id}, {'=', 6, s}})
+            end
+        end
     end
     function L.clear_versions(sid)
         -- Native clear has already run; its durable hold/fence stays live

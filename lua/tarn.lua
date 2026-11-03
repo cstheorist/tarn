@@ -8125,6 +8125,7 @@ BK.production_functions = {
         'tarn_engine_rebuild_aux_capabilities',
         'tarn_engine_rebuild_capabilities',
         'tarn_engine_rebuild_format_capabilities',
+        'tarn_engine_rebuild_lazy_capabilities',
         'tarn_estimate',
         'tarn_fence',
         'tarn_info',
@@ -8259,6 +8260,10 @@ function tarn_engine_rebuild_format_capabilities() return {'ok', 1} end
 -- A rebuild of a table with global unique indexes, which keeps their spaces
 -- (rebuild = 'aux'). A node that answers only the calls above refuses it.
 function tarn_engine_rebuild_aux_capabilities() return {'ok', 1} end
+-- A rebuild of a table with lazy indexes, which keeps their generations
+-- (rebuild = 'lazy'). A node that answers only the calls above refuses it,
+-- ABORT included, which would otherwise retire them.
+function tarn_engine_rebuild_lazy_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()
     return M.engine.decision(name, old_id, new_id, ver, gen)
