@@ -2737,7 +2737,8 @@ impl Cluster {
         self.with_job_alive(&job.owner, self.run_job_steps(job)).await
     }
 
-    /// BUILD everywhere (ALTER TABLE: new indexes, while writes go on); then
+    /// BUILD everywhere (ALTER TABLE: new indexes, while writes go on; for a
+    /// copy, again once every shard's has returned, a catch-up round); then
     /// PREPARE everywhere; then, recorded in the job first, APPLY everywhere,
     /// or ABORT everywhere if a shard did not prepare; then publish the new
     /// catalog. Every step may be repeated: a job that another server
@@ -2800,7 +2801,9 @@ impl Cluster {
                     Err(e) => failed = Some(e),
                 }
             }
-            if failed.is_none() && job.kind == JobKind::Alter {
+            // BUILD everywhere: the first error, if any.
+            let build = || async {
+                let mut first = None;
                 for r in crate::topology::collect(
                     live.iter().map(|&i| in_slices(i, job.kind.proc("build"))),
                     self.cfg.topology.fanout,
@@ -2812,16 +2815,30 @@ impl Cluster {
                         // a storage node from before BUILD existed: its PREPARE builds them
                         Err(e) if e.message.contains("'tarn_alter_build' is not defined") => {}
                         Err(e) => {
-                            failed.get_or_insert(e);
+                            first.get_or_insert(e);
                         }
                     }
                 }
+                first
+            };
+            if failed.is_none() && job.kind == JobKind::Alter {
+                failed = build().await;
             }
             if failed.is_none() && job.kind == JobKind::Alter && !lazy_first {
                 match self.online_lazy(job, &call.0, &live).await {
                     Ok(checked) => lazy_checked = checked,
                     Err(e) => failed = Some(e),
                 }
+            }
+            // A catch-up round (issue #184): a copy BUILD sent again before
+            // any shard's PREPARE runs its catch-up passes over the writes
+            // since its BUILD ended, while the other shards built and the
+            // lazy indexes were built. It copies its table again if its
+            // capture outgrew its limits meanwhile. Without it, PREPARE did
+            // that work after the shards whose PREPARE was quick had fenced
+            // their writes, until every shard had prepared.
+            if failed.is_none() && job.kind == JobKind::Alter && crate::alter::job_copies(&job.args)? {
+                failed = build().await;
             }
             let mut applied = false;
             // BUILD and PREPARE may be repeated too: an index a shard has

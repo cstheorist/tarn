@@ -144,6 +144,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On a cluster where an `ALTER TABLE` copies the table, a shard whose copy
+  ended first no longer leaves the other shards fenced while it catches
+  up. Each shard's PREPARE first catches up on the writes to its rows, then
+  fences them. The writes made while the other shards were still copying
+  were caught up only then, and a shard whose capture outgrew its limits
+  meanwhile copied its table again. The shards that had already prepared
+  kept their writes fenced throughout. The SQL server now sends BUILD to
+  every shard once more before PREPARE, so that this happens while no
+  shard has fenced
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
 - In the production profile, a plain column projection over a range scan
   (`SELECT v FROM t WHERE id >= 0` on a table with more columns) no longer
   fails with storage error 42. Storage grants the SQL server's user only the

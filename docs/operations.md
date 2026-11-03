@@ -860,9 +860,11 @@ of `engine_dirty_keys`) keys, and after it until the capture holds at most
 with 1205 and leaves the table as it was; retry it when the table is
 quieter. That is `engine_catchup_passes` (16) passes before the fence that
 don't get there, or as many passes in a row during the copy after which
-the capture still holds `engine_catchup_keys` keys. Between a shard's BUILD and its PREPARE,
-while other shards finish copying, no pass runs: a capture that outgrows
-its limits then makes PREPARE copy that shard's table again. Reads that honor
+the capture still holds `engine_catchup_keys` keys. A shard whose copy
+ends first keeps noting the writes while the other shards copy. Before
+PREPARE, the SQL server sends BUILD to every shard again, which runs that
+shard's passes. If its capture outgrew its limits meanwhile, the round
+copies its table again, before any shard fences its writes. Reads that honor
 DDL holds and writers can wait or fail their normal lock deadlines during
 this phase. Copying is paged and the job is kept alive; the lock/drain
 timeout is not a whole-migration duration guarantee. Each wait for commits
