@@ -6348,12 +6348,14 @@ function UIX.alter_serial(fn, op, name, a, gen)
 end
 UIX.alter_build, UIX.alter_prepare = tarn_alter_build, tarn_alter_prepare
 UIX.alter_apply, UIX.alter_abort = tarn_alter_apply, tarn_alter_abort
-function tarn_alter_build(name, a, gen)
-    if type(a.engine_change) == 'table' then return M.engine.run('build', name, a, gen) end
+-- (opts.slice: how long a copy's BUILD or PREPARE copies before it returns
+-- {'ok', 'more'}, to be sent again, lua/tarn_engine.lua E.build.)
+function tarn_alter_build(name, a, gen, opts)
+    if type(a.engine_change) == 'table' then return M.engine.run('build', name, a, gen, opts) end
     return UIX.alter_serial(UIX.alter_build, 'build', name, a, gen)
 end
-function tarn_alter_prepare(name, a, gen)
-    if type(a.engine_change) == 'table' then return M.engine.run('prepare', name, a, gen) end
+function tarn_alter_prepare(name, a, gen, opts)
+    if type(a.engine_change) == 'table' then return M.engine.run('prepare', name, a, gen, opts) end
     return UIX.alter_serial(UIX.alter_prepare, 'prepare', name, a, gen)
 end
 function tarn_alter_apply(name, a, gen)

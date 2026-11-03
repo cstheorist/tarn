@@ -3,8 +3,10 @@
 the table into a new space whose indexes exist before its rows (#267), also
 when the same statement adds a column (#184).
 
-Run by tests/indexcopy.sh on 2 shards x 3 replicas with fsync. For a memtx
-and a vinyl table, two ALTERs run while three sessions write:
+Run by tests/indexcopy.sh on 2 shards x 3 replicas with fsync, with the SQL
+server sending a copy's BUILD and PREPARE in slices of 0.05 s, so that each
+copy takes several calls (#184), which the first ALTER checks. For a memtx and a vinyl table, two ALTERs
+run while three sessions write:
 
   * one adds 1 to k in rows it alone touches;
   * one owns other rows of the table and keeps a model of them: it hands a
@@ -199,6 +201,12 @@ def main():
             local r = box.space._tarn_meta:get{'engine:' .. ...}
             return r and r.value.passes or 0
         """, [sid])
+
+    def slices_of(group):
+        """How many calls of a copy's BUILD or PREPARE returned for more on
+        the shard's nodes since they started (#184): on all of them, whichever
+        led meanwhile."""
+        return sum(ev(node, "return tarn.engine.slices or 0") for node in group["replicas"])
 
     def catchup_bounds(small):
         """Catch-up passes at 16 captured keys, until 8 are left for the
@@ -1019,14 +1027,19 @@ def main():
             return table
 
         old_ids = {g["id"]: ev(leader(g), "return box.space[...].id", [space]) for g in groups}
+        sliced = {g["id"]: slices_of(g) for g in groups}
         catchup_bounds(True)
         try:
             online(f"ALTER TABLE {t} ADD INDEX kk (k), ADD UNIQUE INDEX uc (tenant_id, c)", ("kk", "uc"))
         finally:
             catchup_bounds(False)
         passes = {g["id"]: passes_of(leader(g), old_ids[g["id"]]) for g in groups}
-        print(f"  ({engine}: catch-up passes by shard: {passes})", flush=True)
+        sliced = {g["id"]: slices_of(g) - sliced[g["id"]] for g in groups}
+        print(f"  ({engine}: catch-up passes by shard: {passes}; calls that returned for more: {sliced})",
+              flush=True)
         check(f"{engine}: each shard's copy ran catch-up passes", all(n > 0 for n in passes.values()), passes)
+        check(f"{engine}: each shard's copy took several calls, in slices", all(n > 0 for n in sliced.values()),
+              sliced)
         contents("k, c")
         sample = random.Random(engine).sample(sorted(k for k, v in model.items() if v[1] is not None), 200)
         found = [q(c, f"SELECT id FROM {t} WHERE tenant_id = %s AND c = %s", (tn, model[(tn, i)][1]))

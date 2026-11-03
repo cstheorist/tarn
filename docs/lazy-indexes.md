@@ -365,6 +365,41 @@ written during the copy and publishes the new space. Each shard's WAL grew
 by about 4 MB during the copy, and by about 0.25 MB in place. Each shard's
 new index held exactly its rows.
 
+**Above the old limit, with catch-up passes and slices.** A copy has no
+row limit: the per-shard ALTER scan limit applies to builds behind the
+fence (below). The same runs with 1.2 million rows per shard (1,237,327 and
+1,162,673), on the code with catch-up passes (#283), whose SQL server sends
+BUILD and PREPARE in slices of 30 s. Results are in
+`bench/results_build_copy_rf3_*_1200000.json`. The script also polled each
+shard's copy record every 0.1 s, and recorded the writes over 0.2 s by when
+they began:
+
+| Engine | ALTER | Build rate | Writes to the table during it | p50 / p99 | Longest write to the table | Longest write to the other table | Index = table |
+|---|---:|---:|---:|---:|---:|---:|---|
+| memtx | 114.8 s | 20,905 rows/s | 3,738, none refused | 29.8 / 58.9 ms | 0.17 s | 0.15 s | 2,400,000 rows, exact |
+| vinyl | 158.7 s | 15,122 rows/s | 6,862, none refused | 20.0 / 80.0 ms | 0.37 s | 0.25 s | 2,400,000 rows, exact |
+
+Before the ALTER, the writer's p99 was 10.6 ms (memtx) and 15.3 ms
+(vinyl). The polls bound the final fence. On the shard whose copy ended
+last, the record went from "copied" to "cleaned" in 0.43 s (memtx) and
+1.73 s (vinyl). The fence is the part of that window from PREPARE's fence
+to publication. The longest write to the table, 0.37 s on vinyl, began
+within it. Every leader answered every poll within 0.2 s.
+
+During the copy, writes to the table and to the other table sometimes
+waited together, up to 0.29 s here and 0.84 s in earlier runs. In one such
+run, several storage nodes logged "too long WAL write" (0.5 s) for a page
+of the copy at that moment: the six storage nodes share one disk here. Each
+shard's WAL grew by 23 to 25 MB during the ALTER. The leaders' RSS went
+from 175-178 MB to 314-325 MB on memtx, and from 191-199 MB to 408-413 MB
+on vinyl. Each shard's new index held exactly its rows.
+
+Before slices, these runs found that a copy whose call took longer than the
+SQL server's RPC deadline (120 s) was sent again while it still ran. The
+ALTER failed with 1205 when the first call took longer than that deadline
+and the lock wait (50 s) together: once in three runs of vinyl at this
+size.
+
 Other changes build the index behind PREPARE's fence: an index on a column
 the ALTER adds or retypes, a backfill, an engine change, and any change on
 storage nodes from before #184. That build can pause writes while it scans

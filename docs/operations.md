@@ -738,10 +738,21 @@ indexes on a populated table: `auto` (the default) copies the table into a
 space that has its indexes before its rows when a shard has replicas,
 `copy` always does, and `in_place` builds them on the table's own space.
 Changes that build secondary indexes copy, also when they add, rename or
-drop columns and when the table has global or lazy indexes, which the copy
-keeps, but not when they check rows against a new type, make or drop a
-global or lazy index, or change a lazy one; see [storage nodes](#storage-nodes) for what the copy
-costs and why a replicated shard needs it (issues #267 and #184).
+drop columns, when the table has global or lazy indexes, which the copy
+keeps, and when they make a lazy index. They don't copy when they check
+rows against a new type, make a global index, drop a global or lazy index
+or change a lazy one, or make a lazy index on a column they add or retype,
+or along with fields to materialize. See [storage nodes](#storage-nodes)
+for what the copy costs and why a replicated shard needs it (issues #267
+and #184).
+
+`ddl_step_slice` is how long, in seconds, one call of a copy's BUILD or
+PREPARE runs before it returns and the SQL server sends it again (issue
+#184): from the call's start, its wait for the table's lock included, to
+the next page or catch-up pass. A copy of a large table so takes many calls, each well within the
+storage RPC deadline (`rpc.timeout_secs`, 120 s by default). The default,
+0, means a quarter of that deadline, at most 30 s; a larger value is capped
+at half of it.
 
 A materializing ALTER retains a memtx undo journal in `_tarn_alter_undo`
 until commit cleanup or abort completes: one primary key and original tuple
