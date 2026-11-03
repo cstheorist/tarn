@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 90 and seed 5704659963156563732 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 29016] (Linux 6.18.44-fc-v230 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/EngineCutover.tla
-Parsing file /tmp/tlc-1222224307879496035/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-1222224307879496035/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-1222224307879496035/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-1222224307879496035/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-1222224307879496035/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-1222224307879496035/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-1222224307879496035/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 127 and seed 4812397232464019145 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 10209] (Linux 6.18.44-fc-v230 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-drops/tla/EngineCutover.tla
+Parsing file /tmp/tlc-10486715873980856247/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-10486715873980856247/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-10486715873980856247/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-10486715873980856247/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-10486715873980856247/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-10486715873980856247/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-10486715873980856247/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,14 +19,14 @@ Semantic processing of module EngineCutover
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCutover
-Starting... (2026-11-02 21:40:56)
+Starting... (2026-11-03 15:52:39)
 Computing initial states...
 Computed 2 initial states...
 Computed 4 initial states...
 Computed 8 initial states...
 Computed 16 initial states...
 Computed 32 initial states...
-Finished computing initial states: 36 distinct states generated at 2026-11-02 21:40:57.
+Finished computing initial states: 36 distinct states generated at 2026-11-03 15:52:39.
 Error: Invariant AbortedMadeRetired is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -67,7 +67,7 @@ State 1: <Initial predicate>
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 2: <DecideAbort line 127, col 5 to line 129, col 102 of module EngineCutover>
+State 2: <DecideAbort line 134, col 5 to line 136, col 102 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "abort"
@@ -105,7 +105,7 @@ State 2: <DecideAbort line 127, col 5 to line 129, col 102 of module EngineCutov
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 3: <AbortShadow("B") line 196, col 5 to line 199, col 26 of module EngineCutover>
+State 3: <AbortShadow("B") line 203, col 5 to line 206, col 26 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "abort"
@@ -143,7 +143,7 @@ State 3: <AbortShadow("B") line 196, col 5 to line 199, col 26 of module EngineC
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 4: <AbortRecord("B") line 315, col 5 to line 320, col 73 of module EngineCutover>
+State 4: <AbortRecord("B") line 324, col 5 to line 330, col 73 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "abort"
@@ -183,5 +183,5 @@ State 4: <AbortRecord("B") line 315, col 5 to line 320, col 73 of module EngineC
 
 3313 states generated, 1200 distinct states found, 826 states left on queue.
 The depth of the complete state graph search is 4.
-Finished in 01s at (2026-11-02 21:40:57)
-Trace exploration spec path: ./EngineCutover_TTrace_1793673656.tla
+Finished in 01s at (2026-11-03 15:52:40)
+Trace exploration spec path: ./EngineCutover_TTrace_1793739159.tla

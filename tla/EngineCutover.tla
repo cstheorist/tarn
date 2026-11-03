@@ -37,7 +37,14 @@
    build, once a later job has replaced the job's record, finds it retired.
    The registry takes the new space as pending also when the copy keeps no
    generation and only makes one (keeps). For other jobs the kept and made
-   sets are empty, and their invariants hold vacuously. *)
+   sets are empty, and their invariants hold vacuously.
+   A rebuild retires the global index spaces and lazy generations its ALTER
+   drops as an engine change retires all of its table's (issue #184):
+   retired is that retirement, in the catalog's transaction, where the
+   generations retire and the old definition's last readers are doomed,
+   and cleanup drops the global index spaces with the original. Until then
+   the old definition names them, and its writes and readers reach them;
+   ABORT retires none of them, and leaves the table as it was. *)
 EXTENDS Naturals, FiniteSets
 CONSTANTS BugPublishBeforeDecision, BugPublishBeforeAuxReady, BugDropBeforePublish,
           BugAbortAfterDecision, BugApplyAfterAbort, BugOldStreamValidates, BugForgetOldObligations,
@@ -45,7 +52,7 @@ CONSTANTS BugPublishBeforeDecision, BugPublishBeforeAuxReady, BugDropBeforePubli
           BugAuxStreamOmitted, BugKeptByNameOnly, BugPublishBeforeKeptRename, BugRetireKept,
           BugRebindAfterPublish, BugAbortRetiresKept, BugNoPendingNew,
           BugMadeUnbound, BugAbortKeepsMade, BugAbortSkipsMissing, BugPendingOnlyKept,
-          BugReadyUnscanned, BugPublishUnready
+          BugReadyUnscanned, BugPublishUnready, BugAbortRetiresDropped, BugRetireBeforePublish
 
 Shards == {"A", "B"}
 Old == 1
@@ -310,14 +317,25 @@ ScanMade(s) ==
 (* ABORT's transaction, once the shadow is dropped: the job's record is
    aborted, and the generation the copy made retires with it, a retired
    descriptor written for one that has none (L.retire_made). It retires
-   none the copy keeps (KeptLazyAlive). *)
+   none the copy keeps (KeptLazyAlive), nor any it would have dropped
+   (RetiredOnlyUnnamed: BugAbortRetiresDropped retires those, as APPLY
+   would). *)
 AbortRecord(s) ==
     /\ s \in awake \ abortedRec /\ decision = "abort" /\ New \notin spaces[s]
     /\ abortedRec' = abortedRec \cup {s}
     /\ madePhase' = [madePhase EXCEPT ![s] =
                         IF BugAbortKeepsMade \/ (BugAbortSkipsMissing /\ @ = "absent") THEN @ ELSE "retired"]
-    /\ UNCHANGED <<jvars, pvars, fvars, avars, rvars, cvars, kvars, lvars, wvars,
+    /\ retired' = IF BugAbortRetiresDropped THEN retired \cup {s} ELSE retired
+    /\ UNCHANGED <<jvars, pvars, fvars, pendingOld, ackedOld, rvars, cvars, kvars, lvars, wvars,
                    madeBase, madeScanned, recordGone, keeps, coordReady>>
+(* Control: what the copy drops is retired, and its global index spaces
+   dropped, in a step of its own once the shard has prepared, before the
+   catalog commit. APPLY retires the generations in the catalog's
+   transaction (Publish), and cleanup drops the spaces after it. *)
+RetireEarly(s) ==
+    /\ BugRetireBeforePublish /\ s \in awake \cap prepared /\ s \notin retired /\ catalog[s] = Old
+    /\ retired' = retired \cup {s}
+    /\ UNCHANGED <<jvars, pvars, fvars, pendingOld, ackedOld, rvars, cvars, kvars, lvars, wvars, mvars>>
 (* A later job of the table replaces the aborted job's record: a start of
    the aborted job's build still in flight no longer finds it. *)
 ForgetRecord(s) ==
@@ -331,7 +349,7 @@ Next == (\E s \in Shards : Prepared(s) \/ ReadyAux(s) \/ Unname(s) \/ Rename(s) 
                  \/ DropOriginal(s) \/ AbortShadow(s) \/ Crash(s) \/ Resume(s)
                  \/ AckOld(s) \/ ForgetOld(s) \/ ValidateOldStream(s) \/ ValidateOldAuxStream(s)
                  \/ ObserveCatalog(s) \/ RebindLazy(s) \/ AbortLazy(s) \/ ReadLazy(s) \/ WriteNew(s)
-                 \/ StartMade(s) \/ ScanMade(s) \/ AbortRecord(s) \/ ForgetRecord(s))
+                 \/ StartMade(s) \/ ScanMade(s) \/ AbortRecord(s) \/ ForgetRecord(s) \/ RetireEarly(s))
         \/ DecideApply \/ DecideAbort \/ AllocateNew
 Spec == Init /\ [][Next]_vars
 
@@ -397,4 +415,10 @@ MadePublished == \A s \in Shards : catalog[s] = New => madePhase[s] = "ready" /\
 (* Nothing of an aborted copy's made generation lives on: it would capture
    the old space's writes and hold up its bucket moves (L.building). *)
 AbortedMadeRetired == \A s \in abortedRec : madePhase[s] \in {"absent", "retired"}
+(* The job retires a generation, or a global index space, that the old
+   definition names only once the catalog names the new space: until then
+   the old definition's writes must reach it, and its lookups find it. An
+   aborted job leaves the table every index it had, those its ALTER would
+   have dropped included. *)
+RetiredOnlyUnnamed == \A s \in retired : catalog[s] = New
 =============================================================================

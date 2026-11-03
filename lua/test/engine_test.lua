@@ -883,7 +883,7 @@ local function exercise_aux(engine)
     aux_refused(made, label('a rebuild that would make a global index is refused, and aborts'))
     local dropped = rebuild_aux(engine, 'aux_drop', 4)
     dropped.args.uix_drop = {dropped.old_uid}
-    aux_refused(dropped, label('a rebuild that would drop a global index is refused, and aborts'))
+    aux_refused(dropped, label('a rebuild that would keep and drop the same global index is refused, and aborts'))
     local left = rebuild_aux(engine, 'aux_left', 4)
     left.args.def.uix = nil
     aux_refused(left, label('a rebuild that would leave a global index out is refused, and aborts'))

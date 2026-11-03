@@ -487,14 +487,19 @@ copy's publication binds the new incarnation to it with the kept ones; an
 ABORT retires it. A shard that did not build it online, because a
 replica there lacks the capability or the start was refused, scans the
 table behind the copy's fence, within the per-shard ALTER scan limit
-(1846). Such a copy drops and changes no lazy index: an ALTER that drops
-or changes one builds in place (making a column of its key nullable gives
-the index a new ID, and so a new incarnation). So does one that adds a
-lazy index on a column it adds or retypes, or together with an index on a
-column added with a non-NULL default (the online build reads the rows as
-they are stored, which may lack that field), and any change while a
-replica lacks `tarn_engine_rebuild_lazy_capabilities`, or for a new lazy
-index `tarn_engine_rebuild_lazy_made_capabilities`. An engine change
+(1846). An ALTER that drops a lazy index along with building an index
+copies the table too: the dropped incarnation takes the table's writes
+until the copy's fence, and the copy's publication retires it, in the same
+transaction that binds the kept ones; an ABORT leaves it as it was. Making
+a column of a lazy index's key nullable gives the index a new ID, and so a
+new incarnation, which such a copy builds as it builds a new lazy index,
+retiring the old one. An ALTER that adds a lazy index on a column it adds
+or retypes, or together with an index on a column added with a non-NULL
+default (the online build reads the rows as they are stored, which may
+lack that field), builds in place, and so does any change while a replica
+lacks `tarn_engine_rebuild_lazy_capabilities`, for a new lazy index
+`tarn_engine_rebuild_lazy_made_capabilities`, or for a dropped one
+`tarn_engine_rebuild_drops_capabilities`. An engine change
 instead rotates the table's lazy indexes to new incarnations, built
 behind its fence.
 

@@ -2200,7 +2200,8 @@ impl Cluster {
                 // them behind its fence. A rebuild keeps the table's global
                 // and lazy indexes: their entries hold keys and primary keys
                 // only, which the copy keeps (alter::rebuild_keeps_globals,
-                // alter::rebuild_keeps_lazy).
+                // alter::rebuild_keeps_lazy), but those the ALTER drops
+                // (alter::rebuild_drops_indexes).
                 if !rebuild {
                     for ix in &mut ch.def.indexes {
                         if let Some(old) = ix.global {
@@ -2265,12 +2266,13 @@ impl Cluster {
     /// copying the table (`ClusterConfig::index_build`): it must be one
     /// `alter::rebuild_eligible` takes, and every replica of every shard
     /// must know the rebuild, since any of them may take over the job; a
-    /// rebuild that changes the stored layout, keeps global or lazy indexes,
-    /// or makes lazy indexes, needs the replicas to know that too
-    /// (`alter::rebuild_changes_layout`, `alter::rebuild_keeps_globals`,
-    /// `alter::rebuild_keeps_lazy`, `alter::rebuild_makes_lazy`). A replica that does not
-    /// answer, or predates what the change needs, leaves the change to build
-    /// in place.
+    /// rebuild that changes the stored layout, checks rows, keeps, makes or
+    /// drops global or lazy indexes, needs the replicas to know that too
+    /// (`alter::rebuild_changes_layout`, `alter::rebuild_checks_rows`,
+    /// `alter::rebuild_keeps_globals`, `alter::rebuild_keeps_lazy`,
+    /// `alter::rebuild_makes_lazy`, `alter::rebuild_drops_indexes`). A
+    /// replica that does not answer, or predates what the change needs,
+    /// leaves the change to build in place.
     async fn copy_index_builds(&self, def: &TableDef, ch: &crate::alter::Change) -> bool {
         let wanted = match self.cfg.index_build {
             IndexBuild::InPlace => false,
@@ -2287,15 +2289,18 @@ impl Cluster {
         if crate::alter::rebuild_checks_rows(ch) {
             needed.push("tarn_engine_rebuild_checks_capabilities");
         }
-        if crate::alter::rebuild_keeps_globals(&ch.def) {
+        if crate::alter::rebuild_keeps_globals(ch) {
             needed.push("tarn_engine_rebuild_aux_capabilities");
         }
         let makes_lazy = crate::alter::rebuild_makes_lazy(ch);
-        if crate::alter::rebuild_keeps_lazy(&ch.def) || makes_lazy {
+        if crate::alter::rebuild_keeps_lazy(ch) || makes_lazy {
             needed.push("tarn_engine_rebuild_lazy_capabilities");
         }
         if makes_lazy {
             needed.push("tarn_engine_rebuild_lazy_made_capabilities");
+        }
+        if crate::alter::rebuild_drops_indexes(ch) {
+            needed.push("tarn_engine_rebuild_drops_capabilities");
         }
         for shard in self.live_shards() {
             for addr in self.shards[shard].replicas() {

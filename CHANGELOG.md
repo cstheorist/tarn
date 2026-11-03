@@ -1118,6 +1118,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - On a cluster with replicated shards, an `ALTER TABLE` that builds
+  secondary indexes and also drops a global unique index or a lazy index
+  copies the table instead of building in place. So does one that renews a
+  lazy index, such as an index on a column made nullable, which gets a new
+  generation. The dropped index takes the table's writes until PREPARE.
+  Publication retires it: a lazy generation in the catalog's transaction,
+  and a global index's space at cleanup. ABORT leaves it as it was. The
+  storage refuses a descriptor that drops anything but the table's own
+  indexes. Every replica must answer
+  `tarn_engine_rebuild_drops_capabilities`; otherwise the change builds in
+  place, as before. `tla/EngineCutover.tla` checks that nothing the table's
+  definition still names is retired, with two controls TLC must fail
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
+- On a cluster with replicated shards, an `ALTER TABLE` that builds
   secondary indexes and also narrows a column's type or makes it `NOT NULL`
   copies the table, as other such ALTERs do, instead of building in place.
   The copy checks every row it writes, from a page, a catch-up pass or the

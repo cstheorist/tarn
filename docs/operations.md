@@ -159,14 +159,17 @@ cache it must resolve the table's name again afterwards.
 shard has replicas, `copy` always copies, and `in_place` builds on the
 table's own space. A copy also checks rows against a narrower type or NOT
 NULL as it writes them (with `tarn_engine_rebuild_checks_capabilities` on
-every replica). A change that checks existing rows and builds no index,
-renames the table, makes or drops a global index (a unique key without the
-shard key), drops or changes a lazy index (making a column of its key
-nullable, for one), or adds a lazy index on a column it adds or retypes, or
-together with an index on a column added with a non-NULL default, builds
-in place, as does any change while a replica does not answer or runs a
-version without the copy (a change of the stored layout, a new format or
-rows padded with fills, needs `tarn_engine_rebuild_format_capabilities` on
+every replica), and drops the global indexes (unique keys without the
+shard key) and lazy indexes the change drops, retiring them as it is
+published (with `tarn_engine_rebuild_drops_capabilities`); a lazy index
+whose key column is made nullable gets a new ID, and so a new generation,
+which the copy builds as it builds a new lazy index. A change that checks
+existing rows and builds no index, renames the table, makes a global
+index, or adds a lazy index on a column it adds or retypes, or together
+with an index on a column added with a non-NULL default, builds in place,
+as does any change while a replica does not answer or runs a version
+without the copy (a change of the stored layout, a new format or rows
+padded with fills, needs `tarn_engine_rebuild_format_capabilities` on
 every replica too, one of a table with global indexes, whose spaces the
 copy keeps, `tarn_engine_rebuild_aux_capabilities`, one of a table with
 lazy indexes, whose generations it keeps,

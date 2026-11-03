@@ -1914,15 +1914,19 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
 /// #184), with no row limit, rather than PREPARE behind the fence. It keeps
 /// the primary key and the table's name. A
 /// table's global unique indexes are kept as they are
-/// (`rebuild_keeps_globals`), when the change adds, drops and changes none
-/// of them, and so are its lazy indexes (`rebuild_keeps_lazy`), when the
-/// change drops and changes none of them either: each keeps its generation,
-/// whose descriptor differs only in the space it names. A lazy index the
+/// (`rebuild_keeps_globals`), when the change adds and changes none of
+/// them, and so are its lazy indexes (`rebuild_keeps_lazy`), when the
+/// change changes none of them either: each keeps its generation, whose
+/// descriptor differs only in the space it names. Those the change drops
+/// are retired as the copy is published (`rebuild_drops_indexes`, issue
+/// #184), as an engine change retires all of them. A lazy index the
 /// change makes (`rebuild_makes_lazy`) is built online against the old
 /// space before the copy, as in place, from its rows as they are stored:
 /// it may read no column whose stored field, weight, type or collation the
 /// change alters, and the change may materialize no field (an index on a
-/// column added with a non-NULL fill, which old rows may lack).
+/// column added with a non-NULL fill, which old rows may lack). A lazy
+/// index that the change renews (a new generation for an index on a column
+/// made nullable, the old one dropped) is one it makes.
 pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
     // A lazy index not ready (an unfinished change of the table's).
     let unsettled = |t: &TableDef| {
@@ -1950,10 +1954,13 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
                         .is_some_and(|o| shape(def, o) == shape(&ch.def, c))
                 })
             }));
-    let lazy = |t: &TableDef| {
+    // The lazy generations and global index spaces of a definition, but
+    // those dropped: the old definition's kept ones are the new one's.
+    let lazy = |t: &TableDef, dropped: &[u32]| {
         let mut specs: Vec<catalog::LazySpec> = t
             .lazy_specs()
             .into_iter()
+            .filter(|s| !dropped.contains(&s.gen))
             .map(|mut s| {
                 s.base_space_id = 0;
                 s
@@ -1962,8 +1969,13 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         specs.sort_by_key(|s| s.gen);
         specs
     };
-    let kept = |t: &TableDef| {
-        let mut ids: Vec<u32> = t.indexes.iter().filter_map(|i| i.global).collect();
+    let globals = |t: &TableDef, dropped: &[u32]| {
+        let mut ids: Vec<u32> = t
+            .indexes
+            .iter()
+            .filter_map(|i| i.global)
+            .filter(|g| !dropped.contains(g))
+            .collect();
         ids.sort_unstable();
         ids
     };
@@ -1974,17 +1986,29 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         && !ch.drop.contains(&0)
         && ch.materialize == ch.pad.is_some()
         && ch.rename.is_none()
-        && ch.uix_drop.is_empty()
-        && ch.lazy_drop.is_empty()
         && ch.def.engine == def.engine
         && ch.def.space_id == def.space_id
         && !unsettled(def)
         && !unsettled(&ch.def)
-        && lazy(def) == lazy(&ch.def)
+        && ch.lazy_drop.iter().all(|g| lazy(def, &[]).iter().any(|s| s.gen == *g))
+        && lazy(def, &ch.lazy_drop) == lazy(&ch.def, &[])
         && made_online
         && ch.uix_new.is_empty()
-        && !kept(&ch.def).contains(&0)
-        && kept(def) == kept(&ch.def)
+        && !globals(&ch.def, &[]).contains(&0)
+        && ch.uix_drop.iter().all(|g| globals(def, &[]).contains(g))
+        && globals(def, &ch.uix_drop) == globals(&ch.def, &[])
+}
+
+/// Whether a rebuild of change `ch` drops global or lazy indexes of its
+/// table (issue #184). Until PREPARE they take the table's writes; PREPARE
+/// holds their spaces with the table's, publication dooms their readers
+/// and retires them (a lazy generation in the catalog's transaction), and
+/// cleanup drops a global index's space; ABORT leaves them as they were.
+/// The storage must know such rebuilds
+/// (`tarn_engine_rebuild_drops_capabilities`); one from before refuses
+/// them.
+pub fn rebuild_drops_indexes(ch: &Change) -> bool {
+    !ch.uix_drop.is_empty() || !ch.lazy_drop.is_empty()
 }
 
 /// Whether a rebuild checks rows as it copies them: a narrower type or NOT
@@ -1995,20 +2019,22 @@ pub fn rebuild_checks_rows(ch: &Change) -> bool {
     ch.checks.iter().any(|c| c.kind != CheckKind::IndexFieldPresent)
 }
 
-/// Whether a rebuild of a table with definition `def` keeps global unique
-/// indexes: their spaces stay, under the new base's names, and the storage
-/// must know such rebuilds (`tarn_engine_rebuild_aux_capabilities`).
-pub fn rebuild_keeps_globals(def: &TableDef) -> bool {
-    def.indexes.iter().any(|i| i.global.is_some())
+/// Whether rebuild `ch` copies a table with global unique indexes: their
+/// spaces stay, under the new base's names, but for those the change drops
+/// (`rebuild_drops_indexes`). The storage must know such rebuilds
+/// (`tarn_engine_rebuild_aux_capabilities`).
+pub fn rebuild_keeps_globals(ch: &Change) -> bool {
+    ch.def.indexes.iter().any(|i| i.global.is_some()) || !ch.uix_drop.is_empty()
 }
 
-/// Whether a rebuild of a table with definition `def` keeps lazy indexes:
-/// their generations stay, bound to the new space as it is published, and
-/// the storage must know such rebuilds (`tarn_engine_rebuild_lazy_capabilities`),
-/// whose ABORT retires none of the table's generations. Also when the
-/// table's first lazy indexes are ones the rebuild makes.
-pub fn rebuild_keeps_lazy(def: &TableDef) -> bool {
-    def.has_lazy()
+/// Whether rebuild `ch` copies a table with lazy indexes: their
+/// generations stay, bound to the new space as it is published, but for
+/// those the change drops (`rebuild_drops_indexes`). The storage must know
+/// such rebuilds (`tarn_engine_rebuild_lazy_capabilities`), whose ABORT
+/// retires none of the table's generations. Also when the table's first
+/// lazy indexes are ones the rebuild makes.
+pub fn rebuild_keeps_lazy(ch: &Change) -> bool {
+    ch.def.has_lazy() || !ch.lazy_drop.is_empty()
 }
 
 /// Whether a rebuild of change `ch` makes lazy indexes: new generations,
@@ -2144,10 +2170,10 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
         // A rebuild that keeps lazy or global indexes, or changes the stored
         // layout, says so: storage that predates one refuses a value it does
         // not know ('lazy' keeps global indexes too, and 'lazy' and 'aux' may
-        // change the layout).
-        if engine.rebuild && rebuild_keeps_lazy(&ch.def) {
+        // change the layout). So does one that drops all of them.
+        if engine.rebuild && rebuild_keeps_lazy(ch) {
             m.str("rebuild").str("lazy");
-        } else if engine.rebuild && rebuild_keeps_globals(&ch.def) {
+        } else if engine.rebuild && rebuild_keeps_globals(ch) {
             m.str("rebuild").str("aux");
         } else if engine.rebuild && rebuild_changes_layout(ch) {
             m.str("rebuild").str("layout");
@@ -2684,14 +2710,30 @@ mod tests {
         assert!(eligible("ALTER TABLE t ADD INDEX kb (b)"));
         assert!(eligible("ALTER TABLE t ADD UNIQUE INDEX ub (tenant_id, b)"));
         assert!(eligible("ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)"));
-        // One that makes or drops a global index builds in place.
+        // One that makes a global index builds in place, also when it drops
+        // one with the same columns.
         assert!(!eligible("ALTER TABLE t ADD UNIQUE INDEX ub (b)"));
-        assert!(!eligible("ALTER TABLE t DROP INDEX ua, ADD INDEX kb (b)"));
+        assert!(!eligible("ALTER TABLE t DROP INDEX ua, ADD UNIQUE INDEX ua2 (a)"));
+        // One that drops one copies too (issue #184): publication retires
+        // it. The rebuild still says the table has global indexes.
+        assert!(eligible("ALTER TABLE t DROP INDEX ua, ADD INDEX kb (b)"));
+        let dropped = alter(&def, &cat, "ALTER TABLE t DROP INDEX ua, ADD INDEX kb (b)").unwrap();
+        assert!(dropped.uix_drop == [600] && rebuild_drops_indexes(&dropped) && rebuild_keeps_globals(&dropped));
+        assert!(!dropped.def.indexes.iter().any(|i| i.global.is_some()));
+        // Nothing to build: a drop alone stays in place.
+        assert!(!eligible("ALTER TABLE t DROP INDEX ua"));
+        // A drop of a space that is not the table's global index is refused.
+        let mut stray = alter(&def, &cat, "ALTER TABLE t DROP INDEX ua, ADD INDEX kb (b)").unwrap();
+        stray.uix_drop = vec![601];
+        assert!(!rebuild_eligible(&def, &stray));
         // As Cluster::alter_table sets the rebuild up: a new space, whose
         // definition names the kept global index after it.
         let mut ch = alter(&def, &cat, "ALTER TABLE t ADD INDEX kb (b)").unwrap();
-        assert!(rebuild_keeps_globals(&ch.def) && !rebuild_changes_layout(&ch));
-        assert!(!rebuild_keeps_globals(&table(T).0));
+        assert!(rebuild_keeps_globals(&ch) && !rebuild_changes_layout(&ch) && !rebuild_drops_indexes(&ch));
+        let (plain, plain_cat) = table(T);
+        assert!(!rebuild_keeps_globals(
+            &alter(&plain, &plain_cat, "ALTER TABLE t ADD INDEX ks (s)").unwrap()
+        ));
         ch.engine_change = Some(EngineChange {
             old_id: def.space_id,
             old_ver: def.ver,
@@ -2742,6 +2784,40 @@ mod tests {
         }
         let n = def.indexes[ua].id;
         assert_eq!(kept, vec![(format!("_tarn_uix_700_{n}"), Some(600))]);
+        // A rebuild that drops it says so, and that the table has a global
+        // index, which the storage checks it keeps or drops.
+        let mut ch = dropped;
+        ch.engine_change = Some(EngineChange {
+            old_id: def.space_id,
+            old_ver: def.ver,
+            old_engine: def.engine,
+            old_name: def.space_name(),
+            rebuild: true,
+            durable: false,
+        });
+        ch.def.space_id = 700;
+        ch.def.resolve_globals().unwrap();
+        let args = lua_args(&ch, 7, 5.0);
+        let mut rd = Rd::new(&args);
+        let mut fields = std::collections::HashMap::new();
+        for _ in 0..rd.map().unwrap() {
+            let k = rd.string().unwrap().to_string();
+            fields.insert(k, rd.raw_value().unwrap().to_vec());
+        }
+        let mut rebuild = None;
+        let mut rd = Rd::new(&fields["engine_change"]);
+        for _ in 0..rd.map().unwrap() {
+            if rd.string().unwrap() == "rebuild" {
+                rebuild = Some(rd.string().unwrap().to_string());
+            } else {
+                rd.skip().unwrap();
+            }
+        }
+        assert_eq!(rebuild.as_deref(), Some("aux"));
+        let mut drops = Rd::new(&fields["uix_drop"]);
+        assert_eq!(drops.array().unwrap(), 1);
+        assert_eq!(drops.value().unwrap().as_i64(), Some(600));
+        assert_eq!(Rd::new(&fields["uix"]).array().unwrap(), 0);
 
         // Making the key's column nullable gives its index a new id, so the
         // kept space is named after that id: the storage renames it so.
@@ -2778,15 +2854,30 @@ mod tests {
         // New local indexes, also with a new column, keep its generation.
         assert!(eligible("ALTER TABLE t ADD INDEX kb (b)"));
         assert!(eligible("ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)"));
-        // A change that drops or renews a lazy index builds in place: an
-        // index on a column made nullable gets a new id, and so a new
-        // generation, the old one retired.
-        assert!(!eligible("ALTER TABLE t DROP INDEX by_k, ADD INDEX kb (b)"));
-        assert!(!eligible("ALTER TABLE t MODIFY k INT NULL, ADD INDEX kb (b)"));
+        // A change that drops a lazy index copies too (issue #184), and so
+        // does one that renews it: an index on a column made nullable gets a
+        // new id, and so a new generation, which the copy makes, the old one
+        // dropped. Publication retires the dropped generation.
+        assert!(eligible("ALTER TABLE t DROP INDEX by_k, ADD INDEX kb (b)"));
+        assert!(eligible("ALTER TABLE t MODIFY k INT NULL, ADD INDEX kb (b)"));
+        let dropped = alter(&def, &cat, "ALTER TABLE t DROP INDEX by_k, ADD INDEX kb (b)").unwrap();
+        assert!(dropped.lazy_drop == [700] && rebuild_drops_indexes(&dropped) && rebuild_keeps_lazy(&dropped));
+        assert!(!dropped.def.has_lazy() && !rebuild_makes_lazy(&dropped));
+        let renewed = alter(&def, &cat, "ALTER TABLE t MODIFY k INT NULL, ADD INDEX kb (b)").unwrap();
+        assert!(renewed.lazy_drop == [700] && rebuild_makes_lazy(&renewed));
+        // Nothing to build: a drop alone stays in place.
+        assert!(!eligible("ALTER TABLE t DROP INDEX by_k"));
+        // A drop of a generation that is not the table's is refused.
+        let mut stray = alter(&def, &cat, "ALTER TABLE t DROP INDEX by_k, ADD INDEX kb (b)").unwrap();
+        stray.lazy_drop = vec![701];
+        assert!(!rebuild_eligible(&def, &stray));
         // As Cluster::alter_table sets the rebuild up: the descriptor keeps
         // the generation, naming the new space.
         let mut ch = alter(&def, &cat, "ALTER TABLE t ADD INDEX kb (b)").unwrap();
-        assert!(rebuild_keeps_lazy(&ch.def) && !rebuild_keeps_globals(&ch.def) && !rebuild_keeps_lazy(&table(T).0));
+        let (plain, plain_cat) = table(T);
+        let plain_ch = alter(&plain, &plain_cat, "ALTER TABLE t ADD INDEX ks (s)").unwrap();
+        assert!(rebuild_keeps_lazy(&ch) && !rebuild_keeps_globals(&ch) && !rebuild_keeps_lazy(&plain_ch));
+        assert!(!rebuild_drops_indexes(&ch));
         ch.engine_change = Some(EngineChange {
             old_id: def.space_id,
             old_ver: def.ver,
@@ -2824,6 +2915,40 @@ mod tests {
         assert!(!crate::lazy::job_lazy(&args).unwrap().0);
         let in_place = alter(&def, &cat, "ALTER TABLE t ADD INDEX kb (b)").unwrap();
         assert!(crate::lazy::job_lazy(&lua_args(&in_place, 7, 5.0)).unwrap().0);
+        // A rebuild that drops the table's only lazy index says that the
+        // table has one, and names the generation it drops.
+        let mut ch = dropped;
+        ch.engine_change = Some(EngineChange {
+            old_id: def.space_id,
+            old_ver: def.ver,
+            old_engine: def.engine,
+            old_name: def.space_name(),
+            rebuild: true,
+            durable: false,
+        });
+        ch.def.space_id = 800;
+        ch.def.resolve_globals().unwrap();
+        let args = lua_args(&ch, 7, 5.0);
+        let mut rd = Rd::new(&args);
+        let mut fields = std::collections::HashMap::new();
+        for _ in 0..rd.map().unwrap() {
+            let k = rd.string().unwrap().to_string();
+            fields.insert(k, rd.raw_value().unwrap().to_vec());
+        }
+        let mut rebuild = None;
+        let mut rd = Rd::new(&fields["engine_change"]);
+        for _ in 0..rd.map().unwrap() {
+            if rd.string().unwrap() == "rebuild" {
+                rebuild = Some(rd.string().unwrap().to_string());
+            } else {
+                rd.skip().unwrap();
+            }
+        }
+        assert_eq!(rebuild.as_deref(), Some("lazy"));
+        let mut drops = Rd::new(&fields["lazy_drop"]);
+        assert_eq!(drops.array().unwrap(), 1);
+        assert_eq!(drops.value().unwrap().as_i64(), Some(700));
+        assert!(!fields.contains_key("lazy_made"));
     }
 
     #[test]

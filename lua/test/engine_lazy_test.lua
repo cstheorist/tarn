@@ -6,7 +6,8 @@
 -- catalog's transaction (L.rebind). Writes during the copy reach the
 -- target, later writes too; ABORT retires nothing; the lazy registry can be
 -- rebuilt between the renames and the catalog commit; descriptors that
--- would make, drop, change or leave out a lazy index are refused.
+-- would make, change or leave out a lazy index, or keep and drop the same
+-- one, are refused (a copy that drops one: engine_drop_test.lua).
 local fio, fiber, json, mp = require('fio'), require('fiber'), require('json'), require('msgpack')
 io.stdout:setvbuf('no')
 local here = debug.getinfo(1, 'S').source:sub(2):match('(.*/)') or './'
@@ -312,7 +313,7 @@ local function exercise(engine)
     r = rebuild(u, 'new'); r.args.def.lazy = {r.spec, copy(r.spec)}; r.args.def.lazy[2].gen = id()
     refused(r, label('a copy that would make a lazy index is refused'))
     r = rebuild(u, 'dropped'); r.args.lazy_drop = {u.gen}
-    refused(r, label('a copy that would drop a lazy index is refused'))
+    refused(r, label('a copy that would keep and drop the same lazy index is refused'))
     r = rebuild(u, 'changed'); r.args.def.lazy = {copy(r.spec)}; r.args.def.lazy[1].local_index_id = 9
     refused(r, label('a copy that would change a lazy index is refused'))
     r = rebuild(u, 'unbound'); r.args.def.lazy = {copy(r.spec)}; r.args.def.lazy[1].base_space_id = u.sid
