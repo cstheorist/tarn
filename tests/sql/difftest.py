@@ -570,6 +570,11 @@ CASES = [
     ("ALTER TABLE al MODIFY b VARCHAR(20) NOT NULL", "err"),
     ("ALTER TABLE al MODIFY m VARCHAR(2)", "err"),
     ("ALTER TABLE al MODIFY e INT UNSIGNED", "err"),
+    # (With new indexes: on a replicated cluster, or index_build = copy, the
+    # table's copy checks the rows, issue #184.)
+    ("ALTER TABLE al MODIFY a TINYINT, ADD INDEX k_at (a)", "err"),
+    ("ALTER TABLE al MODIFY b VARCHAR(3), ADD INDEX k_bt (b)", "err"),
+    ("ALTER TABLE al MODIFY a INT NOT NULL, ADD INDEX k_an (a, b)", "err"),
     ("ALTER TABLE al MODIFY b VARCHAR(20), MODIFY a BIGINT, MODIFY c DECIMAL(9,2)", "ddl:al"),
     ("ALTER TABLE al CHANGE b bb VARCHAR(20) DEFAULT 'x' FIRST", "ddl:al"),
     ("ALTER TABLE al RENAME COLUMN bb TO b2", "ddl:al"),

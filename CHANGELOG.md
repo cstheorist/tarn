@@ -1117,6 +1117,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- On a cluster with replicated shards, an `ALTER TABLE` that builds
+  secondary indexes and also narrows a column's type or makes it `NOT NULL`
+  copies the table, as other such ALTERs do, instead of building in place.
+  The copy checks every row it writes, from a page, a catch-up pass or the
+  final pass, and fails the change with the in-place error (1264, 1265) for
+  a row the new type refuses. ABORT then leaves the table as it was. Writes
+  go on during the checks, and `alter_check_rows` no longer limits such a
+  change. Every replica must answer `tarn_engine_rebuild_checks_capabilities`;
+  otherwise the change builds in place, as before.
+  `tla/EngineCopy.tla` models the checks, with three controls TLC must fail
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
 - Lazy indexes keep no per-row state on the source
   ([#177](https://github.com/cstheorist/tarn/issues/177)). Every captured
   write used to keep an entry for its row in `_tarn_lazy_version`, in

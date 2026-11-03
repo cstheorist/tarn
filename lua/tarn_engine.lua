@@ -110,12 +110,29 @@ function M.new(c)
     end
     local function none(v) return nilish(v) or (type(v) == 'table' and next(v) == nil) end
     local function keeps_aux(x) return x.rebuild == 'aux' or x.rebuild == 'lazy' end
+    -- The row checks a rebuild applies (a.checks, issue #184): a narrower
+    -- integer range, fewer characters or decimal digits, or NOT NULL, as
+    -- the in-place change applies them (check_value in lua/tarn.lua), with
+    -- the column's fill for a row that ends before its field. ('indexed'
+    -- checks are for the in-place change: the copy pads such rows.)
+    local CHECKS = {notnull = 3, chars = 4, digits = 4, range = 5}
+    local function row_checks(a)
+        local out = {}
+        for _, ch in ipairs(type(a.checks) == 'table' and a.checks or {}) do
+            if type(ch) ~= 'table' or type(ch[1]) ~= 'number' or ch[1] < 1 or ch[1] % 1 ~= 0
+               or type(ch[2]) ~= 'string' or (ch[3] ~= 'indexed' and CHECKS[ch[3]] == nil) then
+                fail(1210, 'Malformed engine-rebuild row check')
+            end
+            if ch[3] ~= 'indexed' then out[#out + 1] = ch end
+        end
+        return out
+    end
     -- What a new job's descriptor may ask of the copy, checked when the job
     -- starts its copy (not at ABORT, which must end a job however it was
     -- refused): only a 'layout', 'aux' or 'lazy' rebuild changes the stored
-    -- layout (format and padding). A rebuild neither checks rows nor renames
-    -- the table, and makes and drops no global or lazy index. Only an 'aux'
-    -- or 'lazy' rebuild has global indexes, and only a 'lazy' one lazy
+    -- layout (format and padding). A rebuild may check rows (row_checks),
+    -- renames no table, and makes and drops no global or lazy index. Only an
+    -- 'aux' or 'lazy' rebuild has global indexes, and only a 'lazy' one lazy
     -- indexes, which they keep.
     local function admissible(x, a)
         if x.rebuild ~= 'layout' and not keeps_aux(x) and (not nilish(a.format) or not nilish(a.pad)) then
@@ -123,9 +140,7 @@ function M.new(c)
                 or 'An engine change keeps the stored layout')
         end
         if x.rebuild ~= nil then
-            for _, ch in ipairs(type(a.checks) == 'table' and a.checks or {}) do
-                if type(ch) ~= 'table' or ch[3] ~= 'indexed' then fail(1210, 'An engine rebuild checks no rows') end
-            end
+            row_checks(a)
             if not nilish(a.rename) then fail(1210, "An engine rebuild keeps the table's name") end
             if not none(a.uix) or not none(a.uix_drop) or not none(a.lazy_drop) then
                 fail(1210, 'An engine rebuild makes and drops no global or lazy index')
@@ -299,6 +314,34 @@ function M.new(c)
             local row = tuple:totable()
             for f = n + 1, width do row[f] = p[f - base + 1] end
             return box.tuple.new(row)
+        end
+    end
+    -- What the copy checks a source row with (row_checks): a failing row
+    -- fails the change with the error the in-place change gives it, naming
+    -- the row by its position in the source's primary-key order, which
+    -- position() gives (only then: it may count rows). Every row of a
+    -- prepared copy was checked when it was last written to the
+    -- replacement: by a page, a pass or the final pass.
+    local function checker(a)
+        local checks = row_checks(a)
+        if #checks == 0 then return function() end end
+        return function(row, position)
+            for _, ch in ipairs(checks) do
+                local v
+                if #row < ch[1] then v = ch[6] else v = row[ch[1]] end
+                local code = c.check_value(ch, v)
+                if code == 1265 then
+                    fail(1265, string.format("Data truncated for column '%s' at row %d", ch[2], position()))
+                elseif code ~= nil then
+                    fail(1264, string.format("Out of range value for column '%s' at row %d", ch[2], position()))
+                end
+            end
+        end
+    end
+    -- The position of a source row in the source's primary-key order.
+    local function position_in(sid, row)
+        return function()
+            return box.space[sid].index[0]:count(c.key_def(sid, 0):extract_key(row), {iterator = 'LT'}) + 1
         end
     end
     -- Unique secondary indexes of the replacement, by id.
@@ -915,7 +958,9 @@ function M.new(c)
                     local v = owned(a, gen, phases)
                     local target = box.space[v.new_id]
                     local unique, pk, shape = uniques(target), c.key_def(target.id, 0), shaper(v)
+                    local check_row = checker(a)
                     for _, confirmed in ipairs(rows) do
+                        check_row(confirmed, position_in(x.old_id, confirmed))
                         local row = shape(confirmed)
                         local other, ix = holder(target, unique, row)
                         while other ~= nil do
@@ -1126,7 +1171,9 @@ function M.new(c)
                         if not capture_valid(t) or E.tracks[x.old_id] ~= t then fail(1213, 'Engine capture was lost') end
                         local shadow = box.space[v.new_id]
                         local unique, pk, shape = uniques(shadow), c.key_def(shadow.id, 0), shaper(v)
-                        for _, source_row in ipairs(rows) do
+                        local check_row = checker(a)
+                        for i, source_row in ipairs(rows) do
+                            check_row(source_row, function() return v.copied + i end)
                             local tuple = shape(source_row)
                             -- A copied row that holds one of this row's
                             -- unique keys: if a write to it began since
@@ -1282,8 +1329,9 @@ function M.new(c)
             transaction(function()
                 owned(a, gen, {preparing = true})
                 local target = box.space[r.new_id]
-                local unique, shape = uniques(target), shaper(r)
+                local unique, shape, check_row = uniques(target), shaper(r), checker(a)
                 for _, confirmed in ipairs(final) do
+                    check_row(confirmed, position_in(r.old_id, confirmed))
                     local row = shape(confirmed)
                     local other, ix = holder(target, unique, row)
                     if other ~= nil then duplicate(ix) end

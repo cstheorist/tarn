@@ -1909,8 +1909,10 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
 /// statement adds, renames or drops columns: the new space takes the new
 /// format, and the copy pads every row it writes with the fills its indexes
 /// need (`pad`), which PREPARE would otherwise materialize behind the fence.
-/// It keeps the primary key and the table's name, and leaves to the
-/// in-place path a change that checks existing rows against a new type. A
+/// It also takes a change that checks rows against a narrower type or NOT
+/// NULL: the copy checks every row it writes (`rebuild_checks_rows`, issue
+/// #184), with no row limit, rather than PREPARE behind the fence. It keeps
+/// the primary key and the table's name. A
 /// table's global unique indexes are kept as they are
 /// (`rebuild_keeps_globals`), when the change adds, drops and changes none
 /// of them, and so are its lazy indexes (`rebuild_keeps_lazy`), when the
@@ -1970,7 +1972,6 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         && !ch.builds.is_empty()
         && ch.builds.iter().all(|b| b.id != 0)
         && !ch.drop.contains(&0)
-        && ch.checks.iter().all(|c| c.kind == CheckKind::IndexFieldPresent)
         && ch.materialize == ch.pad.is_some()
         && ch.rename.is_none()
         && ch.uix_drop.is_empty()
@@ -1984,6 +1985,14 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         && ch.uix_new.is_empty()
         && !kept(&ch.def).contains(&0)
         && kept(def) == kept(&ch.def)
+}
+
+/// Whether a rebuild checks rows as it copies them: a narrower type or NOT
+/// NULL (issue #184). The storage must know such rebuilds
+/// (`tarn_engine_rebuild_checks_capabilities`); one from before refuses
+/// them.
+pub fn rebuild_checks_rows(ch: &Change) -> bool {
+    ch.checks.iter().any(|c| c.kind != CheckKind::IndexFieldPresent)
 }
 
 /// Whether a rebuild of a table with definition `def` keeps global unique
@@ -2528,11 +2537,21 @@ mod tests {
         assert!(padded.materialize && padded.pad.is_some() && padded.format.is_some());
         let short = alter(&def, &cat, "ALTER TABLE t ADD COLUMN n INT, ADD INDEX kn (n)").unwrap();
         assert!(!short.materialize && short.pad.is_none() && short.format.is_some());
-        // Existing rows are checked against a narrower type.
-        assert!(!eligible("ALTER TABLE t MODIFY a SMALLINT, ADD INDEX ks (s)"));
-        assert!(!eligible(
-            "ALTER TABLE t MODIFY s VARCHAR(5), ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)"
-        ));
+        // Rows checked against a narrower type or NOT NULL: the copy checks
+        // each row it writes (issue #184), when the storage knows to.
+        let checks = |sql: &str| rebuild_checks_rows(&alter(&def, &cat, sql).unwrap());
+        for sql in [
+            "ALTER TABLE t MODIFY a SMALLINT, ADD INDEX ks (s)",
+            "ALTER TABLE t MODIFY s VARCHAR(5), ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)",
+            "ALTER TABLE t MODIFY a INT NOT NULL, ADD INDEX ka2 (a, s)",
+        ] {
+            assert!(eligible(sql), "{}", sql);
+            assert!(checks(sql), "{}", sql);
+        }
+        assert!(!checks("ALTER TABLE t ADD INDEX ks (s)"));
+        assert!(!checks("ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)"));
+        // Nothing to build: rows checked alone stay in place.
+        assert!(!eligible("ALTER TABLE t MODIFY a SMALLINT"));
         // A renamed table, and a unique key needing a global index.
         assert!(!eligible("ALTER TABLE t ADD INDEX ks (s), RENAME TO t2"));
         let (sharded, scat) = table(

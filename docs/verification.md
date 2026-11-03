@@ -1375,6 +1375,14 @@ over-approximates the passes' pruning. Each control breaks
 - `BugUnbindEarly` stops the writes from noting their keys in a reset that
   fails before its record says so, and the copy resumes without them.
 
+A change that checks rows against a narrower type (issue #184) is modelled
+with a row value its checks refuse (`Invalid`), which one write makes. A
+page, a pass's reread and the final pass's write a row only if it passes
+(the step fails otherwise: the copy waits there, or a restart drops it).
+`CheckedImage` requires a prepared copy to hold no refused row. Each of
+`BugPageUnchecked`, `BugPassUnchecked` and `BugTailUnchecked`, a step that
+writes without checking, breaks it.
+
 `EngineCutover` separates all-shard preparation/auxiliary readiness, a
 confirmed central decision, native rename, local catalog publication and
 old-space cleanup. A crash after rename resumes from explicit original
@@ -1768,6 +1776,25 @@ and after a promotion, where the row written behind the cursor reached
 every replica's durable capture with its write. A capture outgrown past
 its limits still starts the copy over.
 
+[A suite for checked copies](../lua/test/engine_checks_test.lua) (issue
+#184) runs rebuilds that check rows against a narrower type or NOT NULL,
+on both engines, 32 checks with the native module and as many without:
+- a copy whose rows pass every check is exact;
+- a page's row that fails a range, NOT NULL, length or decimal-digits check
+  fails the change with the in-place change's error (1264 or 1265), naming
+  the row by its position;
+- a pass that rereads a row a write made invalid during the copy fails the
+  change, and so does the final pass for one made invalid after the copy;
+- a row made invalid and valid again before the copy reads it fails
+  nothing;
+- a check of a kind storage does not know is refused before the copy
+  begins (1210);
+- after each failure, ABORT leaves the table as it was, with no copy.
+
+Each of five mutations fails it: no check of a page's rows, of a pass's or
+of the final pass's, a page row's position counted within its page, and
+checks of unknown kinds taken.
+
 Without the padding of either path, the new format, the refusals, ABORT's
 leniency, either read fix, the kept spaces' renames or their lookup through
 the catalog, the suite fails. It verifies
@@ -1800,7 +1827,9 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
   Bug_EngineCopySettleBeforeReread Bug_EngineCopyNoGenerationBump \
   Bug_EngineCopyClearUnnoted Bug_EngineCopyHolderNoHole \
   Bug_EngineCopyResumeFailKeeps Bug_EngineCopyRebindAtSettled \
-  Bug_EngineCopyPruneUnsettled Bug_EngineCopyUnbindEarly EngineCutover \
+  Bug_EngineCopyPruneUnsettled Bug_EngineCopyUnbindEarly \
+  Bug_EngineCopyPageUnchecked Bug_EngineCopyPassUnchecked \
+  Bug_EngineCopyTailUnchecked EngineCutover \
   Bug_EngineCutoverPublishBeforeDecision Bug_EngineCutoverPublishBeforeAuxReady \
   Bug_EngineCutoverDropBeforePublish Bug_EngineCutoverAbortAfterDecision \
   Bug_EngineCutoverApplyAfterAbort Bug_EngineCutoverOldStreamValidates \
@@ -1817,31 +1846,34 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 
 | Configuration | Distinct states | Depth | Expected result |
 |---|---:|---:|---|
-| `EngineCopy` | 1,015,638 | 35 | passes |
-| `Bug_EngineCopyBeforeCapture` | 55,986 | 12 | violates `PreparedImage` |
-| `Bug_EngineCopyCaptureOnlyNewKeys` | 56,266 | 13 | violates `PreparedImage` |
-| `Bug_EngineCopyLosePersistentFence` | 41,908 | 12 | violates `PreparedImage` |
-| `Bug_EngineCopyLostCaptureContinues` | 218,118 | 16 | violates `PreparedImage` |
-| `Bug_EngineCopyPrepareWithoutIndexes` | 12,445 | 10 | violates `PreparedImage` |
-| `Bug_EngineCopyRebuildPrepared` | 41,908 | 12 | violates `PreparedImage` |
-| `Bug_EngineCopySkipFinalDrain` | 65,687 | 13 | violates `PreparedImage` |
-| `Bug_EngineCopySkipPrefixDrain` | 53,076 | 13 | violates `PreparedImage` |
-| `Bug_EngineCopyStaleBatch` | 514,825 | 19 | violates `PreparedImage` |
-| `Bug_EngineCopyTailIgnoresDeletes` | 102,605 | 14 | violates `PreparedImage` |
-| `Bug_EngineCopyUnconfirmedSource` | 411 | 6 | violates `ConfirmedCopies` |
-| `Bug_EngineCopyPassDropsKeys` | 237,585 | 17 | violates `PreparedImage`: a pass removes its keys' copies without rereading them |
-| `Bug_EngineCopyPassWithoutSettle` | 301,939 | 16 | violates `PreparedImage`: a pass rereads a key whose write is still pending, which then commits with its key in neither set |
-| `Bug_EngineCopyAbandonLosesKeys` | 112,481 | 15 | violates `PreparedImage`: a row deleted after its page was read is copied stale, and a pass that takes its key fails before rereading it |
-| `Bug_EngineCopyCaptureNotDurable` | 38,079 | 13 | violates `PreparedImage`: a write the durable capture does not note is missing from the capture rebuilt after a restart |
-| `Bug_EngineCopyResumeBeforeSettle` | 247,475 | 16 | violates `PreparedImage`: a resume reads the durable capture while a write is pending, whose entry then commits unread |
-| `Bug_EngineCopySettleBeforeReread` | 403,462 | 16 | violates `PreparedImage`: a pass records its generation settled before its rereads, and a restart leaves those keys out |
-| `Bug_EngineCopyNoGenerationBump` | 116,545 | 18 | violates `PreparedImage`: a write after a swap takes the generation the pass settles, and a restart leaves it out |
-| `Bug_EngineCopyClearUnnoted` | 271,151 | 17 | violates `PreparedImage`: a pass clears a key whose write rolled back, and the capture rebuilt after a restart misses it |
-| `Bug_EngineCopyHolderNoHole` | 67,360 | 14 | violates `PreparedImage`: a copy the holder rule took out of the shadow is missing from the capture rebuilt after a restart |
-| `Bug_EngineCopyResumeFailKeeps` | 256,500 | 16 | violates `PreparedImage`: a resume that fails before it reads the durable capture leaves the capture it installed, and the copy goes on without the durable keys |
-| `Bug_EngineCopyRebindAtSettled` | 643,858 | 21 | violates `PreparedImage`: a node that binds the durable capture again notes a write at the settled generation, which a resume then skips |
-| `Bug_EngineCopyPruneUnsettled` | 159,866 | 14 | violates `PreparedImage`: an entry of the generation after the settled one is deleted, and the capture rebuilt after a restart misses it |
-| `Bug_EngineCopyUnbindEarly` | 354,103 | 17 | violates `PreparedImage`: a reset stops the writes from noting their keys and fails before its record says the copy starts over, and the copy resumes without a write made then |
+| `EngineCopy` | 1,215,733 | 35 | passes |
+| `Bug_EngineCopyBeforeCapture` | 76,232 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyCaptureOnlyNewKeys` | 76,380 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopyLosePersistentFence` | 56,695 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyLostCaptureContinues` | 282,514 | 16 | violates `PreparedImage` |
+| `Bug_EngineCopyPrepareWithoutIndexes` | 17,014 | 10 | violates `PreparedImage` |
+| `Bug_EngineCopyRebuildPrepared` | 56,695 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopySkipFinalDrain` | 86,982 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopySkipPrefixDrain` | 71,593 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopyStaleBatch` | 655,507 | 19 | violates `PreparedImage` |
+| `Bug_EngineCopyTailIgnoresDeletes` | 134,803 | 14 | violates `PreparedImage` |
+| `Bug_EngineCopyUnconfirmedSource` | 554 | 6 | violates `ConfirmedCopies` |
+| `Bug_EngineCopyPassDropsKeys` | 307,412 | 17 | violates `PreparedImage`: a pass removes its keys' copies without rereading them |
+| `Bug_EngineCopyPassWithoutSettle` | 397,278 | 16 | violates `PreparedImage`: a pass rereads a key whose write is still pending, which then commits with its key in neither set |
+| `Bug_EngineCopyAbandonLosesKeys` | 146,732 | 15 | violates `PreparedImage`: a row deleted after its page was read is copied stale, and a pass that takes its key fails before rereading it |
+| `Bug_EngineCopyCaptureNotDurable` | 50,683 | 13 | violates `PreparedImage`: a write the durable capture does not note is missing from the capture rebuilt after a restart |
+| `Bug_EngineCopyResumeBeforeSettle` | 320,547 | 16 | violates `PreparedImage`: a resume reads the durable capture while a write is pending, whose entry then commits unread |
+| `Bug_EngineCopySettleBeforeReread` | 530,489 | 16 | violates `PreparedImage`: a pass records its generation settled before its rereads, and a restart leaves those keys out |
+| `Bug_EngineCopyNoGenerationBump` | 145,412 | 18 | violates `PreparedImage`: a write after a swap takes the generation the pass settles, and a restart leaves it out |
+| `Bug_EngineCopyClearUnnoted` | 346,375 | 17 | violates `PreparedImage`: a pass clears a key whose write rolled back, and the capture rebuilt after a restart misses it |
+| `Bug_EngineCopyHolderNoHole` | 89,833 | 14 | violates `PreparedImage`: a copy the holder rule took out of the shadow is missing from the capture rebuilt after a restart |
+| `Bug_EngineCopyResumeFailKeeps` | 334,050 | 16 | violates `PreparedImage`: a resume that fails before it reads the durable capture leaves the capture it installed, and the copy goes on without the durable keys |
+| `Bug_EngineCopyRebindAtSettled` | 801,101 | 21 | violates `PreparedImage`: a node that binds the durable capture again notes a write at the settled generation, which a resume then skips |
+| `Bug_EngineCopyPruneUnsettled` | 210,758 | 14 | violates `PreparedImage`: an entry of the generation after the settled one is deleted, and the capture rebuilt after a restart misses it |
+| `Bug_EngineCopyUnbindEarly` | 459,597 | 17 | violates `PreparedImage`: a reset stops the writes from noting their keys and fails before its record says the copy starts over, and the copy resumes without a write made then |
+| `Bug_EngineCopyPageUnchecked` | 65,975 | 13 | violates `CheckedImage`: a page writes a row the change's checks refuse, and no later write of it comes |
+| `Bug_EngineCopyPassUnchecked` | 406,406 | 17 | violates `CheckedImage`: a pass rereads a row a write made invalid during the copy and writes it unchecked |
+| `Bug_EngineCopyTailUnchecked` | 137,124 | 14 | violates `CheckedImage`: the final pass rereads a row made invalid and writes it unchecked |
 | `EngineCutover` | 70,982 | 26 | passes |
 | `Bug_EngineCutoverAbortAfterDecision` | 43,487 | 12 | violates `NoAbortPublished` |
 | `Bug_EngineCutoverApplyAfterAbort` | 49,386 | 13 | violates `CatalogHasSpace` |

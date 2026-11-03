@@ -2284,6 +2284,9 @@ impl Cluster {
         if crate::alter::rebuild_changes_layout(ch) {
             needed.push("tarn_engine_rebuild_format_capabilities");
         }
+        if crate::alter::rebuild_checks_rows(ch) {
+            needed.push("tarn_engine_rebuild_checks_capabilities");
+        }
         if crate::alter::rebuild_keeps_globals(&ch.def) {
             needed.push("tarn_engine_rebuild_aux_capabilities");
         }

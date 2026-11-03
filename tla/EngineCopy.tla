@@ -43,7 +43,13 @@
    writes stop noting their keys in the durable capture; a node that binds
    it again (a restart, a new leader) starts at the generation after the
    settled one; and once a pass settled, the entries and holes up to its
-   generation may be deleted. *)
+   generation may be deleted.
+   A change that narrows a column's type, or makes it NOT NULL, checks the
+   rows the copy writes to the shadow (issue #184): a page's, a pass's and
+   the final pass's. A row that fails fails that step (here, the step can't
+   be taken: the copy is stuck there, or a restart drops it), and a row a
+   write makes invalid during the copy is written again, checked, by a pass
+   or the final pass. *)
 EXTENDS Naturals, FiniteSets
 CONSTANTS BugBeforeCapture, BugSkipPrefixDrain, BugCaptureOnlyNewKeys,
           BugUnconfirmedSource, BugTailIgnoresDeletes, BugSkipFinalDrain,
@@ -52,10 +58,13 @@ CONSTANTS BugBeforeCapture, BugSkipPrefixDrain, BugCaptureOnlyNewKeys,
           BugPassWithoutSettle, BugPassDropsKeys, BugAbandonLosesKeys,
           BugCaptureNotDurable, BugResumeBeforeSettle, BugSettleBeforeReread,
           BugNoGenerationBump, BugClearUnnoted, BugHolderNoHole,
-          BugResumeFailKeeps, BugRebindAtSettled, BugPruneUnsettled, BugUnbindEarly
+          BugResumeFailKeeps, BugRebindAtSettled, BugPruneUnsettled, BugUnbindEarly,
+          BugPageUnchecked, BugPassUnchecked, BugTailUnchecked
 
 Keys == {1, 2}
-Values == 0..2                 \* 0: absent, 1/2: committed row versions
+Values == 0..3                 \* 0: absent, 1/2: committed row versions, 3: an invalid one
+\* A row the change's checks refuse (a narrower type, NOT NULL).
+Invalid == 3
 Empty == [k \in Keys |-> 0]
 Rows(a, b) == [k \in Keys |-> IF k = 1 THEN a ELSE b]
 MaxGen == 3                     \* generations of the durable capture
@@ -66,7 +75,8 @@ Mutations == {
   [active |-> TRUE, keys |-> {1}, values |-> Rows(0, 0)],
   [active |-> TRUE, keys |-> {1}, values |-> Rows(2, 0)],
   [active |-> TRUE, keys |-> {2}, values |-> Rows(0, 2)],
-  [active |-> TRUE, keys |-> Keys, values |-> Rows(0, 2)]}
+  [active |-> TRUE, keys |-> Keys, values |-> Rows(0, 2)],
+  [active |-> TRUE, keys |-> {1}, values |-> Rows(Invalid, 0)]}
 NoPage == [active |-> FALSE, key |-> 1, value |-> 0, gen |-> 0, dirty |-> FALSE]
 \* lost: the capture in memory was lost during the copy or behind the fence;
 \* resuming: a resume installed its new capture, and has not read the
@@ -173,6 +183,7 @@ ReadPage(k) ==
 
 WritePage ==
     /\ page.active
+    /\ page.value # Invalid \/ BugPageUnchecked
     /\ IF page.gen = generation /\ phase = "copy"
        THEN /\ shadow' = [shadow EXCEPT ![page.key] = page.value]
             /\ copied' = copied \cup {page.key}
@@ -201,6 +212,7 @@ TailClear ==
 Tail(k) ==
     /\ phase = "fenced" /\ tailCleared /\ k \in dirty
     /\ ~pending.active \/ BugSkipFinalDrain
+    /\ source[k] # Invalid \/ BugTailUnchecked
     /\ shadow' = IF BugTailIgnoresDeletes /\ source[k] = 0
                   THEN shadow ELSE [shadow EXCEPT ![k] = source[k]]
     /\ dirty' = dirty \ {k}
@@ -360,6 +372,7 @@ ClearPass ==
     /\ UNCHANGED <<source, copied, dirty, indexes, cvars, wvars, qvars, unsettled, tailCleared, dvars>>
 RereadPass(k) ==
     /\ k \in swept /\ cleared /\ (~unsettled \/ BugPassWithoutSettle)
+    /\ source[k] # Invalid \/ BugPassUnchecked
     /\ shadow' = IF BugPassDropsKeys THEN shadow ELSE [shadow EXCEPT ![k] = source[k]]
     /\ swept' = swept \ {k}
     /\ cleared' = (swept' # {})
@@ -418,6 +431,8 @@ TypeOK == /\ source \in [Keys -> Values] /\ shadow \in [Keys -> Values]
           /\ gen \in 1..MaxGen
           /\ settled \in 0..MaxGen /\ swap \in 0..MaxGen /\ bound \in BOOLEAN
 ConfirmedCopies == ~unconfirmedCopied
+\* A prepared copy holds no row its change's checks refuse.
+CheckedImage == phase \in {"prepared", "published"} => \A k \in Keys : shadow[k] # Invalid
 PreparedImage == phase \in {"prepared", "published"} =>
                   /\ shadow = source /\ copied = Keys /\ indexes /\ fenced
 =============================================================================

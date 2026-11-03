@@ -574,7 +574,7 @@ mk_handback Bug_HandbackMalformedReply_Autocommit FALSE BugTrustMalformedReply
 # Online engine migration: local copy certificates and later publication.
 engine_flags () {
     case "$1" in
-      EngineCopy) echo 'BugBeforeCapture BugSkipPrefixDrain BugCaptureOnlyNewKeys BugUnconfirmedSource BugTailIgnoresDeletes BugSkipFinalDrain BugLostCaptureContinues BugStaleBatch BugRebuildPrepared BugPrepareWithoutIndexes BugLosePersistentFence BugPassWithoutSettle BugPassDropsKeys BugAbandonLosesKeys BugCaptureNotDurable BugResumeBeforeSettle BugSettleBeforeReread BugNoGenerationBump BugClearUnnoted BugHolderNoHole BugResumeFailKeeps BugRebindAtSettled BugPruneUnsettled BugUnbindEarly' ;;
+      EngineCopy) echo 'BugBeforeCapture BugSkipPrefixDrain BugCaptureOnlyNewKeys BugUnconfirmedSource BugTailIgnoresDeletes BugSkipFinalDrain BugLostCaptureContinues BugStaleBatch BugRebuildPrepared BugPrepareWithoutIndexes BugLosePersistentFence BugPassWithoutSettle BugPassDropsKeys BugAbandonLosesKeys BugCaptureNotDurable BugResumeBeforeSettle BugSettleBeforeReread BugNoGenerationBump BugClearUnnoted BugHolderNoHole BugResumeFailKeeps BugRebindAtSettled BugPruneUnsettled BugUnbindEarly BugPageUnchecked BugPassUnchecked BugTailUnchecked' ;;
       EngineCutover) echo 'BugPublishBeforeDecision BugPublishBeforeAuxReady BugDropBeforePublish BugAbortAfterDecision BugApplyAfterAbort BugOldStreamValidates BugForgetOldObligations BugResetCounterIdentity BugRenameLosesOriginalIdentity BugCatalogByName BugAuxStreamOmitted BugKeptByNameOnly BugPublishBeforeKeptRename BugRetireKept BugRebindAfterPublish BugAbortRetiresKept BugNoPendingNew BugMadeUnbound BugAbortKeepsMade BugAbortSkipsMissing BugPendingOnlyKept BugReadyUnscanned BugPublishUnready' ;;
     esac
 }
@@ -589,7 +589,7 @@ mk_engine () {
             echo "  $flag = $value"
         done
         if [ "$family" = EngineCopy ]; then
-            echo 'INVARIANTS TypeOK ConfirmedCopies PreparedImage'
+            echo 'INVARIANTS TypeOK ConfirmedCopies PreparedImage CheckedImage'
         else
             echo 'INVARIANTS TypeOK CatalogHasSpace PublishedReady NoAbortPublished OldObligationsRetained OldStreamsRejected CounterNeverReuses CatalogObservationBound KeptFound KeptNamedAfterCatalog KeptAlive KeptLazyBound KeptLazyAlive KeptLazyCaptured MadeBound MadePublished AbortedMadeRetired'
         fi

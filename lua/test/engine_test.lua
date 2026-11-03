@@ -665,9 +665,23 @@ local function exercise_layout(engine)
     local badpad = rebuild_layout(engine, 'layout_badpad', 4, 7)
     badpad.args.pad = {0, 7}
     refused_then_aborted(badpad, label('malformed padding is refused, and aborts'))
+    local unknown = rebuild_layout(engine, 'layout_unknown', 4, 7)
+    unknown.args.checks[2] = {2, 'v', 'longer', 0, 10, box.NULL}
+    refused_then_aborted(unknown, label('a rebuild with a check of an unknown kind is refused, and aborts'))
+    -- A rebuild checks rows as it copies them (issue #184,
+    -- engine_checks_test.lua): v holds 10 times the row's id.
     local checked = rebuild_layout(engine, 'layout_checked', 4, 7)
     checked.args.checks[2] = {2, 'v', 'range', 0, 10, box.NULL}
-    refused_then_aborted(checked, label('a rebuild that would check rows is refused, and aborts'))
+    local failed_check = call('build', checked)
+    decide(checked, 'abort')
+    local checked_aborted = call('abort', checked)
+    end_job(checked)
+    check(label('a rebuild that checks rows fails the copy at the first row out of range, and aborts'),
+        failed_check[1] ~= 'ok' and failed_check[2] == 1264
+        and failed_check[3] == "Out of range value for column 'v' at row 2" and checked_aborted[1] == 'ok'
+        and box.space[checked.new_id] == nil and box.space[checked.name].id == checked.old_id
+        and mp.encode(rows(checked.old_id)) == checked.original_bytes and phase(checked).phase == 'aborted',
+        {failed_check, checked_aborted})
     local moved = rebuild_layout(engine, 'layout_moved', 4, 7)
     moved.args.rename = moved.name .. '_2'
     refused_then_aborted(moved, label('a rebuild that would rename the table is refused, and aborts'))
