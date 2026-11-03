@@ -954,33 +954,38 @@ impl TableDef {
             indexes,
             json: serde_json::to_string(self).expect("table def serializes"),
             uix: self.globals.iter().map(|g| g.table.lua_def()).collect(),
-            lazy: self
-                .indexes
-                .iter()
-                .filter_map(|i| {
-                    let l = i.lazy.as_ref().filter(|l| l.space_id != 0)?;
-                    let key = self.index_part_fields(i);
-                    let pk = self.index_part_fields(self.pk());
-                    Some(LazySpec {
-                        gen: l.space_id,
-                        base_space_id: self.space_id,
-                        local_index_id: i.id,
-                        route_parts: l.route_parts,
-                        key_fields: key.iter().map(|x| x.0).collect(),
-                        key_types: key.iter().map(|x| x.1.clone()).collect(),
-                        pk_fields: self
-                            .pk()
-                            .cols
-                            .iter()
-                            .map(|&c| self.layout.col_field[c] as u32 + 1)
-                            .collect(),
-                        pk_native_fields: pk.iter().map(|x| x.0).collect(),
-                        pk_types: pk.iter().map(|x| x.1.clone()).collect(),
-                        bucket_field: self.layout.bucket as u32 + 1,
-                    })
-                })
-                .collect(),
+            lazy: self.lazy_specs(),
         }
+    }
+
+    /// The storage descriptors of the table's lazy indexes (those with a
+    /// generation), as `lua_def` sends them.
+    pub fn lazy_specs(&self) -> Vec<LazySpec> {
+        self.indexes
+            .iter()
+            .filter_map(|i| {
+                let l = i.lazy.as_ref().filter(|l| l.space_id != 0)?;
+                let key = self.index_part_fields(i);
+                let pk = self.index_part_fields(self.pk());
+                Some(LazySpec {
+                    gen: l.space_id,
+                    base_space_id: self.space_id,
+                    local_index_id: i.id,
+                    route_parts: l.route_parts,
+                    key_fields: key.iter().map(|x| x.0).collect(),
+                    key_types: key.iter().map(|x| x.1.clone()).collect(),
+                    pk_fields: self
+                        .pk()
+                        .cols
+                        .iter()
+                        .map(|&c| self.layout.col_field[c] as u32 + 1)
+                        .collect(),
+                    pk_native_fields: pk.iter().map(|x| x.0).collect(),
+                    pk_types: pk.iter().map(|x| x.1.clone()).collect(),
+                    bucket_field: self.layout.bucket as u32 + 1,
+                })
+            })
+            .collect()
     }
 }
 
@@ -999,7 +1004,7 @@ pub struct LuaDef {
     pub lazy: Vec<LazySpec>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LazySpec {
     pub gen: u32,
     pub base_space_id: u32,

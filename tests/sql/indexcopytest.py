@@ -45,6 +45,19 @@ index's id, on every replica, with one entry per row; it finds every row
 and refuses another shard's duplicate. A TRUNCATE empties it, and DROP
 TABLE drops it.
 
+A lazy index keeps its entries in a space of its own, its target, named
+after the index's generation and sharded by the index's key (#82). An
+ALTER that adds an index copies such a table too, here one with a global
+index as well, and so does one that adds a column with a fill and an index
+on it, while a session changes the key, inserts, deletes, moves rows to
+new primary keys and changes another column (#184). After each, every
+replica keeps the generation, ready, its descriptor and capture bound to
+the copy and nothing bound to the old space; the replicas agree on the
+target, whose live entries are the table's rows, one each; the lazy index
+finds every row by its key; and the global index's space is kept as
+above. A TRUNCATE then retires the generation and publishes a new one,
+which finds the rows written since, and DROP TABLE retires that.
+
 Last, an engine change, whose copy now has its indexes from the start too,
 keeps the terms as they were.
 
@@ -59,7 +72,7 @@ import time
 
 import pymysql
 
-from lazytest import ev
+from lazytest import ev, stat
 
 DB = "index_copy"
 ELECTION = "local e = box.info.election; return {term = e.term, state = e.state, ro = box.info.ro}"
@@ -391,6 +404,264 @@ def main():
         gone = {node: ev(node, "return box.space[...] ~= nil", [uid]) for node in nodes}
         check(f"{engine}: DROP TABLE drops the kept space with the table", not any(gone.values()), gone)
 
+    def space_id(node, space):
+        return ev(node, "local sp = box.space[...]; return sp and sp.id or box.NULL", [space])
+
+    def drained(timeout=120):
+        """Every shard's lazy outbox is empty, with nothing in flight, and
+        every replica has what the deliveries wrote."""
+        deadline = time.monotonic() + timeout
+        while True:
+            stats = [ev(leader(g_), "return tarn_lazy_stats()") for g_ in groups]
+            if all(s[0] == "ok" and s[1]["depth"] == 0 and s[1]["inflight"] == 0 and s[1]["reserved_entries"] == 0
+                   for s in stats):
+                break
+            if time.monotonic() > deadline:
+                raise AssertionError(f"lazy outboxes did not drain: {stats}")
+            time.sleep(0.1)
+        caught_up()
+
+    def lazy_state(node, sid):
+        """What binds lazy generations to space id sid on node: the gens its
+        capture publishes, and each descriptor that names sid (by base or in
+        its spec), with its phase and target: the target's name, and the
+        count and a digest of its live entries in the index's order."""
+        state = ev(node, """
+            require('fiber').set_slice({warn = 30, err = 120})
+            local crc, mp = require('digest').crc32, require('msgpack')
+            local sid = ...
+            local out, cap = {capture = {}, defs = {}}, box.space._tarn_lazy_capture:get{sid}
+            for _, s in ipairs(cap and cap.specs or {}) do out.capture[#out.capture + 1] = s.gen end
+            for _, d in box.space._tarn_lazy_defs:pairs() do
+                if d.base_id == sid or d.spec.base_space_id == sid then
+                    local sp, h, n = box.space[d.gen], crc.new(), 0
+                    if sp ~= nil then
+                        for _, e in sp.index.ordered:pairs({true}, {iterator = 'EQ'}) do
+                            h:update(mp.encode(e:totable())); n = n + 1
+                        end
+                    end
+                    out.defs[tostring(d.gen)] = {base = d.base_id, spec_base = d.spec.base_space_id, phase = d.phase,
+                                                 target = sp and sp.name or box.NULL, live = n, digest = h:result()}
+                end
+            end
+            return out
+        """, [sid], timeout=60)
+        # (none comes back as an empty list)
+        return {"capture": state["capture"] or [], "defs": state["defs"] or {}}
+
+    def live_entries(node, gen):
+        """(k, tenant_id, id) of each live entry of generation gen's target on
+        node: those of an index on (k, id) of a table keyed (tenant_id, id)."""
+        return ev(node, """
+            require('fiber').set_slice({warn = 30, err = 120})
+            local out = {}
+            for _, e in box.space[...].index.ordered:pairs({true}, {iterator = 'EQ'}) do
+                out[#out + 1] = {e.k1, e.p1, e.p2}
+            end
+            return out
+        """, [gen], timeout=60)
+
+    def lazily_indexed(engine):
+        """A lazy index keeps its entries in a space of its own, its target,
+        named after the index's generation and sharded by the index's key
+        (#82). An ALTER that adds an index copies the table and keeps the
+        generation, with its target and entries, bound to the copy (#184),
+        and so the table's global index, while a session changes the key,
+        inserts, deletes, moves rows to new primary keys and changes another
+        column; so does one that adds a column with a fill and an index on
+        it."""
+        lt, lspace = f"l_{engine}", f"{DB}.l_{engine}"
+        n, keys = 20000, 50
+        q(c, f"CREATE TABLE {lt} (tenant_id INT NOT NULL, id INT NOT NULL, k INT, v INT, u INT NOT NULL, "
+             f"PRIMARY KEY (tenant_id, id), KEY by_k (k, id) COMMENT 'tarn:lazy', UNIQUE KEY uu (u)) "
+             f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
+        for first in range(0, n, 1000):
+            q(c, f"INSERT INTO {lt} VALUES " + ",".join(f"({i % TENANTS},{i},{i % keys},{i},{i})"
+                                                      for i in range(first, first + 1000)))
+        # (tenant_id, id) -> [k, v, u]
+        model = {(i % TENANTS, i): [i % keys, i, i] for i in range(n)}
+        fresh = {"id": 5 * FRESH_ID}
+        errors, writes = [], [0]
+        # (a session of its own, with no writes for a lazy read to wait for)
+        reader = connect(args.tarn)
+        shard_of = {node: g_["id"] for g_ in groups for node in g_["replicas"]}
+
+        def writer(stop):
+            conn = connect(args.tarn, read_timeout=120)
+            rnd = random.Random(f"lazy-{engine}-{writes[0]}")
+            while not stop.is_set():
+                rows, op = sorted(model), rnd.random()
+                try:
+                    if op < 0.4:
+                        a, k = rnd.choice(rows), rnd.randrange(keys)
+                        q(conn, f"UPDATE {lt} SET k = %s WHERE tenant_id = %s AND id = %s", (k, *a))
+                        model[a][0] = k
+                    elif op < 0.6:
+                        fresh["id"] += 1
+                        a, k = (rnd.randrange(TENANTS), fresh["id"]), rnd.randrange(keys)
+                        q(conn, f"INSERT INTO {lt} (tenant_id, id, k, v, u) VALUES (%s, %s, %s, %s, %s)",
+                          (*a, k, a[1], a[1]))
+                        model[a] = [k, a[1], a[1]]
+                    elif op < 0.75:
+                        a = rnd.choice(rows)
+                        q(conn, f"DELETE FROM {lt} WHERE tenant_id = %s AND id = %s", a)
+                        del model[a]
+                    elif op < 0.9:
+                        # the row moves to a new primary key, which its entry holds
+                        a = rnd.choice(rows)
+                        fresh["id"] += 1
+                        q(conn, f"UPDATE {lt} SET id = %s WHERE tenant_id = %s AND id = %s", (fresh["id"], *a))
+                        model[(a[0], fresh["id"])] = model.pop(a)
+                    else:
+                        a, v = rnd.choice(rows), rnd.randrange(10**6)
+                        q(conn, f"UPDATE {lt} SET v = %s WHERE tenant_id = %s AND id = %s", (v, *a))
+                        model[a][1] = v
+                    writes[0] += 1
+                except pymysql.MySQLError as e:
+                    errors.append(f"lazy: {e.args}")
+                    time.sleep(0.05)
+                time.sleep(0.003)
+
+        def answers(label):
+            """The lazy index finds every row by its key, on the lazy path."""
+            reads, fallbacks = stat(reader, "Tarn_lazy_reads"), stat(reader, "Tarn_lazy_fallbacks")
+            wrong = []
+            for k in range(keys):
+                got = q(reader, f"SELECT tenant_id, id FROM {lt} WHERE k = %s ORDER BY id", (k,))
+                want = tuple(sorted((key for key, v in model.items() if v[0] == k), key=lambda r: r[1]))
+                if tuple(tuple(r) for r in got) != want:
+                    wrong.append({"k": k, "rows": len(got), "want": len(want),
+                                  "missing": sorted(set(want) - set(got))[:3],
+                                  "extra": sorted(set(got) - set(want))[:3]})
+            reads = stat(reader, "Tarn_lazy_reads") - reads
+            fallbacks = stat(reader, "Tarn_lazy_fallbacks") - fallbacks
+            check(f"{engine}: {label}", not wrong and reads == keys and fallbacks == 0,
+                  {"wrong": wrong[:5], "lazy reads": reads, "fallbacks": fallbacks})
+
+        drained()
+        sids = {g_["id"]: space_id(leader(g_), lspace) for g_ in groups}
+        states = {node: lazy_state(node, sids[shard_of[node]]) for node in nodes}
+        gen = states[nodes[0]]["capture"][0] if states[nodes[0]]["capture"] else None
+        check(f"{engine}: a lazy index has one generation, the same on every replica, ready and bound to the table",
+              gen is not None and all(s["capture"] == [gen] and list(s["defs"]) == [str(gen)]
+                                      and s["defs"][str(gen)]["phase"] == "ready" for s in states.values()), states)
+        kept = {g_["id"]: {v["id"] for v in globals_of(leader(g_), lspace).values()} for g_ in groups}
+        check(f"{engine}: its unique key without the shard key has one global index space per shard",
+              all(len(v) == 1 for v in kept.values()) and len({frozenset(v) for v in kept.values()}) == 1, kept)
+        answers("the lazy index finds every row by its key")
+        for round_, sql in enumerate((f"ALTER TABLE {lt} ADD INDEX kv (v)",
+                                      f"ALTER TABLE {lt} ADD COLUMN x INT NOT NULL DEFAULT 3, ADD INDEX kx (x)")):
+            before = {g_["id"]: space_id(leader(g_), lspace) for g_ in groups}
+            before_terms = terms()
+            stop = threading.Event()
+            th = threading.Thread(target=writer, args=(stop,), daemon=True)
+            th.start()
+            time.sleep(1)
+            at = writes[0]
+            alter_error, began = None, time.monotonic()
+            try:
+                q(c, sql)
+            except pymysql.MySQLError as e:
+                alter_error = e.args
+            during = writes[0] - at
+            print(f"  ({engine}: ALTER took {time.monotonic() - began:.2f} s; writes during it: {during})",
+                  flush=True)
+            # (and writes after it, which the copy's capture takes)
+            time.sleep(1)
+            stop.set()
+            th.join(30)
+            check(f"{engine}: {sql}", alter_error is None, alter_error)
+            check(f"{engine}: writes went on during it, and none failed", during > 0 and not errors,
+                  {"during": during, "errors": errors[:5]})
+            check(f"{engine}: no replica changed its election term", terms() == before_terms,
+                  {"before": before_terms, "after": terms()})
+            drained()
+            after = {g_["id"]: space_id(leader(g_), lspace) for g_ in groups}
+            records = {g_["id"]: engine_record(leader(g_), lspace, before[g_["id"]]) for g_ in groups}
+            check(f"{engine}: that change was a copy, published on every shard",
+                  all(after[s] != before[s] for s in after)
+                  and all(r == {"phase": "published", "rebuild": True} for r in records.values()), records)
+            states = {node: lazy_state(node, after[shard_of[node]]) for node in nodes}
+            olds = {node: lazy_state(node, before[shard_of[node]]) for node in nodes}
+            check(f"{engine}: every replica keeps the generation, ready, its descriptor and capture bound to the copy",
+                  all(s["capture"] == [gen] and list(s["defs"]) == [str(gen)]
+                      and s["defs"][str(gen)] | {"live": 0, "digest": 0}
+                      == {"base": after[shard_of[node]], "spec_base": after[shard_of[node]], "phase": "ready",
+                          "target": f"_tarn_lix_{gen}", "live": 0, "digest": 0}
+                      for node, s in states.items()), states)
+            check(f"{engine}: nothing binds a generation to the old space any more",
+                  all(o == {"capture": [], "defs": {}} for o in olds.values()), olds)
+            check(f"{engine}: the replicas of each shard agree on the target's live entries",
+                  all(states[node]["defs"].get(str(gen)) == states[g_["replicas"][0]]["defs"].get(str(gen))
+                      for g_ in groups for node in g_["replicas"]),
+                  {node: states[node]["defs"].get(str(gen)) for node in nodes})
+            live = [tuple(e) for g_ in groups for e in live_entries(g_["replicas"][0], gen)]
+            want = {(v[0], *key) for key, v in model.items()}
+            check(f"{engine}: the target's live entries are the table's rows, one each",
+                  len(live) == len(want) and set(live) == want,
+                  {"entries": len(live), "rows": len(want), "missing": sorted(want - set(live))[:5],
+                   "extra": sorted(set(live) - want)[:5]})
+            rows = {(r[0], r[1]): list(r[2:]) for r in q(c, f"SELECT tenant_id, id, k, v, u FROM {lt}")}
+            check(f"{engine}: the table holds the model's rows", rows == model,
+                  {"rows": len(rows), "model": len(model),
+                   "differ": [key for key in model if rows.get(key) != model[key]][:5]})
+            answers("the lazy index finds every row by its key, from the kept target")
+            spaces = {node: globals_of(node, lspace) for node in nodes}
+            names = {node: uix_name(node, lspace, "uu") for node in nodes}
+            stale = {node: named_after(node, before[shard_of[node]]) for node in nodes}
+            check(f"{engine}: the copy keeps the global index's space too, by id, named after the copy, one "
+                  f"entry per row on every replica",
+                  all({v["id"] for v in spaces[node].values()} == kept[shard_of[node]] for node in nodes)
+                  and all(set(spaces[node]) == {names[node]} for node in nodes) and not any(stale.values())
+                  and all(spaces[node] == spaces[g_["replicas"][0]] for g_ in groups for node in g_["replicas"])
+                  and sum(v["rows"] for g_ in groups for v in spaces[g_["replicas"][0]].values()) == len(model),
+                  {"spaces": spaces, "names": names, "named after the old space": stale, "rows": len(model)})
+            sample = random.Random(f"l-{engine}-{round_}").sample(sorted(model), 100)
+            found = [q(c, f"SELECT tenant_id, id FROM {lt} WHERE u = %s", (model[key][2],)) for key in sample]
+            check(f"{engine}: the global index finds rows by their unique value",
+                  all(f == (key,) for f, key in zip(found, sample)),
+                  [(key, f) for key, f in zip(sample, found) if f != (key,)][:5])
+            left = {node: leftovers(node) for node in nodes}
+            check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
+        filled = q(c, f"SELECT COUNT(*) FROM {lt} WHERE x = 3")[0][0]
+        check(f"{engine}: the index on the new column finds every row", filled == len(model),
+              {"found": filled, "rows": len(model)})
+
+        # A TRUNCATE retires the kept generation and publishes a new one.
+        q(c, f"TRUNCATE TABLE {lt}")
+        model.clear()
+        for key, k in (((1, 1), 7), ((2, 2), 7), ((3, 3), 8)):
+            q(c, f"INSERT INTO {lt} (tenant_id, id, k, v, u) VALUES (%s, %s, %s, 0, %s)", (*key, k, key[1]))
+            model[key] = [k, 0, key[1]]
+        drained()
+        sid = {g_["id"]: space_id(leader(g_), lspace) for g_ in groups}
+        states = {node: lazy_state(node, sid[shard_of[node]]) for node in nodes}
+        fresh_gen = states[nodes[0]]["capture"][0] if states[nodes[0]]["capture"] else None
+        check(f"{engine}: TRUNCATE retires the kept generation and publishes a new one on every replica",
+              fresh_gen not in (None, gen)
+              and all(s["capture"] == [fresh_gen] and s["defs"].get(str(gen), {}).get("phase") == "retired"
+                      and s["defs"].get(str(fresh_gen), {}).get("phase") == "ready" for s in states.values()),
+              states)
+        emptied = {node: sum(v["rows"] for v in globals_of(node, lspace).values()) for node in nodes}
+        check(f"{engine}: TRUNCATE empties the kept global index too",
+              sum(emptied[g_["replicas"][0]] for g_ in groups) == 3, emptied)
+        answers("after TRUNCATE the lazy index finds the rows written since")
+        q(c, f"DROP TABLE {lt}")
+        caught_up()
+        phases = {node: ev(node, """
+            local out = {}
+            for i, gen in ipairs({...}) do
+                local d = box.space._tarn_lazy_defs:get{gen}
+                out[i] = d and d.phase or 'none'
+            end
+            return out
+        """, [gen, fresh_gen]) for node in nodes}
+        check(f"{engine}: DROP TABLE retires its generations on every replica",
+              all(p in ("retired", "none") for v in phases.values() for p in v), phases)
+        uid = next(iter(kept[groups[0]["id"]]))
+        gone = {node: ev(node, "return box.space[...] ~= nil", [uid]) for node in nodes}
+        check(f"{engine}: and drops the kept global index", not any(gone.values()), gone)
+
     c = connect(args.tarn, db=None)
     q(c, f"DROP DATABASE IF EXISTS {DB}")
     q(c, f"CREATE DATABASE {DB}")
@@ -658,6 +929,7 @@ def main():
               {"columns": columns})
 
         globally_unique(engine)
+        lazily_indexed(engine)
 
     # An engine change copies too, into a space that has its indexes first.
     before_terms = terms()

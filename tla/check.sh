@@ -61,6 +61,7 @@ Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity Bug_
 DEFAULT="$DEFAULT Bug_EngineCutoverCatalogByName"
 DEFAULT="$DEFAULT Bug_EngineCutoverAuxStreamOmitted"
 DEFAULT="$DEFAULT Bug_EngineCutoverKeptByNameOnly Bug_EngineCutoverPublishBeforeKeptRename Bug_EngineCutoverRetireKept"
+DEFAULT="$DEFAULT Bug_EngineCutoverRebindAfterPublish Bug_EngineCutoverAbortRetiresKept Bug_EngineCutoverNoPendingNew"
 DEFAULT="$DEFAULT EngineSourceDrain Bug_EngineSourceDrainCallerOnly"
 DEFAULT="$DEFAULT EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex"
 DEFAULT="$DEFAULT NativeKeyBatch Bug_KeyBatchMissingClaim Bug_KeyBatchMixedSnapshots Bug_KeyBatchTruncatedComplete"

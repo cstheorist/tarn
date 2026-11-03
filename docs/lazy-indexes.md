@@ -413,6 +413,23 @@ bucket counters, and clears what older releases left in the table's
 per-row version ledger. It does not backfill the rows being truncated. Late assignments for the old
 incarnations cannot populate the new ones.
 
+An ALTER that copies the table into a new space, as a cluster with
+replicated shards does to build other indexes ([design](design.md) §2.11),
+keeps its lazy incarnations (issue #184). Their targets, entries, outboxes
+and deliveries name the incarnation, never the table's space, so the
+table's writes go on capturing for them during the copy, and nothing is
+copied into a target. Each incarnation's descriptor and the table's
+capture configuration name the space: the copy's publication binds them
+to the new space, in the transaction that publishes it, and an ABORT
+leaves them bound to the table. Until a shard's capture registry has read
+that transaction, it refuses writes to the new space. Such a copy makes,
+drops and changes no lazy index: an ALTER that adds or drops one, or
+changes one, builds in place (making a column of its key nullable gives
+the index a new ID, and so a new incarnation), as does any change while a
+replica lacks `tarn_engine_rebuild_lazy_capabilities`. An engine change
+instead rotates the table's lazy indexes to new incarnations, built
+behind its fence.
+
 ## Bucket moves and shard removal
 
 Lazy target writes participate in the existing commit-in-flight and bucket

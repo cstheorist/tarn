@@ -175,11 +175,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with the fills its indexes need. So an index on a column added with a
   non-NULL default no longer materializes rows behind the table's fence,
   and is not limited by `alter_check_rows`. A change that checks rows
-  against a new type, and any change to a table with lazy indexes, still
-  builds in place, as does a change while a replica lacks
-  `tarn_engine_rebuild_format_capabilities`. Storage from before this
-  refuses such a copy at every step (1210) rather than copy the old layout;
-  finish or abort these ALTERs before downgrading storage
+  against a new type still builds in place, as does a change while a
+  replica lacks `tarn_engine_rebuild_format_capabilities`. Storage from
+  before this refuses such a copy at every step (1210) rather than copy the
+  old layout; finish or abort these ALTERs before downgrading storage
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
 - On a cluster with replicated shards, an `ALTER TABLE` that adds secondary
@@ -194,6 +193,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   such a copy at every step (1210); finish or abort these ALTERs before
   downgrading storage. `tla/EngineCutover.tla` models the kept spaces'
   names through publication
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
+- On a cluster with replicated shards, an `ALTER TABLE` that adds secondary
+  indexes to a table with lazy indexes now copies the table too, rather
+  than having each follower build the indexes in its applier. The copy
+  keeps each lazy index's incarnation, with its target and entries: the
+  table's writes go on capturing for it during the copy, and publication
+  binds it to the table's new space. A change that adds, drops or changes
+  a lazy index still builds in place, as does a change while a replica
+  lacks `tarn_engine_rebuild_lazy_capabilities`. Storage from before this
+  refuses such a copy at every step (1210); finish or abort these ALTERs
+  before downgrading storage. `tla/EngineCutover.tla` models the kept
+  incarnation's binding through publication and ABORT, and the capture
+  registry each shard keeps, which refuses the new space's writes until
+  it has read the publication
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
 - A `COUNT` or aggregate read that yielded while a table copy was published

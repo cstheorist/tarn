@@ -1357,6 +1357,27 @@ named after the space the catalog names once it names the new one, and
 `KeptAlive` that cleanup never drops them; `BugKeptByNameOnly`,
 `BugPublishBeforeKeptRename` and `BugRetireKept` each break one.
 
+Such a rebuild keeps the table's lazy generations too (`rebuild = 'lazy'`):
+their targets, entries, outbox and deliveries name the generation, but
+each generation's descriptor and the table's capture name the table's
+space. APPLY binds them to the new space in the transaction that publishes
+it, the one that moves the capture, and ABORT retires none, since a rebuild
+makes no generation. `KeptLazyBound` says that a kept generation is bound
+to the space the catalog names, so that the space's writes are captured
+for it and a later change of the table finds it, and `KeptLazyAlive` that
+nothing retires it. `BugRebindAfterPublish`, which binds it in a step of
+its own after the catalog commit, and `BugAbortRetiresKept`, which retires
+the job's generations on ABORT as for an engine change, break them.
+Each shard's lazy registry, the cache of what its writes capture, is read
+from confirmed state, and the catalog's transaction drops it before it
+commits and waits for its quorum: a registry read in that wait sees the
+state before the transaction, and may still be in use once it is
+confirmed. Until then it takes the new space as pending, which refuses
+its writes, as it takes an engine change's through its new generations'
+descriptors. `KeptLazyCaptured` says that the new space never takes a
+write uncaptured; `BugNoPendingNew`, a registry that does not know the
+new space before publication, breaks it.
+
 Implementation refinement obligations remain explicit:
 
 * Capture must cover every actual source mutation before its commit;
@@ -1395,8 +1416,10 @@ Implementation refinement obligations remain explicit:
   premise; the models do not prove Rust dispatch/error-code matching.
 * Fresh global/lazy target identities must be complete and READY before
   publication. Existing global-fill/lazy bootstrap proofs are reused,
-  not reimplemented here. Kept global index spaces need no READY: the
-  rebuild requires that it makes and drops none, and keeps every one. Preserve source bucket counters and
+  not reimplemented here. Kept global index spaces and lazy generations
+  need no READY: the rebuild requires that it makes, drops and changes
+  none, keeps every one, and finds each lazy one ready, built and
+  published already. Preserve source bucket counters and
   reservation/outbox obligations or explicitly rotate/retire them without
   losing a pending obligation. READY and retirement are durable facts,
   not an inference from a missing old space. The logical auto/row-ID
@@ -1448,6 +1471,42 @@ on both engines:
   (`rebuild = 'aux'`; also when they leave it out) are refused, and ABORT
   still ends each job.
 
+A [suite of its own](../lua/test/engine_lazy_test.lua) runs rebuilds that
+keep a lazy index (issue #184) on both engines, 42 checks with the native
+module and as many without:
+- writes to the old space during the copy, which change keys, delete and
+  insert, reach the generation, which stays bound to the old space;
+- PREPARED neither holds, fences nor binds the generation;
+- between the renames and the catalog commit, the registry of captured
+  spaces can be rebuilt (it follows the space each catalog entry names);
+  an APPLY interrupted there, and the next one just before the catalog
+  commit, leave the generation bound to the old space, and a registry read
+  then refuses writes to the new space;
+- a write between publication and cleanup reaches the generation;
+- publication binds the generation and the capture to the new space and
+  nothing to the old one, and keeps its target and entries; a schema
+  export, which refuses a generation bound to another space than its
+  table's, takes it as the new space's; later writes reach it, and the old
+  definition's are refused (1412);
+- a second rebuild keeps it again, bound to its own space, and an ALTER in
+  place afterwards, whose PREPARE takes a generation only if it is bound
+  to the table's space, keeps it too;
+- ABORT leaves it ready, bound to the table, taking its writes;
+- descriptors that keep it without saying so (`rebuild = 'aux'`, or `true`
+  with the index left out), leave it out, make, drop or change a lazy
+  index, or still name the old space are refused, and ABORT ends each job.
+
+Dropping the binding at publication, ABORT's leniency, the registry's
+lookup through the catalog entry, its pending new space, or any of the
+refusals fails it, and so does treating the kept generation as one the
+copy makes: holding and fencing it at PREPARE, or preparing it anew
+(eleven mutations). APPLY also drops the registry once the catalog's
+transaction returns, so that the new space's writes are not refused until
+cleanup; no test tells that apart. An interleaving that reads the lazy
+registry before the confirmation and the engine registry after it took an
+uncaptured write in three of four vinyl runs before this, and none in ten
+runs after it.
+
 Without the padding of either path, the new format, the refusals, ABORT's
 leniency, either read fix, the kept spaces' renames or their lookup through
 the catalog, the suite fails. It verifies
@@ -1481,7 +1540,9 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
   Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity \
   Bug_EngineCutoverRenameLosesOriginalIdentity Bug_EngineCutoverCatalogByName \
   Bug_EngineCutoverAuxStreamOmitted Bug_EngineCutoverKeptByNameOnly \
-  Bug_EngineCutoverPublishBeforeKeptRename Bug_EngineCutoverRetireKept
+  Bug_EngineCutoverPublishBeforeKeptRename Bug_EngineCutoverRetireKept \
+  Bug_EngineCutoverRebindAfterPublish Bug_EngineCutoverAbortRetiresKept \
+  Bug_EngineCutoverNoPendingNew
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
@@ -1498,24 +1559,28 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 | `Bug_EngineCopyStaleBatch` | 11,291 | 17 | violates `PreparedImage` |
 | `Bug_EngineCopyTailIgnoresDeletes` | 6,372 | 13 | violates `PreparedImage` |
 | `Bug_EngineCopyUnconfirmedSource` | 288 | 6 | violates `ConfirmedCopies` |
-| `EngineCutover` | 1,012 | 22 | passes |
-| `Bug_EngineCutoverAbortAfterDecision` | 285 | 11 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverApplyAfterAbort` | 384 | 12 | violates `CatalogHasSpace` |
+| `EngineCutover` | 5,563 | 26 | passes |
+| `Bug_EngineCutoverAbortAfterDecision` | 1,188 | 12 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverApplyAfterAbort` | 1,430 | 13 | violates `CatalogHasSpace` |
 | `Bug_EngineCutoverDropBeforePublish` | 3 | 2 | violates `CatalogHasSpace` |
 | `Bug_EngineCutoverForgetOldObligations` | 4 | 2 | violates `OldObligationsRetained` |
-| `Bug_EngineCutoverOldStreamValidates` | 231 | 11 | violates `OldStreamsRejected` |
-| `Bug_EngineCutoverPublishBeforeAuxReady` | 266 | 8 | violates `PublishedReady` |
-| `Bug_EngineCutoverPublishBeforeDecision` | 308 | 10 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 349 | 13 | violates `CatalogHasSpace` |
-| `Bug_EngineCutoverResetCounterIdentity` | 233 | 11 | violates `CounterNeverReuses` |
-| `Bug_EngineCutoverCatalogByName` | 173 | 8 | violates `CatalogObservationBound` |
-| `Bug_EngineCutoverAuxStreamOmitted` | 231 | 11 | violates `OldStreamsRejected` |
-| `Bug_EngineCutoverKeptByNameOnly` | 171 | 8 | violates `KeptFound`: the copy has the table's name, and a lookup by name finds the kept index under neither |
-| `Bug_EngineCutoverPublishBeforeKeptRename` | 195 | 9 | violates `KeptNamedAfterCatalog`: the catalog names the copy while the kept index is still named after the old space |
-| `Bug_EngineCutoverRetireKept` | 228 | 11 | violates `KeptAlive`: cleanup drops the kept index with the old space |
+| `Bug_EngineCutoverOldStreamValidates` | 887 | 12 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverPublishBeforeAuxReady` | 1,022 | 9 | violates `PublishedReady` |
+| `Bug_EngineCutoverPublishBeforeDecision` | 1,234 | 11 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 1,272 | 14 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverResetCounterIdentity` | 890 | 12 | violates `CounterNeverReuses` |
+| `Bug_EngineCutoverCatalogByName` | 517 | 8 | violates `CatalogObservationBound` |
+| `Bug_EngineCutoverAuxStreamOmitted` | 887 | 12 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverKeptByNameOnly` | 515 | 8 | violates `KeptFound`: the copy has the table's name, and a lookup by name finds the kept index under neither |
+| `Bug_EngineCutoverPublishBeforeKeptRename` | 754 | 10 | violates `KeptNamedAfterCatalog`: the catalog names the copy while the kept index is still named after the old space |
+| `Bug_EngineCutoverRetireKept` | 884 | 12 | violates `KeptAlive`: cleanup drops the kept index with the old space |
+| `Bug_EngineCutoverRebindAfterPublish` | 816 | 11 | violates `KeptLazyBound`: the catalog names the copy while the kept lazy generation is still bound to the old space |
+| `Bug_EngineCutoverAbortRetiresKept` | 32 | 3 | violates `KeptLazyAlive`: ABORT retires the generation the table keeps |
+| `Bug_EngineCutoverNoPendingNew` | 449 | 13 | violates `KeptLazyCaptured`: a lazy registry read while the catalog's transaction waits for its quorum, used once it is confirmed, takes a write to the new space uncaptured |
 
 The three configurations for kept global index spaces are generated by
-`gen_cfgs.sh` and bring the default check list from 337 to 340.
+`gen_cfgs.sh` and bring the default check list from 337 to 340, and the
+three for kept lazy generations to 343.
 
 ### Unique indexes on an engine copy's shadow (issue #267)
 
@@ -1572,7 +1637,10 @@ that suite. `tests/indexcopy.sh` runs the copy through SQL on 2 shards x 3
 replicas with fsync while sessions increment a column, hand unique values
 from row to row, swap them by way of NULL, insert, delete and move rows to
 new primary keys, and checks the rows against those sessions' models; it
-fails when the final pass is skipped.
+fails when the final pass is skipped. It also copies, on each engine, a
+table with a global unique index and one with a lazy index, and checks
+that every replica keeps the index's space, or the generation and its
+target, bound to the copy, and that they find every row.
 The four configurations are generated by `gen_cfgs.sh` and bring the
 default check list from 333 to 337.
 
