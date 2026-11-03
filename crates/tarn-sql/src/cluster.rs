@@ -118,6 +118,12 @@ pub struct ClusterConfig {
     /// `in_place` builds them on the table's own space (issue #267).
     #[serde(default)]
     pub index_build: IndexBuild,
+    /// How long one call of a copy's BUILD or PREPARE copies before it
+    /// returns, to be sent again (seconds; issue #184). A copy of a large
+    /// table then takes many calls, each well within `rpc.timeout_secs`.
+    /// 0 (the default): a quarter of `rpc.timeout_secs`, at most 30.
+    #[serde(default)]
+    pub ddl_step_slice: f64,
     /// Collation of text columns in tables that name none (no COLLATE or
     /// CHARSET option): `collation_server`.
     #[serde(default = "default_collation")]
@@ -145,6 +151,16 @@ impl std::fmt::Debug for ClusterConfig {
     }
 }
 impl ClusterConfig {
+    /// `ddl_step_slice`, or its default; never over half the RPC deadline.
+    pub fn step_slice(&self) -> f64 {
+        let half = self.rpc.timeout_secs / 2.0;
+        if self.ddl_step_slice.is_finite() && self.ddl_step_slice > 0.0 {
+            self.ddl_step_slice.min(half)
+        } else {
+            (self.rpc.timeout_secs / 4.0).min(30.0)
+        }
+    }
+
     pub fn load_credentials(&mut self) -> std::io::Result<()> {
         if let Some(path) = &self.password_file {
             self.password = tarn_transport::read_secret(path)?;
@@ -316,6 +332,16 @@ fn alter_uix_args(args: &[u8]) -> SqlResult<(Vec<u32>, String, u32, u64)> {
 }
 
 /// `{'ok', 'applied'}`: a step found its job already applied on that shard.
+/// A copy's BUILD or PREPARE that copied for its slice and goes on in the
+/// next call: `["ok", "more"]` (issue #184).
+fn more_reply(d: &[u8]) -> bool {
+    let mut rd = Rd::new(d);
+    matches!(rd.array(), Ok(n) if n > 0)
+        && matches!(rd.array(), Ok(m) if m > 1)
+        && rd.string().is_ok_and(|s| s == "ok")
+        && rd.string().is_ok_and(|s| s == "more")
+}
+
 fn applied_reply(d: &[u8]) -> bool {
     let mut rd = Rd::new(d);
     matches!(rd.array(), Ok(n) if n > 0)
@@ -2706,6 +2732,30 @@ impl Cluster {
                     .and_then(|d| lua_status(&d).map(|_| d.clone()))
             }
         };
+        // ALTER TABLE's BUILD and PREPARE also take a slice (issue #184): a
+        // copy returns ["ok", "more"] once a call has copied that long, and
+        // is sent again until it is done. Storage from before ignores it.
+        let mut sliced = Mp::new();
+        sliced.arr(4).str(&job.space);
+        sliced.0.extend_from_slice(&job.args);
+        sliced.uint(job.gen).map(1).str("slice").f64(self.cfg.step_slice());
+        let in_slices = |i: usize, proc: String| {
+            let (sliced, call) = (&sliced, &call);
+            async move {
+                let args = if job.kind == JobKind::Alter { &sliced.0 } else { &call.0 };
+                loop {
+                    let d: Bytes = retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), || async {
+                        self.call(i, &proc, args)
+                            .await
+                            .and_then(|d| lua_status(&d).map(|_| d.clone()))
+                    })
+                    .await?;
+                    if !more_reply(&d) {
+                        return Ok::<Bytes, SqlError>(d);
+                    }
+                }
+            }
+        };
         let mut failed: Option<SqlError> = None;
         let mut phase = job.phase.as_str();
         if phase == "prepare" || phase == "run" {
@@ -2723,11 +2773,7 @@ impl Cluster {
             }
             if failed.is_none() && job.kind == JobKind::Alter {
                 for r in crate::topology::collect(
-                    live.iter().map(|&i| {
-                        retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || {
-                            step(i, job.kind.proc("build"))
-                        })
-                    }),
+                    live.iter().map(|&i| in_slices(i, job.kind.proc("build"))),
                     self.cfg.topology.fanout,
                 )
                 .await
@@ -2755,11 +2801,7 @@ impl Cluster {
             // build (issue #271), and the new leader goes on from there.
             if failed.is_none() {
                 for r in crate::topology::collect(
-                    live.iter().map(|&i| {
-                        retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || {
-                            step(i, job.kind.proc("prepare"))
-                        })
-                    }),
+                    live.iter().map(|&i| in_slices(i, job.kind.proc("prepare"))),
                     self.cfg.topology.fanout,
                 )
                 .await
@@ -3122,6 +3164,35 @@ mod step_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_copy_step_in_slices_goes_on_while_storage_says_more() {
+        let reply = |status: &str, second: Option<&str>| {
+            let mut d = Mp::new();
+            d.arr(1).arr(1 + second.is_some() as usize).str(status);
+            if let Some(s) = second {
+                d.str(s);
+            }
+            d.0
+        };
+        assert!(more_reply(&reply("ok", Some("more"))));
+        for (status, second) in [("ok", None), ("ok", Some("applied")), ("error", Some("more"))] {
+            assert!(!more_reply(&reply(status, second)), "{status} {second:?}");
+        }
+        let more = reply("ok", Some("more"));
+        for n in 0..more.len() {
+            assert!(!more_reply(&more[..n]));
+        }
+        // The slice: a quarter of the RPC deadline, at most 30 s, or the
+        // configured one, at most half the deadline.
+        let config = |extra: &str| -> ClusterConfig {
+            serde_json::from_str(&format!(r#"{{"shards":[]{extra}}}"#)).unwrap()
+        };
+        assert_eq!(config("").step_slice(), 30.0);
+        assert_eq!(config(r#","rpc":{"timeout_secs":8}"#).step_slice(), 2.0);
+        assert_eq!(config(r#","ddl_step_slice":0.25"#).step_slice(), 0.25);
+        assert_eq!(config(r#","ddl_step_slice":100,"rpc":{"timeout_secs":120}"#).step_slice(), 60.0);
+    }
 
     #[test]
     fn strong_read_capability_requires_supported_complete_contract() {

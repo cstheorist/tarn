@@ -18,6 +18,7 @@
 #                TARN_NATIVE=PATH|0 (the native procedures' libtarn_storage.so; default: target/release's),
 #                TARN_QUERY_PUSHDOWN=true|false (opt-in typed reads; default false),
 #                TARN_DDL_JOB_STALE=SECS (ddl_job_stale in cluster.json: tests),
+#                TARN_DDL_STEP_SLICE=SECS (ddl_step_slice in cluster.json: tests),
 #                TARN_INDEX_BUILD=auto|copy|in_place (index_build in cluster.json: how ALTER TABLE builds indexes)
 #                TARN_BUCKET_COUNT=N (bucket_count in cluster.json: buckets of a new cluster)
 #                TARN_RESOURCE_LIMITS=JSON (gateway SQL resource budgets: load fixtures)
@@ -118,6 +119,7 @@ write_config() {
   out+="]"
   out+=",\"query_pushdown\":$PUSHDOWN"
   [ -n "${TARN_DDL_JOB_STALE:-}" ] && out+=",\"ddl_job_stale\":$TARN_DDL_JOB_STALE"
+  [ -n "${TARN_DDL_STEP_SLICE:-}" ] && out+=",\"ddl_step_slice\":$TARN_DDL_STEP_SLICE"
   [ -n "${TARN_INDEX_BUILD:-}" ] && out+=",\"index_build\":\"$TARN_INDEX_BUILD\""
   [ -n "${TARN_BUCKET_COUNT:-}" ] && out+=",\"bucket_count\":$TARN_BUCKET_COUNT"
   [ -n "${TARN_TOPOLOGY_LIMITS:-}" ] && out+=",\"topology\":$TARN_TOPOLOGY_LIMITS"

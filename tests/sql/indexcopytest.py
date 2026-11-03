@@ -3,8 +3,10 @@
 the table into a new space whose indexes exist before its rows (#267), also
 when the same statement adds a column (#184).
 
-Run by tests/indexcopy.sh on 2 shards x 3 replicas with fsync. For a memtx
-and a vinyl table, two ALTERs run while three sessions write:
+Run by tests/indexcopy.sh on 2 shards x 3 replicas with fsync, with the SQL
+server sending a copy's BUILD and PREPARE in slices of 0.25 s, so that each
+copy takes several calls (#184). For a memtx and a vinyl table, two ALTERs
+run while three sessions write:
 
   * one adds 1 to k in rows it alone touches;
   * one owns other rows of the table and keeps a model of them: it hands a

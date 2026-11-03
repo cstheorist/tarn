@@ -591,6 +591,7 @@ function M.new(c)
         E.tracks[x.old_id] = t; attach(x.old_id)
         local r = update(a, gen, nil, function(v)
             v.phase, v.cursor, v.copied, v.capture = 'resetting', box.NULL, 0, t.token
+            v.resets = (v.resets or 0) + 1
         end)
         local sp = box.space[r.new_id]
         if sp ~= nil then
@@ -703,7 +704,18 @@ function M.new(c)
         E.passes = (E.passes or 0) + 1
         c.hook('engine_catch_up')
     end
-    function E.build(name, a, gen, deadline)
+    -- A slice (opts.slice, seconds, from an SQL server that sends the step
+    -- again): once it has copied that long, BUILD returns {'ok', 'more'}
+    -- between pages or passes, where everything it did is durable or in the
+    -- capture, which the next call goes on with. A copy of a large table
+    -- then takes many calls, each well within the SQL server's RPC deadline
+    -- (issue #184); before, a call past it was sent again while the first
+    -- still held the table's serial lock.
+    local function sliced(opts)
+        local slice = type(opts) == 'table' and tonumber(opts.slice) or nil
+        return slice ~= nil and slice >= 0 and clock.monotonic() + slice or nil
+    end
+    function E.build(name, a, gen, deadline, opts)
         -- E.body's registry refresh may have yielded since its entry cut.
         -- Reacquire only before entering a stage, never by retrying a
         -- transaction/commit that raised or may still have native effects.
@@ -713,7 +725,8 @@ function M.new(c)
             return v.phase == 'prepared' or v.phase == 'applying' or v.phase == 'published'
         end
         if certified(r) then return {'ok', 'applied'} end
-        local x, restarts, passes, behind = bound(a), 0, 0, 0
+        local x = bound(a)
+        local until_ = sliced(opts)
         local function current(v, t, epoch)
             return q.ready() and (epoch == nil or q.epoch == epoch)
                    and capture_valid(t) and E.tracks[x.old_id] == t and t.token == v.capture
@@ -732,8 +745,9 @@ function M.new(c)
                and r.phase ~= 'preparing' then fail(1412, 'Engine copy phase changed') end
             local t = E.tracks[x.old_id]
             if r.phase == 'resetting' or not capture_valid(t) or t.token ~= r.capture then
-                restarts = restarts + 1
-                if restarts > 8 then fail(1205, 'Engine copy repeatedly lost its capture; retry the ALTER') end
+                -- (Counted in the record: a BUILD in slices, or sent again,
+                -- goes on counting.)
+                if (r.resets or 0) >= 8 then fail(1205, 'Engine copy repeatedly lost its capture; retry the ALTER') end
                 t = reset(a, gen, deadline)
                 r = read(function() return owned(a, gen) end)
                 if certified(r) then return {'ok', 'applied'} end
@@ -747,13 +761,16 @@ function M.new(c)
                     -- passes catch up to that first. Writes that outpace them
                     -- fail the change, rather than hold the fence longer.
                     if #t.list <= (c.cfg.engine_fence_keys or 1024) then return {'ok'} end
-                    passes = passes + 1
-                    if passes > (c.cfg.engine_catchup_passes or 16) then
+                    -- (Counted with the capture: across the calls of a BUILD
+                    -- in slices, and of one sent again.)
+                    t.fence_passes = (t.fence_passes or 0) + 1
+                    if t.fence_passes > (c.cfg.engine_catchup_passes or 16) then
                         fail(1205, string.format('Writes to the table outpace the copy (%d keys written since its '
                             .. 'last catch-up pass, over tarn.cfg.engine_fence_keys); retry the ALTER when it is '
                             .. 'quieter', #t.list))
                     end
                     catch_up(a, gen, t, within(a))
+                    if until_ ~= nil and clock.monotonic() >= until_ then return {'ok', 'more'} end
                     goto continue
                 end
                 if r.phase ~= 'copying' then fail(1412, 'Engine copy phase changed') end
@@ -812,8 +829,8 @@ function M.new(c)
                         -- A pass whose writes refill the capture gains no
                         -- ground: the copy goes a page per pass. That many
                         -- in a row fail the change, as before the fence.
-                        behind = #t.list >= catchup and behind + 1 or 0
-                        if behind > (c.cfg.engine_catchup_passes or 16) then
+                        t.behind = #t.list >= catchup and (t.behind or 0) + 1 or 0
+                        if t.behind > (c.cfg.engine_catchup_passes or 16) then
                             fail(1205, string.format('Writes to the table outpace the copy (%d keys written during '
                                 .. 'its last catch-up pass, over tarn.cfg.engine_catchup_keys); retry the ALTER when '
                                 .. 'it is quieter', #t.list))
@@ -822,6 +839,7 @@ function M.new(c)
                 end
             end
             ::continue::
+            if until_ ~= nil and clock.monotonic() >= until_ and r.phase == 'copying' then return {'ok', 'more'} end
             fiber.sleep(0)
         until false
     end
@@ -874,7 +892,7 @@ function M.new(c)
         local r = c.lazy.ready(name, a, gen)
         if r[1] ~= 'ok' then fail(r[2] or 1412, r[3] or 'Lazy READY failed') end
     end
-    function E.prepare(name, a, gen, deadline)
+    function E.prepare(name, a, gen, deadline, opts)
         local r = start(name, a, gen, deadline)
         if r.phase == 'published' then return {'ok', 'applied'} end
         if r.phase == 'prepared' or r.phase == 'applying' then
@@ -882,7 +900,9 @@ function M.new(c)
             return {'ok'}
         end
         if r.phase == 'preparing' and E.tracks[r.old_id] then E.tracks[r.old_id].valid = false end
-        E.build(name, a, gen, deadline)
+        -- (In slices too: the copy, and passes, before the fence.)
+        local built = E.build(name, a, gen, deadline, opts)
+        if built[1] == 'ok' and built[2] == 'more' then return built end
         deadline = within(a)
         update(a, gen, {copied = true}, function(v)
             v.phase = 'preparing'
@@ -1083,7 +1103,7 @@ function M.new(c)
         refresh()
         return {'ok'}
     end
-    function E.body(op, name, a, gen)
+    function E.body(op, name, a, gen, opts)
         c.writable(); c.bk.fresh()
         local deadline = within(a)
         ready(deadline); E.fresh()
@@ -1112,14 +1132,14 @@ function M.new(c)
             read(function() owned(a, gen, {prepared = true}) end)
             return op == 'bootstrap' and c.lazy.bootstrap(name, a, gen) or c.lazy.ready(name, a, gen)
         end
-        return assert(E[op])(name, a, gen, deadline)
+        return assert(E[op])(name, a, gen, deadline, opts)
     end
-    function E.run(op, name, a, gen)
+    function E.run(op, name, a, gen, opts)
         local ok, result = pcall(function()
             if box.is_in_txn() then fail(1210, 'Engine DDL requires its own transaction') end
             local x = bound(a)
             if name ~= x.old_name then fail(1210, 'Engine request name does not match its source binding') end
-            return c.serial(x.old_id, a.timeout or 50, E.body, op, name, a, gen or 0)
+            return c.serial(x.old_id, a.timeout or 50, E.body, op, name, a, gen or 0, opts)
         end)
         return ok and result or c.failure(result)
     end

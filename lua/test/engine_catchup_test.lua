@@ -185,6 +185,49 @@ local function exercise(engine)
     decide(t, 'apply'); ok(call('apply', t)); end_job(t)
     restore()
 
+    -- BUILD and PREPARE in slices (opts.slice, from an SQL server that sends
+    -- the step again): a slice of 0 copies a page, or runs a pass, per call,
+    -- each returning {'ok', 'more'}; writes between the calls are captured,
+    -- and the copy is exact. Then the same with PREPARE alone, which copies
+    -- the table in its slices before it fences.
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 0}
+    for _, first in ipairs({'build', 'prepare'}) do
+        t = table_and_copy(engine, 'sliced_' .. first, 60)
+        local calls, more, n, last = 0, 0, 1, nil
+        for _, op in ipairs(first == 'build' and {'build', 'prepare'} or {'prepare'}) do
+            repeat
+                last = _G['tarn_alter_' .. op](t.name, t.args, t.gen, {slice = 0})
+                calls = calls + 1
+                local again = type(last) == 'table' and last[1] == 'ok' and last[2] == 'more'
+                if again then more = more + 1 end
+                -- (Writes while the copy copies: after it, each call's pass
+                -- would meet as many new keys as it reread.)
+                if again and record(t).phase == 'copying' then ok(churn(t, n)); n = n + 3; if n > 55 then n = 1 end end
+            until not again or calls > 400
+        end
+        check(label(first .. ' in slices returns for more, and the copy it makes is exact'),
+            type(last) == 'table' and last[1] == 'ok' and last[2] == nil and more >= 15 and image(t)
+            and record(t).phase == 'prepared', {last, calls, more, record(t).phase})
+        decide(t, 'apply'); ok(call('apply', t)); end_job(t)
+    end
+    restore()
+    -- Writes that refill the capture between the calls after the copy: the
+    -- budget of passes before the fence counts across calls, and fails the
+    -- change.
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 0, engine_catchup_passes = 2}
+    t = table_and_copy(engine, 'sliced_outpaced', 40)
+    local calls, n, last = 0, 1, nil
+    repeat
+        last = tarn_alter_build(t.name, t.args, t.gen, {slice = 0})
+        calls = calls + 1
+        ok(churn(t, n)); n = n + 3; if n > 35 then n = 1 end
+    until not (last[1] == 'ok' and last[2] == 'more') or calls > 200
+    decide(t, 'abort'); local ended = call('abort', t); end_job(t)
+    check(label('writes that outpace the passes between calls in slices fail the change'),
+        last[1] ~= 'ok' and last[2] == 1205 and tostring(last[3]):find('outpace') ~= nil and calls < 40
+        and ended[1] == 'ok', {last, calls, ended})
+    restore()
+
     -- Unique values that change hands across a pass: no false duplicate.
     restore = set{engine_copy_rows = 4, engine_catchup_keys = 2, engine_fence_keys = 0}
     t = table_and_copy(engine, 'swap', 60)
