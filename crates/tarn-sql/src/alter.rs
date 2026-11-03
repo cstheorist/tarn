@@ -1907,15 +1907,40 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
 /// table's global unique indexes are kept as they are
 /// (`rebuild_keeps_globals`), when the change adds, drops and changes none
 /// of them, and so are its lazy indexes (`rebuild_keeps_lazy`), when the
-/// change adds, drops and changes none of them either: each keeps its
-/// generation, whose descriptor differs only in the space it names.
+/// change drops and changes none of them either: each keeps its generation,
+/// whose descriptor differs only in the space it names. A lazy index the
+/// change makes (`rebuild_makes_lazy`) is built online against the old
+/// space before the copy, as in place, from its rows as they are stored:
+/// it may read no column whose stored field, weight, type or collation the
+/// change alters, and the change may materialize no field (an index on a
+/// column added with a non-NULL fill, which old rows may lack).
 pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
-    // A lazy index the change makes (no generation yet), or one not ready.
+    // A lazy index not ready (an unfinished change of the table's).
     let unsettled = |t: &TableDef| {
         t.indexes
             .iter()
-            .any(|i| i.lazy.as_ref().is_some_and(|l| l.space_id == 0 || !l.ready))
+            .any(|i| i.lazy.as_ref().is_some_and(|l| l.space_id != 0 && !l.ready))
     };
+    // Each lazy index the change makes (no generation yet) reads columns
+    // the table has, stored as they were, in rows the change does not pad.
+    let shape = |t: &TableDef, c: usize| {
+        (
+            t.layout.col_field[c],
+            t.layout.col_weight[c],
+            t.columns[c].ty.clone(),
+            t.layout.colls[c],
+        )
+    };
+    let made = |i: &IndexDef| i.lazy.as_ref().is_some_and(|l| l.space_id == 0);
+    let made_online = !ch.def.indexes.iter().any(made)
+        || (!ch.materialize
+            && ch.def.layout.bucket == def.layout.bucket
+            && ch.def.indexes.iter().filter(|i| made(i)).all(|i| {
+                i.cols.iter().chain(&ch.def.pk().cols).all(|&c| {
+                    def.col_index(&ch.def.columns[c].name)
+                        .is_some_and(|o| shape(def, o) == shape(&ch.def, c))
+                })
+            }));
     let lazy = |t: &TableDef| {
         let mut specs: Vec<catalog::LazySpec> = t
             .lazy_specs()
@@ -1948,6 +1973,7 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         && !unsettled(def)
         && !unsettled(&ch.def)
         && lazy(def) == lazy(&ch.def)
+        && made_online
         && ch.uix_new.is_empty()
         && !kept(&ch.def).contains(&0)
         && kept(def) == kept(&ch.def)
@@ -1963,9 +1989,23 @@ pub fn rebuild_keeps_globals(def: &TableDef) -> bool {
 /// Whether a rebuild of a table with definition `def` keeps lazy indexes:
 /// their generations stay, bound to the new space as it is published, and
 /// the storage must know such rebuilds (`tarn_engine_rebuild_lazy_capabilities`),
-/// whose ABORT retires no generation.
+/// whose ABORT retires none of the table's generations. Also when the
+/// table's first lazy indexes are ones the rebuild makes.
 pub fn rebuild_keeps_lazy(def: &TableDef) -> bool {
     def.has_lazy()
+}
+
+/// Whether a rebuild of change `ch` makes lazy indexes: new generations,
+/// built online against the old space before the copy and published with
+/// it (`lazy_made`), which the storage must know
+/// (`tarn_engine_rebuild_lazy_made_capabilities`).
+pub fn rebuild_makes_lazy(ch: &Change) -> bool {
+    !ch.lazy_new.is_empty()
+        || ch
+            .def
+            .indexes
+            .iter()
+            .any(|i| i.lazy.as_ref().is_some_and(|l| l.space_id == 0))
 }
 
 /// Whether a rebuild of change `ch` changes the stored layout: the new
@@ -2056,7 +2096,10 @@ fn check_globals(def: &TableDef, nd: &mut TableDef) -> SqlResult<Vec<u32>> {
 /// carries version `ver`).
 pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     let mut m = Mp::new();
-    m.map(14 + !ch.lazy_drop.is_empty() as usize + ch.engine_change.is_some() as usize);
+    // A rebuild names the lazy generations it makes, which it builds online
+    // against the old space before its copy (`rebuild_makes_lazy`).
+    let made = ch.engine_change.as_ref().is_some_and(|e| e.rebuild) && !ch.lazy_new.is_empty();
+    m.map(14 + !ch.lazy_drop.is_empty() as usize + ch.engine_change.is_some() as usize + made as usize);
     if let Some(engine) = &ch.engine_change {
         m.str("engine_change")
             .map(4 + engine.rebuild as usize)
@@ -2085,6 +2128,12 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     if !ch.lazy_drop.is_empty() {
         m.str("lazy_drop").arr(ch.lazy_drop.len());
         for &id in &ch.lazy_drop {
+            m.uint(id as u64);
+        }
+    }
+    if made {
+        m.str("lazy_made").arr(ch.lazy_new.len());
+        for &id in &ch.lazy_new {
             m.uint(id as u64);
         }
     }
@@ -2654,10 +2703,9 @@ mod tests {
         // New local indexes, also with a new column, keep its generation.
         assert!(eligible("ALTER TABLE t ADD INDEX kb (b)"));
         assert!(eligible("ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)"));
-        // A change that makes, drops or renews a lazy index builds in place:
-        // a new one has no generation yet, and an index on a column made
-        // nullable gets a new id, which its descriptor names.
-        assert!(!eligible("ALTER TABLE t ADD INDEX kb (b) COMMENT 'tarn:lazy'"));
+        // A change that drops or renews a lazy index builds in place: an
+        // index on a column made nullable gets a new id, and so a new
+        // generation, the old one retired.
         assert!(!eligible("ALTER TABLE t DROP INDEX by_k, ADD INDEX kb (b)"));
         assert!(!eligible("ALTER TABLE t MODIFY k INT NULL, ADD INDEX kb (b)"));
         // As Cluster::alter_table sets the rebuild up: the descriptor keeps
@@ -2700,6 +2748,116 @@ mod tests {
         assert!(!crate::lazy::job_lazy(&args).unwrap().0);
         let in_place = alter(&def, &cat, "ALTER TABLE t ADD INDEX kb (b)").unwrap();
         assert!(crate::lazy::job_lazy(&lua_args(&in_place, 7, 5.0)).unwrap().0);
+    }
+
+    #[test]
+    fn rebuild_makes_lazy_indexes() {
+        let (mut def, _) = table(
+            "CREATE TABLE t (tenant_id INT, id INT, k INT NOT NULL, b INT, s VARCHAR(8) COLLATE utf8mb4_unicode_ci, \
+             PRIMARY KEY (tenant_id, id), KEY by_k (k, id) COMMENT 'tarn:lazy') PARTITION BY KEY(tenant_id)",
+        );
+        let by_k = def.indexes.iter().position(|i| i.name == "by_k").unwrap();
+        let l = def.indexes[by_k].lazy.as_mut().expect("a lazy index");
+        (l.space_id, l.ready) = (700, true);
+        let cat = Catalog::new(1, vec!["db".into(), "other".into()], vec![def.clone()]);
+        let eligible = |d: &TableDef, c: &Catalog, sql: &str| rebuild_eligible(d, &alter(d, c, sql).unwrap());
+        // A new lazy index on columns the table has, stored as they were,
+        // is built online against the old space before the copy, which
+        // keeps the existing one. So is the first lazy index of a table.
+        assert!(eligible(
+            &def,
+            &cat,
+            "ALTER TABLE t ADD INDEX kb (b, id) COMMENT 'tarn:lazy'"
+        ));
+        assert!(eligible(
+            &def,
+            &cat,
+            "ALTER TABLE t ADD INDEX kl (b) COMMENT 'tarn:lazy', ADD INDEX kb (b, k)"
+        ));
+        let (plain, plain_cat) = table(T);
+        assert!(eligible(
+            &plain,
+            &plain_cat,
+            "ALTER TABLE t ADD INDEX la (a) COMMENT 'tarn:lazy'"
+        ));
+        // Not on a column the change adds, or retypes.
+        assert!(!eligible(
+            &def,
+            &cat,
+            "ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n) COMMENT 'tarn:lazy'"
+        ));
+        assert!(!eligible(
+            &def,
+            &cat,
+            "ALTER TABLE t MODIFY b BIGINT, ADD INDEX kb (b) COMMENT 'tarn:lazy'"
+        ));
+        // Nor with fields the change materializes: old rows may lack a
+        // column an earlier ALTER added with a default, and the build reads
+        // them as they are stored. A column added without one reads as NULL.
+        let added = alter(&def, &cat, "ALTER TABLE t ADD COLUMN n INT DEFAULT 3")
+            .unwrap()
+            .def;
+        assert!(!eligible(
+            &added,
+            &cat,
+            "ALTER TABLE t ADD INDEX kn (n) COMMENT 'tarn:lazy'"
+        ));
+        assert!(!eligible(
+            &added,
+            &cat,
+            "ALTER TABLE t ADD INDEX kn (n), ADD INDEX kb (b, id) COMMENT 'tarn:lazy'"
+        ));
+        assert!(eligible(&added, &cat, "ALTER TABLE t ADD INDEX kn (n)"));
+        let added = alter(&def, &cat, "ALTER TABLE t ADD COLUMN n INT DEFAULT NULL")
+            .unwrap()
+            .def;
+        assert!(eligible(
+            &added,
+            &cat,
+            "ALTER TABLE t ADD INDEX kn (n) COMMENT 'tarn:lazy'"
+        ));
+        // As Cluster::alter_table sets the rebuild up: the new generation is
+        // allocated, and the descriptor names it among those made.
+        let mut ch = alter(&def, &cat, "ALTER TABLE t ADD INDEX kb (b, id) COMMENT 'tarn:lazy'").unwrap();
+        assert!(
+            rebuild_makes_lazy(&ch)
+                && !rebuild_makes_lazy(&alter(&def, &cat, "ALTER TABLE t ADD INDEX kb (b)").unwrap())
+        );
+        ch.engine_change = Some(EngineChange {
+            old_id: def.space_id,
+            old_ver: def.ver,
+            old_engine: def.engine,
+            old_name: def.space_name(),
+            rebuild: true,
+        });
+        ch.def.space_id = 800;
+        for ix in &mut ch.def.indexes {
+            if let Some(l) = ix.lazy.as_mut().filter(|l| l.space_id == 0) {
+                (l.space_id, l.ready) = (701, true);
+                ch.lazy_new.push(701);
+            }
+        }
+        ch.def.resolve_globals().unwrap();
+        let mut gens: Vec<(u32, u32)> = ch.def.lazy_specs().iter().map(|s| (s.gen, s.base_space_id)).collect();
+        gens.sort_unstable();
+        assert_eq!(gens, vec![(700, 800), (701, 800)]);
+        let args = lua_args(&ch, 7, 5.0);
+        let mut rd = Rd::new(&args);
+        let mut fields = std::collections::HashMap::new();
+        for _ in 0..rd.map().unwrap() {
+            let k = rd.string().unwrap().to_string();
+            fields.insert(k, rd.raw_value().unwrap().to_vec());
+        }
+        let mut made = Rd::new(&fields["lazy_made"]);
+        assert_eq!(made.array().unwrap(), 1);
+        assert_eq!(made.value().unwrap().as_i64(), Some(701));
+        // Its job builds the made generation, online, before the copy.
+        assert!(crate::lazy::job_lazy(&args).unwrap().0 && crate::lazy::job_makes_lazy(&args).unwrap());
+        // In place, the same change names no generation as made.
+        let mut in_place = alter(&def, &cat, "ALTER TABLE t ADD INDEX kb (b, id) COMMENT 'tarn:lazy'").unwrap();
+        in_place.lazy_new.push(701);
+        let args = lua_args(&in_place, 7, 5.0);
+        assert!(crate::lazy::job_lazy(&args).unwrap().0 && !crate::lazy::job_makes_lazy(&args).unwrap());
     }
 
     #[test]

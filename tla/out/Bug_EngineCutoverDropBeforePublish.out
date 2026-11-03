@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 104 and seed 4115731178662067609 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 5064] (Linux 6.18.44-fc-v185 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-lazy/tla/EngineCutover.tla
-Parsing file /tmp/tlc-6715976359380838777/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-6715976359380838777/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-6715976359380838777/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-6715976359380838777/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-6715976359380838777/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-6715976359380838777/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-6715976359380838777/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 129 and seed 9038260280636927981 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 29287] (Linux 6.18.44-fc-v230 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/EngineCutover.tla
+Parsing file /tmp/tlc-7160803711738769251/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-7160803711738769251/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-7160803711738769251/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-7160803711738769251/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-7160803711738769251/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-7160803711738769251/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-7160803711738769251/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-made/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,32 +19,44 @@ Semantic processing of module EngineCutover
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCutover
-Starting... (2026-11-02 19:21:30)
+Starting... (2026-11-02 21:41:11)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-11-02 19:21:30.
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Computed 32 initial states...
+Finished computing initial states: 36 distinct states generated at 2026-11-02 21:41:12.
 Error: Invariant CatalogHasSpace is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
 /\ lazyBase = [A |-> 1, B |-> 1]
+/\ keeps = FALSE
 /\ decision = "none"
 /\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
+/\ madeScanned = [A |-> FALSE, B |-> FALSE]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
 /\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
+/\ coordReady = FALSE
+/\ madePhase = [A |-> "absent", B |-> "absent"]
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
 /\ ackedOld = {}
 /\ auxReady = {}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
+/\ recordGone = {}
 /\ crashed = FALSE
 /\ lazyView = [A |-> "none", B |-> "none"]
+/\ madeBase = [A |-> 0, B |-> 0]
 /\ reused = FALSE
+/\ abortedRec = {}
 /\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
@@ -55,27 +67,34 @@ State 1: <Initial predicate>
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 2: <DropOriginal("A") line 142, col 5 to line 147, col 114 of module EngineCutover>
+State 2: <DropOriginal("A") line 188, col 5 to line 194, col 26 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
+/\ keeps = FALSE
 /\ decision = "none"
 /\ publishing = {}
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
+/\ madeScanned = [A |-> FALSE, B |-> FALSE]
 /\ counter = 2
 /\ oldRef = [A |-> 1, B |-> 1]
 /\ lazyAlive = [A |-> TRUE, B |-> TRUE]
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
+/\ coordReady = FALSE
+/\ madePhase = [A |-> "absent", B |-> "absent"]
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
 /\ ackedOld = {}
 /\ auxReady = {}
 /\ keptAlive = [A |-> TRUE, B |-> TRUE]
+/\ recordGone = {}
 /\ crashed = FALSE
 /\ lazyView = [A |-> "none", B |-> "none"]
+/\ madeBase = [A |-> 0, B |-> 0]
 /\ reused = FALSE
+/\ abortedRec = {}
 /\ nameGone = {}
 /\ spaces = [A |-> {2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
@@ -86,7 +105,7 @@ State 2: <DropOriginal("A") line 142, col 5 to line 147, col 114 of module Engin
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-3 states generated, 3 distinct states found, 1 states left on queue.
+38 states generated, 38 distinct states found, 36 states left on queue.
 The depth of the complete state graph search is 2.
-Finished in 00s at (2026-11-02 19:21:30)
-Trace exploration spec path: ./EngineCutover_TTrace_1793665289.tla
+Finished in 00s at (2026-11-02 21:41:12)
+Trace exploration spec path: ./EngineCutover_TTrace_1793673671.tla

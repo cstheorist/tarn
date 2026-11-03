@@ -147,18 +147,20 @@ function M.new(c)
             for _, t in box.space._tarn_lazy_defs:pairs() do
                 if t.phase ~= 'retired' then pending(t.base_id) end
             end
-            -- A copy that keeps its table's generations (tarn_engine.lua,
-            -- rebuild = 'lazy') binds them to its new space in the catalog's
-            -- transaction. Until then the new space is pending too, as an
-            -- engine change's is through its new generations' descriptors:
-            -- a registry read before that transaction is confirmed, and used
-            -- after it, refuses the new space's writes rather than take them
-            -- uncaptured.
+            -- A copy that keeps or makes its table's generations
+            -- (tarn_engine.lua, rebuild = 'lazy') binds them to its new
+            -- space in the catalog's transaction. Until then the new space
+            -- is pending too, as an engine change's is through its new
+            -- generations' descriptors: a registry read before that
+            -- transaction is confirmed, and used after it, refuses the new
+            -- space's writes rather than take them uncaptured.
             for _, m in box.space._tarn_meta:pairs({'engine:'}, {iterator = 'GE'}) do
                 if m.key:sub(1, 7) ~= 'engine:' then break end
                 local r = m.value
                 if type(r) == 'table' and r.phase ~= 'published' and r.phase ~= 'aborted'
-                   and type(r.kept_lazy) == 'table' and #r.kept_lazy > 0 and type(r.new_id) == 'number' then
+                   and type(r.new_id) == 'number'
+                   and ((type(r.kept_lazy) == 'table' and #r.kept_lazy > 0)
+                        or (type(r.made_lazy) == 'table' and #r.made_lazy > 0)) then
                     pending(r.new_id)
                 end
             end
@@ -599,7 +601,11 @@ function M.new(c)
     -- rebuild = 'lazy'): their targets, entries and outboxes name the
     -- generation, never the table's space. Only these records name the
     -- space: each generation's descriptor (_tarn_lazy_defs: base_id and
-    -- spec.base_space_id) and the capture, which publication moves.
+    -- spec.base_space_id) and the capture, which publication moves. A copy
+    -- that makes lazy indexes builds their generations as an ALTER in place
+    -- does, online against the old space, which the table's writes reach
+    -- until publication (L.made_def), and publication binds them with the
+    -- kept ones.
     --
     -- The generations bound to space sid: published, or not yet retired.
     function L.live(sid)
@@ -611,30 +617,88 @@ function M.new(c)
         end
         return out
     end
-    -- The generations a copy of space old_id into def.id keeps: every one
-    -- bound to old_id, published, ready and built, each as def.lazy names it,
-    -- the same but for the space. The list, or 1210.
+    -- The generations a copy of space old_id into def.id keeps, and those it
+    -- makes (made: the set of their gens). It keeps every generation bound
+    -- to old_id, published, ready and built, each as def.lazy names it, the
+    -- same but for the space. One it makes is not published, and either
+    -- absent still or built for old_id (L.made_def). The two lists, or 1210.
     local function identity_on(s, base)
         return mp.encode({s.gen, base, s.local_index_id, s.route_parts, s.key_fields,
                           s.key_types, s.pk_fields, s.pk_native_fields, s.pk_types, s.bucket_field})
     end
-    function L.keep(def, old_id)
+    function L.keep(def, old_id, made)
+        made = made or {}
         local live, published, online = {}, {}, box.space._tarn_lazy_online
         local cap = box.space._tarn_lazy_capture:get{old_id}
         for _, s in ipairs(cap and cap.specs or {}) do published[s.gen] = true end
         for _, gen in ipairs(L.live(old_id)) do live[gen] = true end
-        local out = {}
+        local kept, making, named = {}, {}, {}
         for _, s in ipairs(type(def.lazy) == 'table' and def.lazy or {}) do
-            local d = valid_spec(s) and s.base_space_id == def.id and live[s.gen] and box.space._tarn_lazy_defs:get{s.gen}
-            if not d or not published[s.gen] or d.base_id ~= old_id or d.phase ~= 'ready' or d.done ~= true
-               or (online ~= nil and online:get{s.gen} ~= nil)
-               or identity_on(d.spec, 0) ~= identity_on(s, 0) then
-                bad(1210, 'Malformed kept lazy index')
+            local valid = valid_spec(s) and s.base_space_id == def.id
+            if valid then named[s.gen] = true end
+            if valid and made[s.gen] then
+                local d = box.space._tarn_lazy_defs:get{s.gen}
+                if published[s.gen] or (d ~= nil and (d.base_id ~= old_id or d.phase == 'retired'
+                   or identity_on(d.spec, 0) ~= identity_on(s, 0))) then
+                    bad(1210, 'Malformed made lazy index')
+                end
+                making[#making + 1], live[s.gen] = s.gen, nil
+            else
+                local d = valid and live[s.gen] and box.space._tarn_lazy_defs:get{s.gen}
+                if not d or not published[s.gen] or d.base_id ~= old_id or d.phase ~= 'ready' or d.done ~= true
+                   or (online ~= nil and online:get{s.gen} ~= nil)
+                   or identity_on(d.spec, 0) ~= identity_on(s, 0) then
+                    bad(1210, 'Malformed kept lazy index')
+                end
+                kept[#kept + 1], live[s.gen] = s.gen, nil
             end
-            out[#out + 1], live[s.gen] = s.gen, nil
+        end
+        for gen in pairs(made) do
+            if not named[gen] then bad(1210, 'Malformed made lazy index') end
         end
         if next(live) ~= nil then bad(1210, 'A rebuild keeps every lazy index of its table') end
-        return out
+        return kept, making
+    end
+    -- def as the online build of a copy's made generations takes it: bound
+    -- to the old space old_id, whose rows the build scans and whose writes it
+    -- captures until publication (L.prepare, L.capture_start, L.bootstrap
+    -- read def.id and each spec's base).
+    function L.made_def(def, old_id)
+        local d = {}
+        for k, v in pairs(def) do d[k] = v end
+        d.id, d.lazy = old_id, {}
+        for i, original in ipairs(def.lazy or {}) do
+            local s = {}
+            for k, v in pairs(original) do s[k] = v end
+            s.base_space_id = old_id
+            d.lazy[i] = s
+        end
+        return d
+    end
+    -- ABORT of such a copy: the generations it made were never published,
+    -- so they retire, and a missing descriptor is written retired, which a
+    -- late start then refuses (L.prepare). Only generations bound to old_id
+    -- and not published there: never a kept one.
+    function L.retire_made(def, old_id, made)
+        L.invalidate()
+        local published, gens = {}, {}
+        local cap = box.space._tarn_lazy_capture:get{old_id}
+        for _, s in ipairs(cap and cap.specs or {}) do published[s.gen] = true end
+        for _, original in ipairs(def.lazy or {}) do
+            if made[original.gen] and not published[original.gen] and valid_spec(original) then
+                local d = box.space._tarn_lazy_defs:get{original.gen}
+                if d == nil then
+                    local spec = {}
+                    for k, v in pairs(original) do spec[k] = v end
+                    spec.base_space_id = old_id
+                    box.space._tarn_lazy_defs:insert{original.gen, old_id, def.ver or 0, 'retired', 0, spec,
+                                                    box.NULL, false}
+                elseif d.base_id == old_id then
+                    gens[#gens + 1] = original.gen
+                end
+            end
+        end
+        L.retire(gens)
     end
     -- Publication of such a copy, in the transaction that names def.id in
     -- the catalog: the kept generations are now bound to def.id.

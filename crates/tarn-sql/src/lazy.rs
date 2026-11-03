@@ -1102,11 +1102,29 @@ fn boolean(rd: &mut Rd<'_>) -> SqlResult<bool> {
 /// routing parts. A rebuild names the table's generations but keeps them:
 /// they are built, and their deliveries go on across its publication,
 /// since they name the generation, never the space (alter::rebuild_keeps_lazy).
+/// Those it makes (`lazy_made`) it builds as in place, online against the
+/// old space, before its copy (alter::rebuild_makes_lazy).
 pub(crate) fn job_lazy(args: &[u8]) -> SqlResult<(bool, f64, u32)> {
+    let (active, timeout, route_parts, _) = job_lazy_made(args)?;
+    Ok((active, timeout, route_parts))
+}
+
+/// Whether job `args` is a rebuild that makes lazy indexes, which it builds
+/// online before its copy rather than after it.
+pub(crate) fn job_makes_lazy(args: &[u8]) -> SqlResult<bool> {
+    Ok(job_lazy_made(args)?.3)
+}
+
+fn job_lazy_made(args: &[u8]) -> SqlResult<(bool, f64, u32, bool)> {
     let mut rd = Rd::new(args);
     let (mut active, mut timeout, mut route_parts, mut rebuild) = (false, 50.0f64, 1u32, false);
+    let mut made = false;
     for _ in 0..rd.map()? {
         match rd.string()?.as_str() {
+            "lazy_made" => {
+                let raw = rd.raw_value()?;
+                made = Rd::new(raw).array()? > 0;
+            }
             "engine_change" => {
                 for _ in 0..rd.map()? {
                     if rd.string()? == "rebuild" {
@@ -1156,7 +1174,13 @@ pub(crate) fn job_lazy(args: &[u8]) -> SqlResult<(bool, f64, u32)> {
         }
     }
     end(&rd)?;
-    Ok((active && !rebuild, timeout.clamp(1.0, 60.0), route_parts))
+    let made = made && rebuild;
+    Ok((
+        (active && !rebuild) || made,
+        timeout.clamp(1.0, 60.0),
+        route_parts,
+        made,
+    ))
 }
 
 fn decode_stats(d: &[u8]) -> SqlResult<StatsSample> {

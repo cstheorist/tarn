@@ -160,12 +160,20 @@ for i, engine in ipairs({'memtx', 'vinyl'}) do
 
     stop = true; writer:join()
     check(engine .. ': the writer met no other refusal', #failures == 0, failures)
-    ok(tarn_alter_prepare(name, alt, 3))
-    ok(tarn_lazy_bootstrap(name, alt, 3))
+    -- A takeover once the scan has ended, in the coordinator's order: its
+    -- start owns the incarnation, and the scan's next call finds it done.
+    local restarted = tarn_lazy_start(name, alt, 4)
+    local finished = tarn_lazy_bootstrap(name, alt, 4)
+    check(engine .. ': after the scan, a takeover\'s start owns the incarnation and finds the scan done',
+          restarted[1] == 'ok' and finished[1] == 'ok' and finished[2] == true
+          and box.space._tarn_lazy_defs:get{gen}.owner == 4 and tarn_lazy_bootstrap(name, alt, 3)[2] == 1412,
+          {restarted, finished})
+    ok(tarn_alter_prepare(name, alt, 4))
+    ok(tarn_lazy_bootstrap(name, alt, 4))
     check(engine .. ': its deliveries drain', wait(function()
-        local s = ok(tarn_lazy_bootstrap_status(name, alt, 3)); return s[2] and s[3] == 0
+        local s = ok(tarn_lazy_bootstrap_status(name, alt, 4)); return s[2] and s[3] == 0
     end))
-    ok(tarn_lazy_ready(name, alt, 3)); ok(tarn_alter_apply(name, alt, 3))
+    ok(tarn_lazy_ready(name, alt, 4)); ok(tarn_alter_apply(name, alt, 4))
     tarn.cfg.alter_check_rows = limit
     def = more
     check(engine .. ': publication moves the incarnation to the published capture',
