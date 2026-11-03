@@ -144,6 +144,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Terminal SQL errors remain available through `SHOW WARNINGS`, `SHOW
+  ERRORS` and the diagnostic counts, including failed preparation and
+  execution of prepared statements. Diagnostic retention respects the
+  session and gateway memory limits without replacing the original error
+  when its message cannot be retained
+  ([#135](https://github.com/cstheorist/tarn/issues/135)).
+
 - Aggregate result metadata describes the result rather than copying the
   source column's constraints. `MIN` and `MAX` are nullable even over a
   `NOT NULL` column; integer and decimal `SUM` report their widened decimal

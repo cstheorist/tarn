@@ -2343,12 +2343,8 @@ fn agg_type(a: &AggCall, src: &[ExprType], params: &[Value]) -> ExprType {
                 let c = sql.result_column("", "", true, false);
                 let length = if t.ty == C::Double {
                     23
-                } else if matches!(sql.base, BaseType::BigInt | BaseType::Decimal) {
-                    sql.exact_numeric_length().unwrap_or(c.length)
                 } else {
-                    // Smaller-integer extrema wire promotion/width needs its
-                    // own oracle qualification; retain the existing mapping.
-                    c.length
+                    sql.exact_numeric_length().unwrap_or(c.length)
                 };
                 t.metadata = metadata((c.flags & !column_flags::NUM) | column_flags::BINARY, length);
             }
@@ -3702,6 +3698,71 @@ mod tests {
                     actual.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn smaller_integer_aggregate_metadata_matches_reference() {
+        use tarn_common::{column_flags, CHARSET_BINARY};
+
+        let empty = Catalog::default();
+        let mut ctx = PlanCtx {
+            statistics: None,
+            catalog: &empty,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE widths (id INT PRIMARY KEY, a TINYINT, b TINYINT UNSIGNED, \
+             c SMALLINT, d SMALLINT UNSIGNED, e MEDIUMINT, f MEDIUMINT UNSIGNED, \
+             g INT, h INT UNSIGNED)",
+            &ctx,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        ctx.catalog = &cat;
+        let Stmt::Select(p) = plan(
+            "SELECT SUM(a),SUM(b),SUM(c),SUM(d),SUM(e),SUM(f),SUM(g),SUM(h), \
+             MIN(a),MAX(a),MIN(b),MAX(b),MIN(c),MAX(c),MIN(d),MAX(d), \
+             MIN(e),MAX(e),MIN(f),MAX(f),MIN(g),MAX(g),MIN(h),MAX(h) FROM widths",
+            &ctx,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        // All 24 wire fields captured on MariaDB 10.11.19 and MySQL 8.4.13.
+        // Extrema retain the source wire type and width; SUM grows precision
+        // and always clears UNSIGNED. Compare every flag without a mask.
+        let mut expected: Vec<_> = [26, 26, 28, 28, 31, 31, 33, 33]
+            .into_iter()
+            .map(|length| (ColumnType::NewDecimal, column_flags::BINARY, CHARSET_BINARY, length, 0))
+            .collect();
+        for (ty, length, unsigned) in [
+            (ColumnType::Tiny, 4, false),
+            (ColumnType::Tiny, 3, true),
+            (ColumnType::Short, 6, false),
+            (ColumnType::Short, 5, true),
+            (ColumnType::Int24, 9, false),
+            (ColumnType::Int24, 8, true),
+            (ColumnType::Long, 11, false),
+            (ColumnType::Long, 10, true),
+        ] {
+            let flags = column_flags::BINARY | if unsigned { column_flags::UNSIGNED } else { 0 };
+            expected.extend([(ty, flags, CHARSET_BINARY, length, 0); 2]);
+        }
+        assert_eq!(p.columns.len(), expected.len());
+        for (actual, expected) in p.columns.iter().zip(expected) {
+            assert_eq!(
+                (actual.ty, actual.flags, actual.charset, actual.length, actual.decimals),
+                expected,
+                "{}",
+                actual.name
+            );
         }
     }
 

@@ -254,8 +254,9 @@ pub struct SessionVars<'a> {
     pub collation_connection: &'a str,
     /// collation_server / collation_database: the default of new tables.
     pub collation_server: &'a str,
-    /// Warnings and notes of the last statement (warning_count).
+    /// Errors, warnings and notes of the last statement (warning_count).
     pub warning_count: usize,
+    pub error_count: usize,
 }
 
 /// A system variable name without `@@` and scope prefix, lower-cased.
@@ -350,7 +351,7 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         "log_bin" => Value::Int(0),
         "server_id" => Value::Int(1),
         "warning_count" => Value::Int(sv.warning_count as i64),
-        "error_count" => Value::Int(0),
+        "error_count" => Value::Int(sv.error_count as i64),
         "tarn_tree_checks" => Value::str(TREE_CHECKS_DEFAULT),
         "tarn_legacy_integrity" => Value::str("REJECT"),
         "tarn_lazy_read_your_writes" => Value::Int(0),
@@ -897,12 +898,12 @@ pub fn reads_diagnostics(sql: &str) -> bool {
 
 /// Capture only prior diagnostic counts before clearing the old messages.
 /// Other variables keep their normal evaluation order, including SET targets.
-pub fn capture_diagnostics(sql: &str, warning_count: usize) -> Option<String> {
+pub fn capture_diagnostics(sql: &str, warning_count: usize, error_count: usize) -> Option<String> {
     crate::prep::substitute_vars(sql, true, &mut |reference| {
         if let crate::prep::VarRef::System(name) = reference {
             return match sysvar_name(name).as_str() {
                 "warning_count" => Some(warning_count.to_string()),
-                "error_count" => Some("0".into()),
+                "error_count" => Some(error_count.to_string()),
                 _ => None,
             };
         }
@@ -1286,20 +1287,20 @@ mod tests {
             assert!(!reads_diagnostics(sql), "{sql}");
         }
         assert_eq!(
-            capture_diagnostics("SET @wc=@@warning_count, @x=@@error_count", 70).as_deref(),
-            Some("SET @wc=70, @x=0")
+            capture_diagnostics("SET @wc=@@warning_count, @x=@@error_count", 70, 3).as_deref(),
+            Some("SET @wc=70, @x=3")
         );
         assert_eq!(
-            capture_diagnostics("SELECT @@warning_count+0", 70).as_deref(),
+            capture_diagnostics("SELECT @@warning_count+0", 70, 3).as_deref(),
             Some("SELECT 70+0")
         );
         assert_eq!(
-            capture_diagnostics("INSERT IGNORE INTO t VALUES(1,@@warning_count)", 70).as_deref(),
+            capture_diagnostics("INSERT IGNORE INTO t VALUES(1,@@warning_count)", 70, 3).as_deref(),
             Some("INSERT IGNORE INTO t VALUES(1,70)")
         );
-        assert_eq!(capture_diagnostics("SET @@warning_count=7", 70), None);
+        assert_eq!(capture_diagnostics("SET @@warning_count=7", 70, 3), None);
         assert_eq!(
-            capture_diagnostics("SELECT '@@warning_count' /* @@error_count */", 70),
+            capture_diagnostics("SELECT '@@warning_count' /* @@error_count */", 70, 3),
             None
         );
     }
@@ -1319,6 +1320,7 @@ mod tests {
             collation_connection: "utf8mb4_bin",
             collation_server: "utf8mb4_bin",
             warning_count: 0,
+            error_count: 0,
         };
         for (name, value) in [
             ("@@GLOBAL.transaction_isolation", Value::str("READ-COMMITTED")),

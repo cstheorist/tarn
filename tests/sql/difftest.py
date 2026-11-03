@@ -346,9 +346,11 @@ CASES = [
     ("SELECT id FROM t1 WHERE id = (SELECT id FROM t2)", "err"),
     # errors
     ("SELECT nope FROM t1", "err"),
+    ("SELECT @@warning_count, @@error_count", "rows"),
     ("SELECT * FROM missing_table", "err"),
     ("SELEC 1", "err"),
     ("INSERT INTO t1 (id, a) VALUES (1, 1)", "err"),
+    ("SELECT @@warning_count, @@error_count", "rows"),
     ("INSERT INTO t2 (id, qty) VALUES (500, NULL)", "err"),
     # DML
     ("INSERT INTO t1 (id, a, b) VALUES (100, 1, 'new'), (101, NULL, 'newer')", "dml:t1"),

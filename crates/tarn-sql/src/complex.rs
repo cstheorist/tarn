@@ -392,7 +392,7 @@ impl Session {
     }
 
     fn query_boxed(&mut self, sql: String) -> BoxFut<'_, SqlResult<Output>> {
-        Box::pin(async move { self.query(&sql).await })
+        Box::pin(async move { self.query_nested(&sql).await })
     }
 
     fn eval_set<'a>(&'a mut self, e: &'a A::SetExpr) -> BoxFut<'a, SqlResult<(Arc<[Column]>, Vec<Vec<Value>>)>> {

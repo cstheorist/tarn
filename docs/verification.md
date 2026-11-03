@@ -3409,6 +3409,14 @@ probe. Offline negative controls reject altered types, descriptors,
 errors, diagnostics and path counters. Observation-only runs retain
 discrepancies and cannot establish a release pass.
 
+The [reference receipt](../tests/contracts/typed-read-oracles/41727780239/receipt.json)
+and compressed raw capture retain 33 cases on MariaDB 10.11.19 and MySQL
+8.4.13. This reference-only run qualifies the fixture and binary decoder;
+it does not establish Tarn correctness or pushdown performance. The
+references agree on the captured integer aggregate descriptors, including
+smaller-integer extrema widths, and differ on DOUBLE extrema display
+length (MariaDB 23, MySQL 22).
+
 The performance matrix starts fresh storage processes after the correctness
 fixture exits. It checks effective test flags on every replica before and
 after measurement, along with RF3 membership, synchronous user spaces and

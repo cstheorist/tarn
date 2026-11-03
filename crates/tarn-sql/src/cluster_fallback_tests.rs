@@ -7,6 +7,35 @@ use super::test_support as common;
 const MARK: u32 = 1; // Session's autocommit native-unavailable mark.
 
 #[tokio::test]
+async fn terminal_column_and_duplicate_errors_are_session_diagnostics() {
+    let (_t, _c, _control, mut s) = setup(1).await;
+    for sql in [
+        "SELECT missing FROM t",
+        "SELECT 1 UNION ALL SELECT missing FROM t",
+        "INSERT INTO t VALUES (1, 9)",
+    ] {
+        let error = s.query(sql).await.unwrap_err();
+        assert_eq!(error.code, if sql.starts_with("SELECT") { 1054 } else { 1062 });
+        assert_eq!(s.warning_count(), 1);
+        assert_eq!(s.warnings().len(), 1);
+        let warning = &s.warnings()[0];
+        assert_eq!(
+            (warning.level, warning.code, warning.message.as_str()),
+            ("Error", error.code, error.message.as_str())
+        );
+    }
+    let error = s.prepare(1, "SELECT missing FROM t").unwrap_err();
+    assert_eq!((error.code, error.sqlstate), (1054, *b"42S22"));
+    assert_eq!((s.warnings()[0].level, s.warnings()[0].code), ("Error", 1054));
+    s.prepare(2, "INSERT INTO t VALUES (?, ?)").unwrap();
+    let error = s.execute(2, &[Value::Int(1), Value::Int(9)]).await.unwrap_err();
+    assert_eq!((error.code, error.sqlstate), (1062, *b"23000"));
+    assert_eq!((s.warnings()[0].level, s.warnings()[0].code), ("Error", 1062));
+    assert_eq!(s.warnings()[0].message, error.message);
+    assert_eq!(value(&mut s).await, 0);
+}
+
+#[tokio::test]
 async fn uncertain_native_reply_never_replays_a_committed_increment() {
     for mode in [
         "malformed_error",

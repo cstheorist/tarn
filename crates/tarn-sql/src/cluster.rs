@@ -1166,6 +1166,11 @@ pub async fn detect_deadlocks(c: &Arc<Cluster>) {
 }
 
 impl Cluster {
+    #[cfg(test)]
+    pub(crate) fn without_connections(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
+        Self::configured(cfg)
+    }
+
     fn configured(mut cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
         cfg.load_credentials()
             .map_err(|e| SqlError::internal(format!("storage credentials/TLS: {e}")))?;
