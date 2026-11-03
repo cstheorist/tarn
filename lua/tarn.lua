@@ -8124,6 +8124,7 @@ BK.production_functions = {
         'tarn_engine_capabilities',
         'tarn_engine_counter_alias',
         'tarn_engine_decision',
+        'tarn_engine_durable_capabilities',
         'tarn_engine_rebuild_aux_capabilities',
         'tarn_engine_rebuild_capabilities',
         'tarn_engine_rebuild_format_capabilities',
@@ -8273,6 +8274,10 @@ function tarn_engine_rebuild_lazy_capabilities() return {'ok', 1} end
 -- against the old space and published with the kept ones. A node that
 -- answers only the calls above refuses the job before its copy begins.
 function tarn_engine_rebuild_lazy_made_capabilities() return {'ok', 1} end
+-- A copy that keeps its capture durably too (engine_change.durable, issue
+-- #184): every leader must note its writes there. The SQL server asks for
+-- it only when every replica answers.
+function tarn_engine_durable_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()
     return M.engine.decision(name, old_id, new_id, ver, gen)

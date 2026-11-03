@@ -2169,6 +2169,7 @@ impl Cluster {
                     old_engine: def.engine,
                     old_name: def.space_name(),
                     rebuild: true,
+                    durable: false,
                 });
             }
             if ch.engine_change.is_some() {
@@ -2177,6 +2178,21 @@ impl Cluster {
                 // (copy_index_builds checked a rebuild's).
                 if !rebuild {
                     self.require_engine_capabilities().await?;
+                }
+                // The copy keeps its capture durably only when every replica
+                // can note its writes there: a leader that can't would leave a
+                // resume after it short of them (issue #184).
+                let lacking = self.replica_not_answering("tarn_engine_durable_capabilities").await;
+                if let Some(addr) = &lacking {
+                    tracing::info!(
+                        table = %def.space_name(),
+                        replica = %addr,
+                        "the table's copy keeps its capture in memory only: a replica does not answer \
+                         tarn_engine_durable_capabilities, and a failover restarts the copy"
+                    );
+                }
+                if let Some(engine) = ch.engine_change.as_mut() {
+                    engine.durable = lacking.is_none();
                 }
                 ch.def.counter_id = Some(def.counter_space_id());
                 ch.def.space_id = self.alloc_space_ids(1).await?;
@@ -2295,6 +2311,19 @@ impl Cluster {
             }
         }
         true
+    }
+
+    /// A replica of a shard that does not answer capability procedure `func`
+    /// with `{'ok', 1}`, if any.
+    async fn replica_not_answering(&self, func: &str) -> Option<String> {
+        for shard in self.live_shards() {
+            for addr in self.shards[shard].replicas() {
+                if !self.replica_answers_v1(addr, func).await {
+                    return Some(addr.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Whether the storage node at `addr` answers capability procedure

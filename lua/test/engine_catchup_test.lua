@@ -101,7 +101,8 @@ local function table_and_copy(engine, tag, count)
     nd.indexes[#nd.indexes + 1] = {name = 'c_u', unique = true, parts = {c_part}}
     t.args = {ver = 1, timeout = 5, def = nd, uix = {}, uix_drop = {}, lazy_drop = {},
         builds = {{12, 'c_u', true, {c_part}}}, drop = {}, renames = {},
-        engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = true}}
+        engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = true,
+            durable = true}}
     ok(tarn_job_begin({owner = t.owner, kind = 'alter', space = t.name, names = {t.name}, ver = 1,
         a = t.args, phase = 'prepare'}, 0))
     jobs[t.owner] = t
@@ -310,9 +311,11 @@ local function exercise(engine)
         and image(t), {built, build_passes, prepared, record(t).passes})
     decide(t, 'apply'); ok(call('apply', t)); end_job(t)
     restore()
-    -- The copy's restarts count until it reaches the end of the table: ten
-    -- BUILDs, each after a capture loss, each copy the table again; but a
-    -- capture lost eight times before the copy gets there fails the change.
+    -- Ten BUILDs, each after a capture loss, each resume from the durable
+    -- capture (lua/test/engine_resume_test.lua). The copy's restarts count
+    -- until it reaches the end of the table: a capture that writes outgrow
+    -- eight times before the copy gets there, past its limits in the durable
+    -- capture too, fails the change.
     restore = set{engine_copy_rows = 4, engine_fence_keys = 0}
     t = table_and_copy(engine, 'losses', 40)
     local outcomes = {}
@@ -322,21 +325,23 @@ local function exercise(engine)
         tarn.engine.invalidate(true)
     end
     prepared = call('prepare', t)
-    check(label('ten BUILDs, each after a capture loss, each copy the table again'),
-        table.concat(outcomes, ',') == string.rep('ok,', 9) .. 'ok' and prepared[1] == 'ok' and image(t),
-        {outcomes, prepared})
+    check(label('ten BUILDs, each after a capture loss, resume from the durable capture'),
+        table.concat(outcomes, ',') == string.rep('ok,', 9) .. 'ok' and prepared[1] == 'ok' and image(t)
+        and (record(t).resumes or 0) >= 10, {outcomes, prepared, record(t).resumes})
     decide(t, 'apply'); ok(call('apply', t)); end_job(t)
+    restore()
+    restore = set{engine_copy_rows = 4, engine_dirty_keys = 4, engine_fence_keys = 0}
     t = table_and_copy(engine, 'lost_often', 40)
     for i = 1, 8 do
         hook('engine_copy', 'hold')
         if i == 1 then building = spawn(function() return call('build', t) end) end
         hook('engine_copy', 'reached')
-        tarn.engine.invalidate(true)
+        for k = 1, 5 do ok(write(t, {{'update', t.old_id, {k}, {{'=', 2, 100000 + i * 10 + k}}}})) end
         hook('engine_copy', 'release')
     end
     built = join(building)
     decide(t, 'abort'); ended = call('abort', t); end_job(t)
-    check(label('a capture lost eight times before the copy reaches the end of the table fails the change'),
+    check(label('a capture that writes outgrow eight times before the copy reaches the end of the table fails the change'),
         built[1] ~= 'ok' and built[2] == 1205 and tostring(built[3]):find('repeatedly') ~= nil and ended[1] == 'ok',
         {built, ended})
     restore()
@@ -605,7 +610,8 @@ local function exercise(engine)
         and box.space[t.new_id] == nil, {built, ended})
     restore()
 
-    -- A capture lost after a pass: the copy starts over, with a new capture.
+    -- A capture lost after a pass: the copy resumes from the durable capture
+    -- (lua/test/engine_resume_test.lua).
     restore = set{engine_copy_rows = 4, engine_catchup_keys = 2, engine_fence_keys = 0}
     t = table_and_copy(engine, 'lost', 40)
     hook('engine_copy', 'hold')
@@ -621,14 +627,14 @@ local function exercise(engine)
     built = join(building)
     if built[1] ~= 'ok' then built = call('build', t) end
     prepared = built[1] == 'ok' and call('prepare', t) or built
-    check(label('a capture lost after a pass starts the copy over, which is then exact'),
-        built[1] == 'ok' and prepared[1] == 'ok' and record(t).capture ~= first and image(t),
-        {built, prepared, first, record(t).capture})
+    check(label('a capture lost after a pass resumes the copy, which is then exact'),
+        built[1] == 'ok' and prepared[1] == 'ok' and record(t).capture == first and (record(t).resumes or 0) >= 1
+        and image(t), {built, prepared, first, record(t)})
     decide(t, 'apply'); ok(call('apply', t)); end_job(t)
     restore()
 
     -- A capture lost during a pass fails it for now (1213), and the call sent
-    -- again starts the copy over.
+    -- again resumes the copy.
     restore = set{engine_copy_rows = 4, engine_catchup_keys = 1, engine_fence_keys = 0}
     t = table_and_copy(engine, 'lost_during', 40)
     hook('engine_copy', 'hold')
@@ -644,9 +650,9 @@ local function exercise(engine)
     failed = join(building)
     built = call('build', t)
     prepared = built[1] == 'ok' and call('prepare', t) or built
-    check(label('a capture lost during a pass fails it for now, and the copy starts over, exact'),
+    check(label('a capture lost during a pass fails it for now, and the call sent again resumes the copy, exact'),
         failed[1] ~= 'ok' and failed[2] == 1213 and built[1] == 'ok' and prepared[1] == 'ok'
-        and record(t).capture ~= first and image(t), {failed, built, prepared})
+        and record(t).capture == first and (record(t).resumes or 0) >= 1 and image(t), {failed, built, prepared})
     decide(t, 'apply'); ok(call('apply', t)); end_job(t)
     restore()
 

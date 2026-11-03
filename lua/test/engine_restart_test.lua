@@ -108,6 +108,10 @@ local function audit(extra)
         local row = assert(target:get{i}); assert(#row == 3 and row[2] == i * 10 and row[3] == 1)
     end
     if extra then assert(target:get{0}[2] == 777) else assert(target:get{0} == nil) end
+    for _, s in box.space._space.index.name:pairs({'_tarn_engine_capture_'}, {iterator = 'GE'}) do
+        assert(s.name:sub(1, 21) ~= '_tarn_engine_capture_', 'a durable capture survived cleanup')
+        break
+    end
     assert(box.space._tarn_catalog:get{name}.def.id == new_id)
     assert(receipt().phase == 'published' and receipt().cleaned == true)
     assert(box.space._tarn_meta:get{'hold:' .. old_id} == nil)
@@ -130,7 +134,7 @@ if stage == 'crash' then
     source:create_index('bucket_id', {id = 7, unique = false, parts = {{3, 'unsigned'}}})
     for i = 1, count do source:insert{i, i * 10, 1} end
     a = {ver = 5, timeout = 8, engine_change = {old_id = old_id, old_ver = 0,
-        old_engine = source_engine, old_name = name}, uix = {}, uix_drop = {}, lazy_drop = {},
+        old_engine = source_engine, old_name = name, durable = true}, uix = {}, uix_drop = {}, lazy_drop = {},
         def = {id = new_id, name = name, engine = target_engine, ver = 5, lazy = {},
             format = format, indexes = indexes, json = json.encode{space_id = new_id, ver = 5}}}
     box.space._tarn_meta:replace{'test:engine_restart', {a = a, owner = owner, scenario = scenario}}
@@ -164,12 +168,19 @@ elseif stage == 'finish' then
     local gen = takeover[2]; assert(gen == 2)
     if scenario == 'copy' then
         assert(receipt().copied == 128 and box.space[new_id].index[0]:count() == 128)
+        local token = receipt().capture
         -- A successful write behind the old cursor must survive loss of
-        -- volatile dirty keys. Continuing the old cursor would miss it.
+        -- volatile dirty keys. The restart lost the capture in memory; the
+        -- durable one notes the write, and BUILD rebuilds the capture from it
+        -- and goes on from the cursor, which leaves the row to the final pass.
         ok(tarn_autocommit({{'insert', old_id, {0, 777, 1}}}, {fence = {old_id, 0}}))
         local worker, result = held('engine_copy', function() return tarn_alter_build(name, a, gen) end)
-        assert(box.space[new_id].index[0]:count() == 128 and box.space[new_id]:get{0} ~= nil,
-            'capture loss did not clear and recopy the shadow from its beginning')
+        local track = tarn.engine.tracks[old_id]
+        assert(receipt().capture == token and receipt().resumes == 1 and track and track.valid
+            and #track.list == 1 and track.list[1][1] == 0,
+            'capture loss did not resume the copy from the durable capture')
+        assert(box.space[new_id].index[0]:count() == 256 and box.space[new_id]:get{0} == nil,
+            'the resumed copy did not go on from its cursor')
         released('engine_copy', worker, result)
         ok(tarn_alter_prepare(name, a, gen)); ok(tarn_job_phase(resumed, 'apply'))
     elseif scenario == 'prepared' then

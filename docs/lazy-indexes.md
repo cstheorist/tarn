@@ -400,6 +400,26 @@ ALTER failed with 1205 when the first call took longer than that deadline
 and the lock wait (50 s) together: once in three runs of vinyl at this
 size.
 
+**With a durable capture.** A copy also keeps the keys written during it
+in a space of the table's engine (#184), so that a copy whose leader
+changes or restarts resumes instead of starting over. Each write to the
+table during a copy writes one row more, its key's entry, in its own
+transaction. The same benchmark at 200,000 rows per shard, with the capture
+in memory only and with it durable as well (three runs each on memtx, two
+on vinyl, alternating):
+
+| Engine | Capture | ALTER | Writes to the table during it | p50 | p99 |
+|---|---|---:|---:|---:|---:|
+| memtx | in memory | 19.5 to 20.2 s | 609 to 631 | 29.4 to 31.3 ms | 60.0 to 63.2 ms |
+| memtx | durable too | 19.9 to 20.3 s | 601 to 620 | 30.7 to 31.9 ms | 56.6 to 72.2 ms |
+| vinyl | in memory | 24.9 to 25.7 s | 1,033 to 1,088 | 22.2 to 22.5 ms | 49.4 to 54.5 ms |
+| vinyl | durable too | 24.4 to 24.5 s | 1,051 to 1,057 | 21.2 to 21.7 ms | 50.3 to 50.9 ms |
+
+The differences are within the runs' spread here, where a write waits for
+fsync and a quorum. On one node without fsync, through the Lua procedures,
+a write to a table under copy took about 15 µs more on memtx (219 to
+234 µs on average) and 37 µs more on vinyl (226 to 263 µs).
+
 Other changes build the index behind PREPARE's fence: an index on a column
 the ALTER adds or retypes, a backfill, an engine change, and any change on
 storage nodes from before #184. That build can pause writes while it scans

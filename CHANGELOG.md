@@ -274,6 +274,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reaches the end of the table
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
+- A table copy (an engine change, or an `ALTER TABLE` that copies) started
+  over when its leader changed or restarted before PREPARE, since it kept
+  the keys written to the table during it only in memory. It now also keeps
+  them durably, in the write's own transaction, with the generation of the
+  catch-up passes they were written in, and a pass records the generation
+  it settled. A copy whose capture is lost rebuilds it from the keys above
+  that generation, once the writes in flight have ended, and goes on from
+  its cursor, also behind its fence. Each write to the table during a copy
+  writes one row more, and passes delete the entries they settled once
+  there are many. The SQL server asks for this only when every replica can
+  note its writes (`tarn_engine_durable_capabilities`), and logs a replica
+  that can't. `tla/EngineCopy.tla` models the durable capture, with ten
+  controls TLC must fail ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
 - A `COUNT` or aggregate read that yielded while a table copy was published
   could fail with a storage error (1105, "attempt to index a nil value")
   instead of running again. Both engine changes and ALTERs that copy the

@@ -25,7 +25,7 @@ local function key(sid) return 'engine:' .. sid end
 
 function M.new(c)
     local E = {stale = true, epoch = 0, capture_epoch = 0, tracks = {}, triggers = {}, records = {},
-        excluded = {}, by_space = {}, missing_ids = {}}
+        excluded = {}, by_space = {}, missing_ids = {}, durable = {}}
     local mark
     local q = require('tarn_lazy_meter').new{cfg = c.cfg, atomic = c.atomic,
         scan = function() return {0, 0, 0, 0} end,
@@ -66,6 +66,7 @@ function M.new(c)
            or (x.rebuild ~= nil and x.rebuild ~= true and x.rebuild ~= 'layout' and x.rebuild ~= 'aux'
                and x.rebuild ~= 'lazy')
            or (x.old_engine == a.def.engine) ~= (x.rebuild ~= nil) or a.def.name ~= x.old_name
+           or (x.durable ~= nil and type(x.durable) ~= 'boolean')
            or (not nilish(a.lazy_made) and (x.rebuild ~= 'lazy' or type(a.lazy_made) ~= 'table'
                                              or a.materialize == true)) then
             fail(1210, 'Malformed engine-change descriptor')
@@ -348,7 +349,43 @@ function M.new(c)
             end
         end
     end
+    -- A copy's durable capture (issue #184, tla/EngineCopy.tla): every key
+    -- written to the source during the copy, in a space of the source's
+    -- engine (so in the write's own transaction), with the generation it
+    -- was written in (E.durable[sid].gen). A key is in it exactly when a
+    -- committed write touched it since the capture began: a write rolled
+    -- back leaves nothing, and a write that can't note its key fails. A
+    -- replica's applier notes nothing; the leader's rows arrive with the
+    -- write. Its holes, in a space of the shadow's engine: the keys whose
+    -- copies the copy took out of the shadow by the holder rule, noted in
+    -- the same transaction, with the generation then. The in-memory capture
+    -- below is its mirror on this leader: the keys of the writes since the
+    -- last pass's swap, noted when the statement runs, rolled back or not.
+    -- A pass rereads the keys up to its generation, then records it in the
+    -- job's record (settled), so the keys above it are those written since.
+    -- A pass, and the final pass, clear and reread only the keys the durable
+    -- capture notes above that (noted): the others' writes rolled back, and
+    -- their copies are the source's rows. A BUILD that finds the mirror
+    -- lost, on a new leader or after a status change, rebuilds it from the
+    -- keys and holes above the settled generation (resume) instead of
+    -- copying the table again.
     local function capture(sid, old, new)
+        local d = E.durable[sid]
+        if d ~= nil and box.session.type() ~= 'applier' then
+            local sp = box.space[d.id]
+            if sp ~= nil and sp.name == d.name then
+                local kd, last = c.key_def(sid, 0), nil
+                for _, row in ipairs({old or false, new or false}) do
+                    if row then
+                        local encoded = mp.encode(kd:extract_key(row):totable())
+                        if encoded ~= last then
+                            sp:replace{encoded, d.gen}; last = encoded
+                            d.noted = d.noted + 1
+                        end
+                    end
+                end
+            end
+        end
         local t = E.tracks[sid]
         if not capture_valid(t) then return end
         -- A failing allocation may already have changed keys but not list
@@ -362,6 +399,116 @@ function M.new(c)
     local function captured(t, sid, row)
         return t.keys[mp.encode(c.key_def(sid, 0):extract_key(row):totable())] ~= nil
     end
+    -- The durable capture's spaces are named after the capture's token: a
+    -- capture an older node started (it has no such spaces) is never taken
+    -- for its own.
+    local DURABLE, HOLES = '_tarn_engine_capture_', '_tarn_engine_holes_'
+    local function durable_name(old_id, token) return DURABLE .. old_id .. '_' .. (token:gsub('-', '')) end
+    local function holes_name(old_id, token) return HOLES .. old_id .. '_' .. (token:gsub('-', '')) end
+    local function durable_of(r)
+        if type(r.capture) ~= 'string' or r.capture == '' then return nil end
+        return box.space[durable_name(r.old_id, r.capture)], box.space[holes_name(r.old_id, r.capture)]
+    end
+    -- E.durable[sid]: the durable capture the writes to sid note their keys
+    -- in, {id, name, gen, holes = {id, name}}, while its space is there,
+    -- with the number of keys it noted since it was bound or pruned (noted).
+    local function bound_durable(sid)
+        local d = E.durable[sid]
+        local sp = d and box.space[d.id]
+        return sp ~= nil and sp.name == d.name and d or nil
+    end
+    local function bind_durable(sid, sp, hp)
+        local d = bound_durable(sid)
+        if d == nil or d.id ~= sp.id then d = {id = sp.id, name = sp.name, gen = 1, noted = 0}; E.durable[sid] = d end
+        if hp ~= nil then d.holes = {id = hp.id, name = hp.name} end
+        return d
+    end
+    -- The durable capture of capture t, and its holes, or nil.
+    local function durable_for(x, t)
+        local d = bound_durable(x.old_id)
+        if d == nil or t == nil or d.name ~= durable_name(x.old_id, t.token) or d.holes == nil then return nil end
+        local h = box.space[d.holes.id]
+        if h == nil or h.name ~= d.holes.name then return nil end
+        return d, box.space[d.id], h
+    end
+    -- A copy the holder rule takes out of the shadow, in that transaction.
+    local function hole(x, t, key)
+        local d, _, h = durable_for(x, t)
+        if d ~= nil then h:replace{mp.encode(key), d.gen}; d.noted = d.noted + 1 end
+    end
+    -- Each page of a durable capture's space ({key, generation} each), read
+    -- confirmed a page per read, to fn(page), until it returns false.
+    local function pages(space, fn)
+        local after = nil
+        repeat
+            local page = read(function()
+                local out = {}
+                local from, opts = {}, {iterator = 'ALL'}
+                if after ~= nil then from, opts.iterator = {after}, 'GT' end
+                for _, e in space.index[0]:pairs(from, opts) do
+                    out[#out + 1] = {e[1], e[2]}
+                    if #out >= 1024 then break end
+                end
+                return out
+            end)
+            if #page > 0 then after = page[#page][1] end
+            if fn(page) == false then return false end
+            fiber.sleep(0)
+        until #page < 1024
+        return true
+    end
+    -- The keys of list the durable capture notes above the settled
+    -- generation, a key in it or a hole (all of them without one).
+    local function noted(x, t, list, settled)
+        local d, w, h = durable_for(x, t)
+        if d == nil then return list end
+        local out = {}
+        for offset = 1, #list, 128 do
+            read(function()
+                for i = offset, math.min(offset + 127, #list) do
+                    local key = mp.encode(list[i])
+                    local e, o = w:get{key}, h:get{key}
+                    if (e ~= nil and e[2] > settled) or (o ~= nil and o[2] > settled) then
+                        out[#out + 1] = list[i]
+                    end
+                end
+            end)
+            fiber.sleep(0)
+        end
+        return out
+    end
+    -- Its id is below the SQL server's, from 10001 up: an automatic one,
+    -- past the largest there is, would take the next the SQL server gives a
+    -- table (as for _tarn_alter_undo in lua/tarn.lua). Synchronous, as every
+    -- _tarn_ space of a replicated shard is (lua/tarn_fresh.lua).
+    local function create_durable(name, engine)
+        for id = box.schema.SYSTEM_ID_MAX + 1, 9999 do
+            if box.space[id] == nil then
+                c.writable()
+                local ok, sp = pcall(box.schema.space.create, name, {id = id, engine = engine,
+                    is_sync = c.cfg.sync, format = {{name = 'key', type = 'string'}, {name = 'gen', type = 'unsigned'}}})
+                -- (Another space may have taken the id meanwhile.)
+                if ok then
+                    sp:create_index('primary', {parts = {{1, 'string'}}})
+                    return sp
+                end
+                if box.space[id] == nil then error(sp) end
+            end
+        end
+        fail(1041, 'No free internal space id for a copy\'s durable capture')
+    end
+    local function drop_durables(old_id)
+        local ids = {}
+        for _, prefix in ipairs({DURABLE .. old_id .. '_', HOLES .. old_id .. '_'}) do
+            for _, s in box.space._space.index.name:pairs({prefix}, {iterator = 'GE'}) do
+                if s.name:sub(1, #prefix) ~= prefix then break end
+                ids[#ids + 1] = s.id
+            end
+        end
+        for _, id in ipairs(ids) do
+            if box.space[id] ~= nil then c.writable(); box.space[id]:drop() end
+        end
+    end
     local function attach(sid)
         local sp = box.space[sid]
         if sp ~= nil and E.triggers[sid] == nil then
@@ -373,7 +520,7 @@ function M.new(c)
     local function detach(sid)
         local fn, sp = E.triggers[sid], box.space[sid]
         if fn ~= nil and sp ~= nil then sp:on_replace(nil, fn) end
-        E.triggers[sid], E.tracks[sid] = nil, nil
+        E.triggers[sid], E.tracks[sid], E.durable[sid] = nil, nil, nil
     end
     function E.invalidate(loss)
         E.epoch = E.epoch + 1
@@ -413,6 +560,23 @@ function M.new(c)
                         excluded[id], by_space[id] = true, {record = r}
                     end
                     attach(sid)
+                    -- The durable capture of the record's token, bound before
+                    -- a write is admitted here, unless one is bound: a reset
+                    -- binds its new one before it records its token, and the
+                    -- record read above may be older. The writes from now on
+                    -- take a generation above the settled ones. (Only while
+                    -- the copy takes writes and may resume: a copy that starts
+                    -- over or aborts drops its durable capture once the writes
+                    -- noting their keys there have ended, and one behind its
+                    -- fence takes no writes.)
+                    if r.phase == 'copying' or r.phase == 'copied' then
+                        local d = bound_durable(sid)
+                        if d == nil then
+                            local sp, hp = durable_of(r)
+                            d = sp ~= nil and bind_durable(sid, sp, hp) or nil
+                        end
+                        if d ~= nil then d.gen = math.max(d.gen, (r.settled or 0) + 1) end
+                    end
                 end
             end
             c.writable()
@@ -586,12 +750,30 @@ function M.new(c)
     end
     local function reset(a, gen, deadline)
         local x = bound(a)
+        -- The copy starts over. Once its record says so (no step resumes it
+        -- then), the writes note nothing in its durable capture, and the cut
+        -- waits for those that did: none meets the drop of its spaces below,
+        -- which would abort it. (Not before: a reset that failed after it
+        -- would leave writes that a resume of the same capture misses.)
+        ready(deadline)
+        update(a, gen, nil, function(v) v.phase = 'resetting' end)
+        E.durable[x.old_id] = nil
         cut(deadline)
-        local t = {token = tostring(uuid.new()), valid = true, epoch = E.capture_epoch, keys = {}, list = {}, bytes = 0}
+        -- The durable capture first, empty (an earlier one's keys concern a
+        -- copy that starts over), so that a write the mirror notes is in it.
+        local token = tostring(uuid.new())
+        drop_durables(x.old_id)
+        -- (Only when the SQL server found every replica able to note its
+        -- writes there: engine_change.durable.)
+        if x.durable == true then
+            local d = create_durable(durable_name(x.old_id, token), x.old_engine)
+            bind_durable(x.old_id, d, create_durable(holes_name(x.old_id, token), a.def.engine))
+        end
+        local t = {token = token, valid = true, epoch = E.capture_epoch, keys = {}, list = {}, bytes = 0}
         E.tracks[x.old_id] = t; attach(x.old_id)
         local r = update(a, gen, nil, function(v)
             v.phase, v.cursor, v.copied, v.capture = 'resetting', box.NULL, 0, t.token
-            v.resets = (v.resets or 0) + 1
+            v.resets, v.settled = (v.resets or 0) + 1, 0
         end)
         local sp = box.space[r.new_id]
         if sp ~= nil then
@@ -624,6 +806,48 @@ function M.new(c)
             end
         end
     end
+    -- The durable capture's entries and holes up to the settled generation
+    -- are its no longer: a resume, and a pass, skip them. Once a binding
+    -- has noted more than twice the mirror's limit of keys (d.noted), a pass
+    -- that settled deletes them, so that the durable capture holds about the
+    -- keys of the writes since the passes before, and a resume reads that
+    -- much. Each delete reads its entry first, in the delete's transaction:
+    -- a write that notes the key again commits before it, and its newer
+    -- entry is the one read, which stays; or after it, and puts its entry
+    -- back; or the delete's transaction fails with a conflict (memtx MVCC
+    -- and vinyl alike). Best effort: an entry left is one a resume skips,
+    -- and the spaces go when the copy ends.
+    local function prune(a, gen, x, t, settled)
+        local d, w, h = durable_for(x, t)
+        if d == nil or d.noted <= 2 * (c.cfg.engine_dirty_keys or 65536) then return end
+        local left, failures = 0, 0
+        for _, space in ipairs({w, h}) do
+            -- (A page's deletes in one transaction: on a replicated shard,
+            -- each transaction waits for its quorum.)
+            pages(space, function(page)
+                local old = {}
+                for _, e in ipairs(page) do
+                    if e[2] <= settled then old[#old + 1] = e[1] else left = left + 1 end
+                end
+                if #old == 0 then return end
+                local ok = pcall(transaction, function()
+                    owned(a, gen, {copying = true, copied = true})
+                    for _, key in ipairs(old) do
+                        local e = space:get{key}
+                        if e ~= nil and e[2] <= settled then space:delete{key} end
+                    end
+                end)
+                if not ok then
+                    left, failures = left + #old, failures + 1
+                    if failures >= 3 then return false end
+                end
+            end)
+            if failures >= 3 then return end
+        end
+        d.noted = left
+        E.prunes = (E.prunes or 0) + 1
+        c.hook('engine_pruned')
+    end
     -- A catch-up pass (issue #184): the keys captured so far are copied
     -- again from the confirmed source, while writes go on, so that the
     -- capture needs room only for the writes since, and the final pass,
@@ -650,29 +874,39 @@ function M.new(c)
         local x = bound(a)
         local list = t.list
         t.list, t.keys, t.bytes = {}, {}, 0
+        -- The keys written from now on take the next generation: the pass
+        -- settles this one (with the swap: no yield in between).
+        local d = bound_durable(x.old_id)
+        if d ~= nil and d.name ~= durable_name(x.old_id, t.token) then d = nil end
+        local settles = d and d.gen
+        if d then d.gen = d.gen + 1 end
         local ok, err = pcall(function()
             if not c.wait_commits(deadline) then fail(1205, 'Engine source writes have not drained') end
             local function held() if not capture_valid(t) or E.tracks[x.old_id] ~= t then fail(1213, 'Engine capture was lost') end end
             c.hook('engine_catch_up_swapped')
             local phases = {copying = true, copied = true}
-            transaction(function()
+            local settled = transaction(function()
                 local v = owned(a, gen, phases)
                 v.passes = (v.passes or 0) + 1
                 replace_record(v)
+                return v.settled or 0
             end, held)
-            for offset = 1, #list, 128 do
+            -- (Only the keys the durable capture notes: the others' writes
+            -- rolled back, and their copies are the source's rows.)
+            local keep = noted(x, t, list, settled)
+            for offset = 1, #keep, 128 do
                 transaction(function()
                     local v = owned(a, gen, phases)
                     local target = box.space[v.new_id]
-                    for i = offset, math.min(offset + 127, #list) do target:delete(list[i]) end
+                    for i = offset, math.min(offset + 127, #keep) do target:delete(keep[i]) end
                 end, held)
                 fiber.sleep(0)
             end
-            for offset = 1, #list, 128 do
+            for offset = 1, #keep, 128 do
                 local rows = read(function()
                     local out, source = {}, box.space[x.old_id]
-                    for i = offset, math.min(offset + 127, #list) do
-                        local row = source:get(list[i])
+                    for i = offset, math.min(offset + 127, #keep) do
+                        local row = source:get(keep[i])
                         if row ~= nil then out[#out + 1] = row end
                     end
                     return out
@@ -686,13 +920,21 @@ function M.new(c)
                         local other, ix = holder(target, unique, row)
                         while other ~= nil do
                             if not captured(t, x.old_id, other) then duplicate(ix) end
-                            target:delete(pk:extract_key(other))
+                            local key = pk:extract_key(other)
+                            target:delete(key); hole(x, t, key:totable())
                             other, ix = holder(target, unique, row)
                         end
                         target:replace(row)
                     end
                 end, held)
                 fiber.sleep(0)
+            end
+            -- Reread: the keys up to its generation are settled.
+            if settles ~= nil then
+                transaction(function()
+                    local v = owned(a, gen, phases)
+                    if (v.settled or 0) < settles then v.settled = settles; replace_record(v) end
+                end, held)
             end
         end)
         if not ok then
@@ -701,8 +943,74 @@ function M.new(c)
             if not pcall(restore, t, list) then t.valid = false end
             error(err)
         end
+        if settles ~= nil then pcall(prune, a, gen, x, t, settles) end
         E.passes = (E.passes or 0) + 1
         c.hook('engine_catch_up')
+    end
+    -- Resume (issue #184): a BUILD or PREPARE that finds the in-memory
+    -- capture lost, while the durable one of the record's token is there,
+    -- rebuilds it and goes on from the cursor. The writes noted only in the
+    -- durable capture may still be in flight: as a pass does, it waits for
+    -- the commits in flight, then writes a marker (the count of resumes in
+    -- the job's record), which commits after the synchronous queue's
+    -- entries. Its keys and holes above the settled generation then join
+    -- the new mirror, which notes the writes from its start. Over the
+    -- capture's limits, it gives up: the copy starts over (nil). Until those
+    -- keys are in it, the new mirror is not the copy's capture: a resume
+    -- that fails part way leaves it lost, and so does one whose capture is
+    -- lost meanwhile, to a status change for one (1213). The step sent again
+    -- resumes again.
+    local function resume(a, gen, r, deadline)
+        local x = bound(a)
+        local sp, hp = durable_of(r)
+        if sp == nil or hp == nil then return nil end
+        local d = bind_durable(x.old_id, sp, hp)
+        local settled = r.settled or 0
+        d.gen = math.max(d.gen, settled + 1)
+        local t = {token = r.capture, valid = true, epoch = E.capture_epoch, keys = {}, list = {}, bytes = 0}
+        -- (The budgets of passes go on with the capture's.)
+        local lost = E.tracks[x.old_id]
+        if lost ~= nil and lost.token == r.capture then t.fence_passes, t.behind = lost.fence_passes, lost.behind end
+        E.tracks[x.old_id] = t; attach(x.old_id)
+        local ok, resumed = pcall(function()
+            local function held() if not capture_valid(t) or E.tracks[x.old_id] ~= t then fail(1213, 'Engine capture was lost') end end
+            if not c.wait_commits(deadline) then fail(1205, 'Engine source writes have not drained') end
+            transaction(function()
+                local v = owned(a, gen, {copying = true, copied = true, preparing = true})
+                v.resumes = (v.resumes or 0) + 1
+                replace_record(v)
+            end, held)
+            c.hook('engine_resume_marked')
+            -- The keys and holes above the settled generation, a page per
+            -- read (a write meanwhile is in the mirror already): past the
+            -- mirror's limits, the copy starts over.
+            local limit = c.cfg.engine_dirty_keys or 65536
+            local bytes = c.cfg.engine_dirty_bytes or 8 * 1024 * 1024
+            local list, seen, size = {}, {}, 0
+            for _, space in ipairs({sp, hp}) do
+                local within_limits = pages(space, function(page)
+                    for _, e in ipairs(page) do
+                        if e[2] > settled and not seen[e[1]] then
+                            if #list >= limit or size + #e[1] > bytes then return false end
+                            seen[e[1]], list[#list + 1], size = true, mp.decode(e[1]), size + #e[1]
+                        end
+                    end
+                end)
+                if not within_limits then return false end
+            end
+            restore(t, list)
+            if E.tracks[x.old_id] ~= t or t.epoch ~= E.capture_epoch then
+                fail(1213, 'Engine capture was lost while it resumed')
+            end
+            -- (Lost to its limits, writes meanwhile included: false.)
+            return capture_valid(t)
+        end)
+        if not ok or not resumed then t.valid = false end
+        if not ok then error(resumed) end
+        if not resumed then return nil end
+        E.resumes = (E.resumes or 0) + 1
+        c.hook('engine_resumed')
+        return t
     end
     -- A slice (opts.slice, seconds, from an SQL server that sends the step
     -- again): once a call has run that long, from its start, the wait for
@@ -751,12 +1059,19 @@ function M.new(c)
             if r.phase ~= 'resetting' and r.phase ~= 'copying' and r.phase ~= 'copied'
                and r.phase ~= 'preparing' then fail(1412, 'Engine copy phase changed') end
             local t = E.tracks[x.old_id]
+            if r.phase ~= 'resetting' and (not capture_valid(t) or t.token ~= r.capture) then
+                t = resume(a, gen, r, deadline)
+                r = read(function() return owned(a, gen) end)
+                if certified(r) then return {'ok', 'applied'} end
+            end
             if r.phase == 'resetting' or not capture_valid(t) or t.token ~= r.capture then
                 -- (Counted in the record, until the copy reaches the end of
                 -- the table: a BUILD in slices, or sent again, goes on
                 -- counting.)
                 if (r.resets or 0) >= 8 then fail(1205, 'Engine copy repeatedly lost its capture; retry the ALTER') end
-                t = reset(a, gen, deadline)
+                -- (A deadline of its own: a resume before may have taken
+                -- the one above.)
+                t = reset(a, gen, within(a))
                 r = read(function() return owned(a, gen) end)
                 if certified(r) then return {'ok', 'applied'} end
             end
@@ -764,6 +1079,9 @@ function M.new(c)
             -- status callback invalidated its volatile cut/capture. Do not
             -- enter even the first page transaction with that old state.
             if current(r, t) then
+                -- (A PREPARE sent again behind its fence, its capture
+                -- resumed: the copy is done, and PREPARE goes on.)
+                if r.phase == 'preparing' then return {'ok'} end
                 if r.phase == 'copied' then
                     -- The final pass rereads at most engine_fence_keys keys:
                     -- passes catch up to that first. Writes that outpace them
@@ -816,11 +1134,13 @@ function M.new(c)
                             -- the replacement (the row's key is captured, so
                             -- the final pass puts it back). Otherwise both
                             -- rows held the key in the confirmed source this
-                            -- page was read from.
+                            -- page was read from. (The durable capture
+                            -- notes the copy taken out as a hole.)
                             local other, ix = holder(shadow, unique, tuple)
                             while other ~= nil do
                                 if not captured(t, x.old_id, other) then duplicate(ix) end
-                                shadow:delete(pk:extract_key(other))
+                                local key = pk:extract_key(other)
+                                shadow:delete(key); hole(x, t, key:totable())
                                 other, ix = holder(shadow, unique, tuple)
                             end
                             shadow:replace(tuple)
@@ -914,7 +1234,7 @@ function M.new(c)
         local built = E.build(name, a, gen, deadline, opts)
         if built[1] == 'ok' and built[2] == 'more' then return built end
         deadline = within(a)
-        update(a, gen, {copied = true}, function(v)
+        update(a, gen, {copied = true, preparing = true}, function(v)
             v.phase = 'preparing'
             for _, old in ipairs({true, false}) do
                 for _, sid in ipairs(group(v, old)) do
@@ -932,25 +1252,30 @@ function M.new(c)
         local t = E.tracks[r.old_id]
         if not capture_valid(t) then fail(1213, 'Engine capture was lost before the final tail') end
         local function held() if not capture_valid(t) then fail(1213, 'Engine capture was lost') end end
+        -- (Only the keys the durable capture notes, as in a pass: a capture
+        -- lost during the final pass is rebuilt with every key it clears.)
+        local settled = read(function() return owned(a, gen, {preparing = true}).settled or 0 end)
+        local list = noted(bound(a), t, t.list, settled)
         -- First every captured key leaves the replacement. The rows left
-        -- are ones no write touched since they were copied, so they are the
-        -- source's rows. Then the captured keys' confirmed rows go in: one
-        -- whose unique key another row holds now is a duplicate in the
-        -- fenced source itself (1062). Replacing the captured rows one by one
-        -- instead would meet stale copies, as when two rows swapped keys.
-        for offset = 1, #t.list, 128 do
+        -- are ones no committed write touched since they were copied, so
+        -- they are the source's rows. Then the captured keys' confirmed rows
+        -- go in: one whose unique key another row holds now is a duplicate
+        -- in the fenced source itself (1062). Replacing the captured rows one
+        -- by one instead would meet stale copies, as when two rows swapped
+        -- keys.
+        for offset = 1, #list, 128 do
             transaction(function()
                 owned(a, gen, {preparing = true})
                 local target = box.space[r.new_id]
-                for i = offset, math.min(offset + 127, #t.list) do target:delete(t.list[i]) end
+                for i = offset, math.min(offset + 127, #list) do target:delete(list[i]) end
             end, held)
             c.hook('engine_tail'); fiber.sleep(0)
         end
-        for offset = 1, #t.list, 128 do
+        for offset = 1, #list, 128 do
             local final = read(function()
                 local out, source = {}, box.space[r.old_id]
-                for i = offset, math.min(offset + 127, #t.list) do
-                    out[#out + 1] = source:get(t.list[i])
+                for i = offset, math.min(offset + 127, #list) do
+                    out[#out + 1] = source:get(list[i])
                 end
                 return out
             end)
@@ -988,7 +1313,10 @@ function M.new(c)
         return {'ok'}
     end
     local function clean_published(a, gen, r, deadline)
-        if r.cleaned then return {'ok', 'applied'} end
+        -- (A durable capture left by a node from before, which a cleanup
+        -- did not know, goes with an APPLY sent again.)
+        if r.cleaned then drop_durables(r.old_id); return {'ok', 'applied'} end
+        E.durable[r.old_id] = nil
         cut(deadline)
         for _, sid in ipairs(r.old_uix or {}) do if box.space[sid] ~= nil then box.space[sid]:drop() end end
         local old = box.space[r.old_id]
@@ -996,6 +1324,7 @@ function M.new(c)
             if old.name ~= r.retired_name then fail(1412, 'Retired engine source identity changed') end
             old:drop()
         end
+        drop_durables(r.old_id)
         c.lazy.clear_versions(r.old_id)
         transaction(function()
             local v = owned(a, gen, {published = true})
@@ -1079,19 +1408,23 @@ function M.new(c)
         local r = read(function() return record(x.old_id) end)
         if r and r.ver == a.ver and r.new_id == a.def.id and r.phase == 'published' then return {'ok', 'applied'} end
         if r and r.ver == a.ver and r.new_id == a.def.id and r.phase == 'aborted' then
-            detach(r.old_id); refresh()
+            detach(r.old_id); drop_durables(r.old_id); refresh()
             return {'ok'}
         end
         central(name, a, gen, 'abort')
         r = start(name, a, gen, deadline, true)
         if r.phase == 'applying' then fail(1412, 'Engine publication already began') end
         update(a, gen, nil, function(v) v.phase = 'aborting' end)
+        -- (As in reset: the writes from now on note nothing in the durable
+        -- capture, and the cut waits for those that did.)
+        E.durable[r.old_id] = nil
         cut(deadline)
         local target = box.space[r.new_id]
         if target ~= nil then
             if target.name ~= r.shadow_name then fail(1412, 'Engine shadow identity changed') end
             target:drop()
         end
+        drop_durables(r.old_id)
         for _, d in ipairs(a.uix or {}) do if box.space[d.id] ~= nil then box.space[d.id]:drop() end end
         transaction(function()
             local v = owned(a, gen, {aborting = true})

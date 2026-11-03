@@ -19,7 +19,8 @@ The first ALTER adds an index and a unique index on (tenant_id, c), the
 second an integer column x and a case-insensitive string column s, with
 non-NULL defaults, and an index on each. The first runs with small
 catch-up bounds (#184), so its copy runs catch-up passes during the copy
-and before its fence, which every shard's record counts. For each:
+and before its fence, which every shard's record counts, and settles them
+in the copy's durable capture, which every replica can keep. For each:
 
   * the change succeeds and replaces the table's space by way of the copy,
     and no replica's election term changes meanwhile;
@@ -200,6 +201,15 @@ def main():
         return ev(node, """
             local r = box.space._tarn_meta:get{'engine:' .. ...}
             return r and r.value.passes or 0
+        """, [sid])
+
+    def settled_of(node, sid):
+        """The generation of the durable capture the copy of space id sid
+        last settled: above 0 once a pass of a durable copy rereads its keys
+        (#184)."""
+        return ev(node, """
+            local r = box.space._tarn_meta:get{'engine:' .. ...}
+            return r and r.value.settled or 0
         """, [sid])
 
     def slices_of(group):
@@ -1034,10 +1044,13 @@ def main():
         finally:
             catchup_bounds(False)
         passes = {g["id"]: passes_of(leader(g), old_ids[g["id"]]) for g in groups}
+        settled = {g["id"]: settled_of(leader(g), old_ids[g["id"]]) for g in groups}
         sliced = {g["id"]: slices_of(g) - sliced[g["id"]] for g in groups}
         print(f"  ({engine}: catch-up passes by shard: {passes}; calls that returned for more: {sliced})",
               flush=True)
         check(f"{engine}: each shard's copy ran catch-up passes", all(n > 0 for n in passes.values()), passes)
+        check(f"{engine}: each shard's copy kept its capture durably, and its passes settled it",
+              all(n > 0 for n in settled.values()), settled)
         check(f"{engine}: each shard's copy took several calls, in slices", all(n > 0 for n in sliced.values()),
               sliced)
         contents("k, c")
