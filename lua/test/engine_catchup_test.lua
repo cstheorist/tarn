@@ -227,6 +227,119 @@ local function exercise(engine)
         last[1] ~= 'ok' and last[2] == 1205 and tostring(last[3]):find('outpace') ~= nil and calls < 40
         and ended[1] == 'ok', {last, calls, ended})
     restore()
+    -- A takeover between slices goes on with the capture and the cursor, and
+    -- the old worker's next call is refused; ABORT between slices ends the
+    -- change, and a later call is refused.
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 0}
+    t = table_and_copy(engine, 'sliced_takeover', 40)
+    local more3 = true
+    for _ = 1, 3 do
+        local r = tarn_alter_build(t.name, t.args, t.gen, {slice = 0})
+        more3 = more3 and r[1] == 'ok' and r[2] == 'more'
+    end
+    local token, cursor = record(t).capture, record(t).cursor
+    local owner = t.owner .. '-taken'
+    local gen2 = ok(tarn_job_touch(owner, t.owner))[2]
+    -- (The new worker's first call tells the shard of the takeover.)
+    local taken = tarn_alter_build(t.name, t.args, gen2, {slice = 0})
+    local stale = tarn_alter_build(t.name, t.args, t.gen, {slice = 0})
+    calls = 1
+    while taken[1] == 'ok' and taken[2] == 'more' and calls <= 100 do
+        taken = tarn_alter_build(t.name, t.args, gen2, {slice = 0}); calls = calls + 1
+    end
+    jobs[t.owner] = nil; t.owner, t.gen = owner, gen2; jobs[owner] = t
+    prepared = call('prepare', t)
+    check(label('a takeover between slices goes on with the capture and the cursor; the old worker is refused'),
+        more3 and gen2 == 2 and cursor ~= nil and stale[1] ~= 'ok' and stale[2] == 1412 and taken[1] == 'ok'
+        and record(t).capture == token and prepared[1] == 'ok' and image(t), {more3, gen2, stale, taken, prepared})
+    decide(t, 'apply'); ok(call('apply', t)); end_job(t)
+    t = table_and_copy(engine, 'sliced_abort', 40)
+    more3 = true
+    for _ = 1, 3 do
+        local r = tarn_alter_build(t.name, t.args, t.gen, {slice = 0})
+        more3 = more3 and r[1] == 'ok' and r[2] == 'more'
+    end
+    decide(t, 'abort'); ended = call('abort', t)
+    local later = tarn_alter_build(t.name, t.args, t.gen, {slice = 0})
+    end_job(t)
+    check(label('ABORT between slices ends the change, and a later call is refused'),
+        more3 and ended[1] == 'ok' and later[1] ~= 'ok' and later[2] == 1412 and box.space[t.new_id] == nil
+        and tarn.engine.tracks[t.old_id] == nil, {more3, ended, later})
+    restore()
+    -- A slice runs from the call's start: a call that waited longer than its
+    -- slice for the table's serial lock copies a page, and returns.
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 0}
+    t = table_and_copy(engine, 'sliced_waited', 40)
+    hook('engine_copy', 'hold')
+    building = spawn(function() return tarn_alter_build(t.name, t.args, t.gen, {slice = 0}) end)
+    hook('engine_copy', 'reached')
+    local waiting = spawn(function() return tarn_alter_build(t.name, t.args, t.gen, {slice = 0.2}) end)
+    fiber.sleep(0.3)
+    local copied = record(t).copied
+    hook('engine_copy', 'release')
+    local first, waited = join(building), join(waiting)
+    check(label('a call that waited longer than its slice for the serial lock copies a page, and returns'),
+        first[1] == 'ok' and first[2] == 'more' and waited[1] == 'ok' and waited[2] == 'more'
+        and record(t).copied == copied + 4, {first, waited, copied, record(t).copied})
+    repeat built = tarn_alter_build(t.name, t.args, t.gen, {slice = 0}) until not (built[1] == 'ok' and built[2] == 'more')
+    prepared = built[1] == 'ok' and call('prepare', t) or built
+    check(label('... and the copy then goes on, exact'), prepared[1] == 'ok' and image(t), {built, prepared})
+    decide(t, 'apply'); ok(call('apply', t)); end_job(t)
+    restore()
+
+    -- The budgets. PREPARE's passes before the fence have a budget of their
+    -- own, as BUILD's have: a BUILD whose passes used all of it, then writes
+    -- while the other shards build, and PREPARE still catches up.
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 0, engine_catchup_passes = 2}
+    t = table_and_copy(engine, 'step_budgets', 40)
+    hook('engine_copy', 'hold')
+    building = spawn(function() return call('build', t) end)
+    hook('engine_copy', 'reached')
+    ok(churn(t, 1))
+    hook('engine_catch_up', 'hold')
+    hook('engine_copy', 'release')
+    hook('engine_catch_up', 'reached')
+    ok(churn(t, 10))
+    hook('engine_catch_up', 'release')
+    built = join(building)
+    local build_passes = record(t).passes or 0
+    ok(churn(t, 20))
+    prepared = call('prepare', t)
+    check(label('PREPARE\'s passes have a budget of their own after BUILD\'s used all of theirs'),
+        built[1] == 'ok' and build_passes == 2 and prepared[1] == 'ok' and (record(t).passes or 0) > build_passes
+        and image(t), {built, build_passes, prepared, record(t).passes})
+    decide(t, 'apply'); ok(call('apply', t)); end_job(t)
+    restore()
+    -- The copy's restarts count until it reaches the end of the table: ten
+    -- BUILDs, each after a capture loss, each copy the table again; but a
+    -- capture lost eight times before the copy gets there fails the change.
+    restore = set{engine_copy_rows = 4, engine_fence_keys = 0}
+    t = table_and_copy(engine, 'losses', 40)
+    local outcomes = {}
+    for _ = 1, 10 do
+        local r = call('build', t)
+        outcomes[#outcomes + 1] = r[1] == 'ok' and 'ok' or tostring(r[2])
+        tarn.engine.invalidate(true)
+    end
+    prepared = call('prepare', t)
+    check(label('ten BUILDs, each after a capture loss, each copy the table again'),
+        table.concat(outcomes, ',') == string.rep('ok,', 9) .. 'ok' and prepared[1] == 'ok' and image(t),
+        {outcomes, prepared})
+    decide(t, 'apply'); ok(call('apply', t)); end_job(t)
+    t = table_and_copy(engine, 'lost_often', 40)
+    for i = 1, 8 do
+        hook('engine_copy', 'hold')
+        if i == 1 then building = spawn(function() return call('build', t) end) end
+        hook('engine_copy', 'reached')
+        tarn.engine.invalidate(true)
+        hook('engine_copy', 'release')
+    end
+    built = join(building)
+    decide(t, 'abort'); ended = call('abort', t); end_job(t)
+    check(label('a capture lost eight times before the copy reaches the end of the table fails the change'),
+        built[1] ~= 'ok' and built[2] == 1205 and tostring(built[3]):find('repeatedly') ~= nil and ended[1] == 'ok',
+        {built, ended})
+    restore()
 
     -- Unique values that change hands across a pass: no false duplicate.
     restore = set{engine_copy_rows = 4, engine_catchup_keys = 2, engine_fence_keys = 0}

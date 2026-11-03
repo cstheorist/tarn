@@ -747,8 +747,9 @@ for what the copy costs and why a replicated shard needs it (issues #267
 and #184).
 
 `ddl_step_slice` is how long, in seconds, one call of a copy's BUILD or
-PREPARE copies before it returns and the SQL server sends it again (issue
-#184). A copy of a large table so takes many calls, each well within the
+PREPARE runs before it returns and the SQL server sends it again (issue
+#184): from the call's start, its wait for the table's lock included, to
+the next page or catch-up pass. A copy of a large table so takes many calls, each well within the
 storage RPC deadline (`rpc.timeout_secs`, 120 s by default). The default,
 0, means a quarter of that deadline, at most 30 s; a larger value is capped
 at half of it.

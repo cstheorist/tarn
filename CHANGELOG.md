@@ -259,8 +259,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the step again past the deadline, and the new call waited for the first
   one, which still held the table. The copy's BUILD and PREPARE now run in
   slices (`ddl_step_slice`: a quarter of the RPC deadline, at most 30 s).
-  Each call returns once it has copied that long, and the SQL server sends
-  it again, until the copy is done
+  Each call returns once it has run that long, and the SQL server sends it
+  again, until the copy is done. A step's catch-up passes before the fence
+  have a budget across its calls, as do the copy's restarts until it
+  reaches the end of the table
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
 - A `COUNT` or aggregate read that yielded while a table copy was published

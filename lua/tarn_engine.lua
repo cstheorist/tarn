@@ -705,15 +705,22 @@ function M.new(c)
         c.hook('engine_catch_up')
     end
     -- A slice (opts.slice, seconds, from an SQL server that sends the step
-    -- again): once it has copied that long, BUILD returns {'ok', 'more'}
-    -- between pages or passes, where everything it did is durable or in the
+    -- again): once a call has run that long, from its start, the wait for
+    -- the table's serial lock included, BUILD returns {'ok', 'more'} at the
+    -- next page or pass, where everything it did is durable or in the
     -- capture, which the next call goes on with. A copy of a large table
     -- then takes many calls, each well within the SQL server's RPC deadline
     -- (issue #184); before, a call past it was sent again while the first
-    -- still held the table's serial lock.
+    -- still held the table's serial lock. (E.run turns the slice into the
+    -- call's own deadline, opts.until_.) E.slices counts those returns.
     local function sliced(opts)
         local slice = type(opts) == 'table' and tonumber(opts.slice) or nil
-        return slice ~= nil and slice >= 0 and clock.monotonic() + slice or nil
+        if slice == nil or slice ~= slice or slice < 0 then return nil end
+        return {until_ = clock.monotonic() + slice}
+    end
+    local function more()
+        E.slices = (E.slices or 0) + 1
+        return {'ok', 'more'}
     end
     function E.build(name, a, gen, deadline, opts)
         -- E.body's registry refresh may have yielded since its entry cut.
@@ -726,7 +733,7 @@ function M.new(c)
         end
         if certified(r) then return {'ok', 'applied'} end
         local x = bound(a)
-        local until_ = sliced(opts)
+        local until_ = type(opts) == 'table' and opts.until_ or nil
         local function current(v, t, epoch)
             return q.ready() and (epoch == nil or q.epoch == epoch)
                    and capture_valid(t) and E.tracks[x.old_id] == t and t.token == v.capture
@@ -745,8 +752,9 @@ function M.new(c)
                and r.phase ~= 'preparing' then fail(1412, 'Engine copy phase changed') end
             local t = E.tracks[x.old_id]
             if r.phase == 'resetting' or not capture_valid(t) or t.token ~= r.capture then
-                -- (Counted in the record: a BUILD in slices, or sent again,
-                -- goes on counting.)
+                -- (Counted in the record, until the copy reaches the end of
+                -- the table: a BUILD in slices, or sent again, goes on
+                -- counting.)
                 if (r.resets or 0) >= 8 then fail(1205, 'Engine copy repeatedly lost its capture; retry the ALTER') end
                 t = reset(a, gen, deadline)
                 r = read(function() return owned(a, gen) end)
@@ -760,7 +768,9 @@ function M.new(c)
                     -- The final pass rereads at most engine_fence_keys keys:
                     -- passes catch up to that first. Writes that outpace them
                     -- fail the change, rather than hold the fence longer.
-                    if #t.list <= (c.cfg.engine_fence_keys or 1024) then return {'ok'} end
+                    -- (The budget below then starts again: PREPARE's passes
+                    -- have one of their own, as BUILD's have.)
+                    if #t.list <= (c.cfg.engine_fence_keys or 1024) then t.fence_passes = 0; return {'ok'} end
                     -- (Counted with the capture: across the calls of a BUILD
                     -- in slices, and of one sent again.)
                     t.fence_passes = (t.fence_passes or 0) + 1
@@ -770,7 +780,7 @@ function M.new(c)
                             .. 'quieter', #t.list))
                     end
                     catch_up(a, gen, t, within(a))
-                    if until_ ~= nil and clock.monotonic() >= until_ then return {'ok', 'more'} end
+                    if until_ ~= nil and clock.monotonic() >= until_ then return more() end
                     goto continue
                 end
                 if r.phase ~= 'copying' then fail(1412, 'Engine copy phase changed') end
@@ -816,7 +826,7 @@ function M.new(c)
                             shadow:replace(tuple)
                         end
                         v.cursor, v.copied = cursor, v.copied + #rows
-                        if #rows == 0 then v.phase = 'copied' end
+                        if #rows == 0 then v.phase, v.resets = 'copied', 0 end
                         replace_record(v)
                     end, function() if not capture_valid(t) then fail(1213, 'Engine capture was lost') end end)
                     if #rows > 0 then c.hook('engine_copy') end
@@ -839,7 +849,7 @@ function M.new(c)
                 end
             end
             ::continue::
-            if until_ ~= nil and clock.monotonic() >= until_ and r.phase == 'copying' then return {'ok', 'more'} end
+            if until_ ~= nil and clock.monotonic() >= until_ and r.phase == 'copying' then return more() end
             fiber.sleep(0)
         until false
     end
@@ -1139,7 +1149,7 @@ function M.new(c)
             if box.is_in_txn() then fail(1210, 'Engine DDL requires its own transaction') end
             local x = bound(a)
             if name ~= x.old_name then fail(1210, 'Engine request name does not match its source binding') end
-            return c.serial(x.old_id, a.timeout or 50, E.body, op, name, a, gen or 0, opts)
+            return c.serial(x.old_id, a.timeout or 50, E.body, op, name, a, gen or 0, sliced(opts))
         end)
         return ok and result or c.failure(result)
     end

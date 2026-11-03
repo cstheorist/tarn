@@ -1600,7 +1600,7 @@ start after ABORT, an online start always refused, and a build bound to
 the new space.
 
 [A suite for catch-up passes](../lua/test/engine_catchup_test.lua) runs
-copies on both engines, 40 checks with the native module and as many
+copies on both engines, 54 checks with the native module and as many
 without:
 - a copy written to more keys than its capture holds runs passes and never
   starts over, and leaves the final pass at most `engine_fence_keys` keys;
@@ -1628,7 +1628,16 @@ without:
   per call, returning `{'ok', 'more'}`, with writes between the calls, and
   PREPARE alone in slices, copy exactly; writes that refill the capture
   between such calls after the copy exhaust the budget of passes before the
-  fence, which counts across calls (1205);
+  fence, which counts across calls (1205); a takeover between slices goes
+  on with the capture and the cursor, and the old worker's next call is
+  refused (1412), as is a call after ABORT between slices; a call that
+  waited longer than its slice for the table's serial lock copies a page,
+  and returns;
+- a BUILD whose passes before the fence used their whole budget, then
+  writes, and PREPARE still catches up with a budget of its own; ten BUILDs,
+  each after a capture loss, each copy the table again, but a capture lost
+  eight times before the copy reaches the end of the table fails the change
+  (1205);
 - a capture lost during a pass fails it for now (1213), and one lost after
   a pass starts the copy over; either copy is then exact;
 - writes that refill the capture during each pass of the copy, and writes
@@ -1641,9 +1650,11 @@ always taken for a duplicate, no restore of a failed pass's keys or a
 restore past the capture's limits, no passes during the copy or before the
 fence, no limit on either, passes at `engine_catchup_keys` past half the
 capture's limit, and passes over an empty capture at a threshold of 0. So
-does each of three mutations of the slices: a budget of passes counted per
-call, no slice during the copy, and a PREPARE that takes a slice's
-`{'ok', 'more'}` for done. Only the marker's count in the job's record
+does each of six mutations of the slices and budgets: a budget of passes
+counted per call, no slice during the copy, a PREPARE that takes a slice's
+`{'ok', 'more'}` for done, a slice that starts after the serial lock's
+wait, PREPARE's passes counted with BUILD's, and the copy's restarts
+counted over the job's life. Only the marker's count in the job's record
 catches the missing marker. In Tarantool 3.9 a pass's first delete batch also waits
 for the synchronous queue, since a delete of a missing key is logged, and
 so orders the reread after a detached write without the marker; the
@@ -1808,7 +1819,8 @@ replicas with fsync while sessions increment a column, hand unique values
 from row to row, swap them by way of NULL, insert, delete and move rows to
 new primary keys, and checks the rows against those sessions' models; it
 fails when the final pass is skipped. The SQL server sends a copy's BUILD
-and PREPARE in slices of 0.25 s there, so each copy takes several calls.
+and PREPARE in slices of 0.05 s there, and the first ALTER of each table
+checks that every shard's copy took several calls.
 Its first copy of each table runs with small catch-up bounds (16 captured
 keys, 8 left for the fence), so catch-up passes run on every shard while
 unique values move (issue #184).
