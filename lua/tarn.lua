@@ -8166,6 +8166,7 @@ BK.production_functions = {
         'tarn_schema_import',
         'tarn_select',
         'tarn_select_join',
+        'tarn_select_projected',
         'tarn_select_keys',
         'tarn_shard_records',
         'tarn_truncate',

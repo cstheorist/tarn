@@ -144,6 +144,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- In the production profile, a plain column projection over a range scan
+  (`SELECT v FROM t WHERE id >= 0` on a table with more columns) no longer
+  fails with storage error 42. Storage grants the SQL server's user only the
+  procedures `BK.production_functions` lists, and the list did not name
+  `tarn_select_projected`, which such a scan reads through. A unit test now
+  checks that the list names every storage procedure the SQL server calls,
+  and `tests/production.py` runs such a scan through the service ACL
+  ([#285](https://github.com/cstheorist/tarn/issues/285)).
+
 - On a cluster with replicated shards, an `ALTER TABLE` or `CREATE INDEX`
   that adds secondary indexes no longer stalls the shard or makes its
   leader resign. Each follower used to build the new index on the populated
