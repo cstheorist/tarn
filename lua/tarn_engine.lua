@@ -605,6 +605,104 @@ function M.new(c)
         refresh()
         return t
     end
+    -- Keys a catch-up pass took from capture t and did not settle go back
+    -- into it (they may be stale or missing in the shadow), within the
+    -- capture's limits: past them the capture is lost, and the copy starts
+    -- over.
+    local function restore(t, list)
+        if not capture_valid(t) then return end
+        local limit = c.cfg.engine_dirty_keys or 65536
+        local bytes = c.cfg.engine_dirty_bytes or 8 * 1024 * 1024
+        for _, pk in ipairs(list) do
+            local encoded = mp.encode(pk)
+            if t.keys[encoded] == nil then
+                if #t.list >= limit or t.bytes + #encoded > bytes then t.valid = false; return end
+                t.keys[encoded] = true
+                t.list[#t.list + 1] = pk
+                t.bytes = t.bytes + #encoded
+            end
+        end
+    end
+    -- A catch-up pass (issue #184): the keys captured so far are copied
+    -- again from the confirmed source, while writes go on, so that the
+    -- capture needs room only for the writes since, and the final pass,
+    -- behind the fence, rereads only those. A fresh set takes the writes
+    -- from the swap on. The writes noted in the old set may still be in
+    -- flight. A caller still in its commit is waited for (the commits in
+    -- flight, Lua and native). A write whose caller left it detached is in
+    -- the synchronous queue: the pass then writes a marker, the count of
+    -- its passes in the job's record, which commits only once every entry
+    -- ahead of it in the queue has. Confirmed reads after it see those
+    -- writes. (Tarantool 3.9 also logs a delete of a missing key, so the
+    -- first batch of deletes below would wait too; the marker doesn't rely
+    -- on that. No transaction cut: that waits for an empty queue, which a
+    -- table under steady writes may not have, and holds up the engine's
+    -- other transactions meanwhile.) Every key of the old set leaves the
+    -- shadow first: the rows left are ones no write touched since they were
+    -- copied, or since an earlier pass reread them, and those keys'
+    -- confirmed rows then go in, as the final pass puts them in. A copied
+    -- row that holds one of their unique keys leaves if a write to it began
+    -- since the swap (its key is in the new set), and is otherwise a
+    -- duplicate in the source (1062). A pass that fails puts its keys back
+    -- (restore).
+    local function catch_up(a, gen, t, deadline)
+        local x = bound(a)
+        local list = t.list
+        t.list, t.keys, t.bytes = {}, {}, 0
+        local ok, err = pcall(function()
+            if not c.wait_commits(deadline) then fail(1205, 'Engine source writes have not drained') end
+            local function held() if not capture_valid(t) or E.tracks[x.old_id] ~= t then fail(1213, 'Engine capture was lost') end end
+            c.hook('engine_catch_up_swapped')
+            local phases = {copying = true, copied = true}
+            transaction(function()
+                local v = owned(a, gen, phases)
+                v.passes = (v.passes or 0) + 1
+                replace_record(v)
+            end, held)
+            for offset = 1, #list, 128 do
+                transaction(function()
+                    local v = owned(a, gen, phases)
+                    local target = box.space[v.new_id]
+                    for i = offset, math.min(offset + 127, #list) do target:delete(list[i]) end
+                end, held)
+                fiber.sleep(0)
+            end
+            for offset = 1, #list, 128 do
+                local rows = read(function()
+                    local out, source = {}, box.space[x.old_id]
+                    for i = offset, math.min(offset + 127, #list) do
+                        local row = source:get(list[i])
+                        if row ~= nil then out[#out + 1] = row end
+                    end
+                    return out
+                end)
+                transaction(function()
+                    local v = owned(a, gen, phases)
+                    local target = box.space[v.new_id]
+                    local unique, pk, shape = uniques(target), c.key_def(target.id, 0), shaper(v)
+                    for _, confirmed in ipairs(rows) do
+                        local row = shape(confirmed)
+                        local other, ix = holder(target, unique, row)
+                        while other ~= nil do
+                            if not captured(t, x.old_id, other) then duplicate(ix) end
+                            target:delete(pk:extract_key(other))
+                            other, ix = holder(target, unique, row)
+                        end
+                        target:replace(row)
+                    end
+                end, held)
+                fiber.sleep(0)
+            end
+        end)
+        if not ok then
+            -- As in capture(): a restore that fails part way leaves a set
+            -- no later writer may trust.
+            if not pcall(restore, t, list) then t.valid = false end
+            error(err)
+        end
+        E.passes = (E.passes or 0) + 1
+        c.hook('engine_catch_up')
+    end
     function E.build(name, a, gen, deadline)
         -- E.body's registry refresh may have yielded since its entry cut.
         -- Reacquire only before entering a stage, never by retrying a
@@ -615,7 +713,7 @@ function M.new(c)
             return v.phase == 'prepared' or v.phase == 'applying' or v.phase == 'published'
         end
         if certified(r) then return {'ok', 'applied'} end
-        local x, restarts = bound(a), 0
+        local x, restarts, passes, behind = bound(a), 0, 0, 0
         local function current(v, t, epoch)
             return q.ready() and (epoch == nil or q.epoch == epoch)
                    and capture_valid(t) and E.tracks[x.old_id] == t and t.token == v.capture
@@ -644,7 +742,20 @@ function M.new(c)
             -- status callback invalidated its volatile cut/capture. Do not
             -- enter even the first page transaction with that old state.
             if current(r, t) then
-                if r.phase == 'copied' then return {'ok'} end
+                if r.phase == 'copied' then
+                    -- The final pass rereads at most engine_fence_keys keys:
+                    -- passes catch up to that first. Writes that outpace them
+                    -- fail the change, rather than hold the fence longer.
+                    if #t.list <= (c.cfg.engine_fence_keys or 1024) then return {'ok'} end
+                    passes = passes + 1
+                    if passes > (c.cfg.engine_catchup_passes or 16) then
+                        fail(1205, string.format('Writes to the table outpace the copy (%d keys written since its '
+                            .. 'last catch-up pass, over tarn.cfg.engine_fence_keys); retry the ALTER when it is '
+                            .. 'quieter', #t.list))
+                    end
+                    catch_up(a, gen, t, within(a))
+                    goto continue
+                end
                 if r.phase ~= 'copying' then fail(1412, 'Engine copy phase changed') end
                 local epoch = q.epoch
                 local rows, cursor = read(function()
@@ -692,8 +803,25 @@ function M.new(c)
                         replace_record(v)
                     end, function() if not capture_valid(t) then fail(1213, 'Engine capture was lost') end end)
                     if #rows > 0 then c.hook('engine_copy') end
+                    -- (Below the capture's limit, so that a pass comes first,
+                    -- and never over an empty capture.)
+                    local catchup = math.max(1, math.min(c.cfg.engine_catchup_keys or 16384,
+                        math.floor((c.cfg.engine_dirty_keys or 65536) / 2)))
+                    if #rows > 0 and #t.list >= catchup and capture_valid(t) then
+                        catch_up(a, gen, t, within(a))
+                        -- A pass whose writes refill the capture gains no
+                        -- ground: the copy goes a page per pass. That many
+                        -- in a row fail the change, as before the fence.
+                        behind = #t.list >= catchup and behind + 1 or 0
+                        if behind > (c.cfg.engine_catchup_passes or 16) then
+                            fail(1205, string.format('Writes to the table outpace the copy (%d keys written during '
+                                .. 'its last catch-up pass, over tarn.cfg.engine_catchup_keys); retry the ALTER when '
+                                .. 'it is quieter', #t.list))
+                        end
+                    end
                 end
             end
+            ::continue::
             fiber.sleep(0)
         until false
     end

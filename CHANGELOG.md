@@ -235,6 +235,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   build over, and its scan's next call finds it done
   ([#184](https://github.com/cstheorist/tarn/issues/184)).
 
+- A copy of a table (an engine change, or an `ALTER TABLE` that copies on
+  replicated shards) used to reread every key written during it behind its
+  final fence. A table that took writes to more keys than the copy's
+  capture holds (`engine_dirty_keys`, 65,536) made the copy start over, and
+  after eight times the change failed with 1205. Catch-up passes now copy
+  the keys written so far again, from the confirmed source, while writes
+  go on. They run during the copy once the capture holds
+  `engine_catchup_keys` (16,384, and at most half of `engine_dirty_keys`)
+  keys, and after it until the capture holds at most `engine_fence_keys`
+  (1,024), so the final fence rereads at most that many. Writes that
+  outpace the passes fail the change with 1205, and the table stays as it
+  was: `engine_catchup_passes` (16) passes before the fence that don't get
+  there, or as many in a row during the copy after which the capture still
+  holds `engine_catchup_keys` keys. `tla/EngineCopy.tla` and
+  `tla/ShadowUnique.tla` model the passes
+  ([#184](https://github.com/cstheorist/tarn/issues/184)).
+
 - A `COUNT` or aggregate read that yielded while a table copy was published
   could fail with a storage error (1105, "attempt to index a nil value")
   instead of running again. Both engine changes and ALTERs that copy the

@@ -822,19 +822,30 @@ keys from confirmed source data. Transactions still holding an old
 definition cannot apply buffered writes after the switch. New global-index
 fills and lazy-index bootstrap follow that tail.
 
-**The final pause can be long.** It includes rereading every key written
-during the copy and auxiliary-index readiness, not just a name switch. Reads that honor
+**The final pause** rereads the keys written since the copy's last
+catch-up pass, at most `tarn.cfg.engine_fence_keys` (1,024), and includes
+auxiliary-index readiness, not just a name switch. A pass copies again,
+while writes go on, the keys written so far. Passes run during the copy
+whenever its capture holds `engine_catchup_keys` (16,384, and at most half
+of `engine_dirty_keys`) keys, and after it until the capture holds at most
+`engine_fence_keys`. If writes to new keys outpace them, the change fails
+with 1205 and leaves the table as it was; retry it when the table is
+quieter. That is `engine_catchup_passes` (16) passes before the fence that
+don't get there, or as many passes in a row during the copy after which
+the capture still holds `engine_catchup_keys` keys. Between a shard's BUILD and its PREPARE,
+while other shards finish copying, no pass runs: a capture that outgrows
+its limits then makes PREPARE copy that shard's table again. Reads that honor
 DDL holds and writers can wait or fail their normal lock deadlines during
 this phase. Copying is paged and the job is kept alive; the lock/drain
 timeout is not a whole-migration duration guarantee. Each wait for commits
 in flight, whether between pages, before a new copy or after the final
 pass, gets the session's lock wait timeout anew, so a copy that runs longer
-than the timeout does not fail its next wait. A busy source can also
-outgrow its capture set and require another full copy. Its default limits
-are 65,536 keys and 8 MiB of encoded keys (`tarn.cfg.engine_dirty_keys` and
-`engine_dirty_bytes`); Lua tables and other bookkeeping require additional
-memory. Repeated capture loss can return 1205 rather than publishing an
-incomplete copy.
+than the timeout does not fail its next wait. A source written so fast
+that it outgrows its capture set during one pass requires another full
+copy. The set's default limits are 65,536 keys and 8 MiB of encoded keys
+(`tarn.cfg.engine_dirty_keys` and `engine_dirty_bytes`); Lua tables and
+other bookkeeping require additional memory. Repeated capture loss can
+return 1205 rather than publishing an incomplete copy.
 
 Budget for **both physical copies on every replica**, their indexes, new
 global/lazy index spaces, WAL and checkpoint retention, and vinyl dump or

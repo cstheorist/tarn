@@ -15,7 +15,9 @@ and a vinyl table, two ALTERs run while three sessions write:
 
 The first ALTER adds an index and a unique index on (tenant_id, c), the
 second an integer column x and a case-insensitive string column s, with
-non-NULL defaults, and an index on each. For each:
+non-NULL defaults, and an index on each. The first runs with small
+catch-up bounds (#184), so its copy runs catch-up passes during the copy
+and before its fence, which every shard's record counts. For each:
 
   * the change succeeds and replaces the table's space by way of the copy,
     and no replica's election term changes meanwhile;
@@ -190,6 +192,20 @@ def main():
             local r = sid and box.space._tarn_meta:get{'engine:' .. sid}
             return r and {phase = r.value.phase, rebuild = r.value.rebuild == true} or box.NULL
         """, [space, sid])
+
+    def passes_of(node, sid):
+        """How many catch-up passes the copy of space id sid ran (#184)."""
+        return ev(node, """
+            local r = box.space._tarn_meta:get{'engine:' .. ...}
+            return r and r.value.passes or 0
+        """, [sid])
+
+    def catchup_bounds(small):
+        """Catch-up passes at 16 captured keys, until 8 are left for the
+        fence, on every replica; or the defaults."""
+        for node in nodes:
+            ev(node, "tarn.cfg.engine_catchup_keys, tarn.cfg.engine_fence_keys = 16, 8" if small else
+                     "tarn.cfg.engine_catchup_keys, tarn.cfg.engine_fence_keys = nil, nil")
 
     def short_rows(node, space):
         """How many stored rows end before the space's last field: a copy
@@ -1002,7 +1018,15 @@ def main():
                   {"rows": len(table), "want": others + len(model)})
             return table
 
-        online(f"ALTER TABLE {t} ADD INDEX kk (k), ADD UNIQUE INDEX uc (tenant_id, c)", ("kk", "uc"))
+        old_ids = {g["id"]: ev(leader(g), "return box.space[...].id", [space]) for g in groups}
+        catchup_bounds(True)
+        try:
+            online(f"ALTER TABLE {t} ADD INDEX kk (k), ADD UNIQUE INDEX uc (tenant_id, c)", ("kk", "uc"))
+        finally:
+            catchup_bounds(False)
+        passes = {g["id"]: passes_of(leader(g), old_ids[g["id"]]) for g in groups}
+        print(f"  ({engine}: catch-up passes by shard: {passes})", flush=True)
+        check(f"{engine}: each shard's copy ran catch-up passes", all(n > 0 for n in passes.values()), passes)
         contents("k, c")
         sample = random.Random(engine).sample(sorted(k for k, v in model.items() if v[1] is not None), 200)
         found = [q(c, f"SELECT id FROM {t} WHERE tenant_id = %s AND c = %s", (tn, model[(tn, i)][1]))
