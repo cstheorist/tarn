@@ -109,8 +109,13 @@ function M.new(c)
     end
     local function sample()
         if fake then
-            local w, m = ffi.new('uint64_t', math.floor(fake.wall * BILLION)),
-                         ffi.new('uint64_t', math.floor(fake.mono * BILLION))
+            -- Rounded, not floored: a test that injects a time from status()
+            -- (a sample's nanoseconds over a billion) gets that sample back,
+            -- not often the nanosecond before it, which reads as the clock
+            -- moving backward (issue #221). Exact for monotonic times below
+            -- 2^51 ns, about 26 days.
+            local w, m = ffi.new('uint64_t', math.floor(fake.wall * BILLION + .5)),
+                         ffi.new('uint64_t', math.floor(fake.mono * BILLION + .5))
             return fake.wall, fake.mono, w, m, w, m
         end
         local raw_m, raw_w = clock.monotonic64(), clock.realtime64()

@@ -238,6 +238,19 @@ with_clock64(function(set)
           and status(precision.check(), 'clock_unknown') and precision.fault == 'clock moved backward')
 end)
 with_clock64(function(set)
+    -- A fake time taken from status(), as tests/sql/kvclockfaults.py injects
+    -- one: these samples are from a CI run (issue #221), where the
+    -- monotonic time's seconds turned back into nanoseconds one below the
+    -- sample, and the injected drift latched as the clock moving backward.
+    set(1793680282318283579ULL, 4175289770279ULL)
+    local drifted = new(false, true); assert(drifted.load())
+    local s = drifted.status()
+    assert(drifted.test_time(s.wall + s.policy.max_drift + 1, s.mono)[1] == 'ok')
+    check('a fake time from status() keeps its sample\'s nanosecond, so the injected drift latches as drift',
+          status(drifted.check(), 'clock_unknown') and drifted.fault == 'wall/monotonic drift exceeded'
+          and drifted.status().fault_observation.mono_delta_ns == '0')
+end)
+with_clock64(function(set)
     local epoch_wall, epoch_mono = 1793000000000000000ULL, 4000000000000000000ULL
     set(epoch_wall, epoch_mono)
     local boundary = new(false, true); assert(boundary.load())
