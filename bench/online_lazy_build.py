@@ -28,6 +28,9 @@ changes the indexed key). It records:
   whose leader resigned during the ALTER (#267) counts a leader change;
 - an ALTER that returned 1180 and completed in the background (its error,
   and when SHOW INDEX first listed the index);
+- for a copy, when each shard's copy entered each phase, from its record,
+  polled every 0.1 s, with the polls that took over 0.2 s; and the writes
+  during the ALTER that took over 0.2 s, by when they began;
 - after the deliveries drain, whether the index's live entries are exactly
   the table's rows (a count and two order-independent digests over every
   shard), and whether lazy reads return what strong reads return for the
@@ -158,10 +161,54 @@ def percentile(values, p):
     return s[min(len(s) - 1, int(round(p / 100 * (len(s) - 1))))]
 
 
-def summary(samples):
+def summary(samples, since=None):
+    """Latencies of samples (start, ms, ok); with since, also the writes over
+    0.2 s, by when they began after it (s), at most 20."""
     lat = [x[1] for x in samples if x[2]]
-    return {"writes": len(lat), "errors": sum(1 for x in samples if not x[2]),
-            "p50_ms": percentile(lat, 50), "p99_ms": percentile(lat, 99), "max_ms": max(lat) if lat else None}
+    out = {"writes": len(lat), "errors": sum(1 for x in samples if not x[2]),
+           "p50_ms": percentile(lat, 50), "p99_ms": percentile(lat, 99), "max_ms": max(lat) if lat else None}
+    if since is not None:
+        out["slow"] = [[round(x[0] - since, 2), round(x[1])] for x in samples if x[1] > 200][:20]
+    return out
+
+
+# A copy's phase on a shard, from its record (the space's id before the
+# ALTER), and whether its cleanup is done.
+PHASE = """
+local r = box.space._tarn_meta:get{'engine:' .. ...}
+if r == nil then return box.NULL end
+return r.value.cleaned and 'cleaned' or r.value.phase
+"""
+
+
+def phase_poller(nodes, ids, began, stop, timeline, stalls):
+    """Polls each shard's copy phase every 0.1 s until stop: each phase change
+    as [s after began, phase] in timeline[shard], and each poll over 0.2 s as
+    [s after began, shard, ms] in stalls."""
+    conns = []
+    for n in nodes:
+        host, port = n.rsplit(":", 1)
+        conns.append(tarantool.Connection(host, int(port), user="tarn", password="tarn", socket_timeout=60,
+                                          connect_now=True))
+    last = [None] * len(nodes)
+    try:
+        while not stop.is_set():
+            for i, conn in enumerate(conns):
+                t0 = time.monotonic()
+                try:
+                    phase = conn.eval(PHASE, [ids[i]]).data[0]
+                except Exception as e:  # a leader that does not answer
+                    phase = f"error: {e}"
+                t1 = time.monotonic()
+                if phase != last[i]:
+                    timeline[i].append([round(t0 - began, 2), phase])
+                    last[i] = phase
+                if t1 - t0 > 0.2:
+                    stalls.append([round(t0 - began, 2), i + 1, round((t1 - t0) * 1000)])
+            stop.wait(0.1)
+    finally:
+        for conn in conns:
+            conn.close()
 
 
 def sha256(path):
@@ -227,6 +274,8 @@ def main():
 
     samples, other, stop = [], [], threading.Event()
     alter_error = None
+    ids = [ev(n, "return box.space[...].id", [f"{DB}.t"]) for n in nodes]
+    timeline, stalls, polled = [[] for _ in nodes], [], threading.Event()
 
     def other_writer():
         # Inserts into u, a table the ALTER doesn't touch.
@@ -272,6 +321,9 @@ def main():
     try:
         time.sleep(args.before)
         alter_begin = time.monotonic()
+        began_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
+        poller = threading.Thread(target=phase_poller, args=(nodes, ids, alter_begin, polled, timeline, stalls))
+        poller.start()
         try:
             q(c, "ALTER TABLE t ADD INDEX lk(k,n,id)" + (" COMMENT 'tarn:lazy'" if args.index == "lazy" else ""))
         except pymysql.MySQLError as e:
@@ -285,10 +337,13 @@ def main():
         time.sleep(5)
     finally:
         stop.set()
+        polled.set()
         for th in threads:
             th.join()
+        poller.join()
     alter_s = alter_end - alter_begin
-    print(f"ALTER returned after {alter_s:.1f} s{': ' + alter_error if alter_error else ''}", flush=True)
+    print(f"ALTER began at {began_at} and returned after {alter_s:.1f} s{': ' + alter_error if alter_error else ''}",
+          flush=True)
     published_s = None
     if alter_error:
         published_s = wait_published(c, timeout=600) - alter_begin
@@ -300,7 +355,7 @@ def main():
     if args.index == "plain":
         return finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
                       samples, other, alter_begin, alter_end, replicas, alter_error=alter_error,
-                      published_s=published_s)
+                      published_s=published_s, timeline=timeline, stalls=stalls)
     # Exact: the index's live entries are the table's rows, on all shards.
     digests = [ev(n, DIGEST, [f"{DB}.t"]) for n in nodes]
     rows = [sum(d["rows"][i] for d in digests) % (2 ** 32 if i else 2 ** 63) for i in range(3)]
@@ -320,7 +375,7 @@ def main():
             mismatched.append({"k": k, "strong": len(strong), "lazy": len(lazy)})
     return finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
                   samples, other, alter_begin, alter_end, replicas, checked, mismatched,
-                  alter_error=alter_error, published_s=published_s)
+                  alter_error=alter_error, published_s=published_s, timeline=timeline, stalls=stalls)
 
 
 def wait_published(c, timeout):
@@ -349,7 +404,7 @@ return {rows = sp.index[0]:count(), entries = idx and idx:count() or box.NULL}
 
 def finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
            samples, other, alter_begin, alter_end, replicas, checked=None, mismatched=None,
-           alter_error=None, published_s=None):
+           alter_error=None, published_s=None, timeline=None, stalls=None):
     if mismatched is None:
         counts = [ev(n, PLAIN_COUNT, [f"{DB}.t"]) for n in nodes]
         mismatched = [c for c in counts if c["entries"] != c["rows"]]
@@ -358,7 +413,7 @@ def finish(args, nodes, shards, before_state, after_state, load_s, refusals, alt
     def phases(xs):
         return {
             "before": summary([x for x in xs if x[0] < alter_begin]),
-            "during": summary([x for x in xs if alter_begin <= x[0] < alter_end]),
+            "during": summary([x for x in xs if alter_begin <= x[0] < alter_end], alter_begin),
             "after": summary([x for x in xs if x[0] >= alter_end]),
         }
     server = os.environ.get("TARN_BIN", os.path.join(ROOT, "target", "release", "tarn-server"))
@@ -382,6 +437,7 @@ def finish(args, nodes, shards, before_state, after_state, load_s, refusals, alt
         "build_rows_per_s": round(total / alter_s), "writes": phases(samples),
         "other_writes": phases(other) if args.other_rate else None,
         "nodes_before": before_state, "nodes_after": after_state,
+        "copy_phases": timeline, "slow_probes": (stalls or [])[:40],
         "checked_rows": checked, "mismatched_keys": mismatched,
     }
     with open(args.out, "w") as f:
