@@ -3661,4 +3661,77 @@ mod tests {
             ]
         );
     }
+
+    /// Every storage procedure the SQL server names is granted to its
+    /// production user. Storage's production profile grants execute only on
+    /// `BK.production_functions` (lua/tarn.lua) and refuses any other with
+    /// 42 (issue #285), which a caller doesn't take for a missing procedure
+    /// (33): a projected scan then failed instead of reading.
+    #[test]
+    fn production_grants_every_procedure_the_sql_server_names() {
+        use std::collections::{BTreeSet, HashSet};
+        let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lua_dir = crate_dir.join("../../lua");
+        let tarn = std::fs::read_to_string(lua_dir.join("tarn.lua")).unwrap();
+        let list = &tarn[tarn.find("BK.production_functions = {").expect("the production list")..];
+        let list = &list[..list.find("\n}").unwrap()];
+        let granted: HashSet<&str> = list.split('\'').skip(1).step_by(2).collect();
+        let ident = |s: &str| -> String {
+            s.chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect()
+        };
+        // Storage's global procedures: `function tarn_x(` or `tarn_x = ...`
+        // at the start of a line of one of its modules.
+        let mut defined = HashSet::new();
+        for entry in std::fs::read_dir(&lua_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "lua") {
+                for line in std::fs::read_to_string(&path).unwrap().lines() {
+                    let (rest, function) = match line.strip_prefix("function ") {
+                        Some(rest) => (rest, true),
+                        None => (line, false),
+                    };
+                    let name = ident(rest);
+                    let after = &rest[name.len()..];
+                    if name.starts_with("tarn_")
+                        && ((function && after.starts_with('(')) || (!function && after.trim_start().starts_with('=')))
+                    {
+                        defined.insert(name);
+                    }
+                }
+            }
+        }
+        // Each quoted name of one in the SQL server's sources.
+        let (mut named, mut missing, mut dirs) = (0, BTreeSet::new(), vec![crate_dir.join("src")]);
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for (at, _) in text.match_indices("\"tarn_") {
+                        let name = ident(&text[at + 1..]);
+                        if text[at + 1 + name.len()..].starts_with('"') && defined.contains(&name) {
+                            named += 1;
+                            if !granted.contains(name.as_str()) {
+                                missing.insert(format!("{name} ({})", path.display()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            granted.len() > 100 && defined.len() > 100 && named > 100,
+            "{} {} {named}",
+            granted.len(),
+            defined.len()
+        );
+        assert!(
+            missing.is_empty(),
+            "not in BK.production_functions (lua/tarn.lua): {missing:?}"
+        );
+    }
 }

@@ -542,6 +542,11 @@ class Fixture:
                     f"SELECT COUNT(*),SUM(n),MIN(n),MAX(n) FROM {engine}_t WHERE id>=0 AND n>=0", c
                 ) == ((1, 11, 11, 11),)
                 assert int(self.query("SHOW GLOBAL STATUS LIKE 'Tarn_storage_reductions'", c)[0][1]) > before
+                # (A plain projection over a range scan reads through
+                # tarn_select_projected, issue #285.)
+                before = int(self.query("SHOW GLOBAL STATUS LIKE 'Tarn_storage_projections'", c)[0][1])
+                assert self.query(f"SELECT n FROM {engine}_t WHERE id>=0", c) == ((11,),)
+                assert int(self.query("SHOW GLOBAL STATUS LIKE 'Tarn_storage_projections'", c)[0][1]) > before
                 self.query("SET SESSION tarn_lazy_read_your_writes=ON", c)
                 self.query(
                     f"CREATE TABLE {engine}_l (id INT PRIMARY KEY,n INT,lane INT,"
@@ -558,6 +563,7 @@ class Fixture:
                 "authenticated TLS DDL, native data reads and transactions on memtx and vinyl"
             )
             self.record("typed reductions execute through the service ACL on memtx and vinyl")
+            self.record("typed projections execute through the service ACL on memtx and vinyl")
             self.record("composite lazy DDL, fully bound and ordered prefix reads over TLS on both engines")
         # Drive storage directly through net.box over private sockets for
         # exact authorization checks; the mTLS network test follows below.
