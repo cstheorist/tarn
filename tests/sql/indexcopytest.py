@@ -202,10 +202,11 @@ def main():
             return r and r.value.passes or 0
         """, [sid])
 
-    def slices_of(node):
+    def slices_of(group):
         """How many calls of a copy's BUILD or PREPARE returned for more on
-        node since it started (#184)."""
-        return ev(node, "return tarn.engine.slices or 0")
+        the shard's nodes since they started (#184): on all of them, whichever
+        led meanwhile."""
+        return sum(ev(node, "return tarn.engine.slices or 0") for node in group["replicas"])
 
     def catchup_bounds(small):
         """Catch-up passes at 16 captured keys, until 8 are left for the
@@ -1026,14 +1027,14 @@ def main():
             return table
 
         old_ids = {g["id"]: ev(leader(g), "return box.space[...].id", [space]) for g in groups}
-        sliced = {g["id"]: slices_of(leader(g)) for g in groups}
+        sliced = {g["id"]: slices_of(g) for g in groups}
         catchup_bounds(True)
         try:
             online(f"ALTER TABLE {t} ADD INDEX kk (k), ADD UNIQUE INDEX uc (tenant_id, c)", ("kk", "uc"))
         finally:
             catchup_bounds(False)
         passes = {g["id"]: passes_of(leader(g), old_ids[g["id"]]) for g in groups}
-        sliced = {g["id"]: slices_of(leader(g)) - sliced[g["id"]] for g in groups}
+        sliced = {g["id"]: slices_of(g) - sliced[g["id"]] for g in groups}
         print(f"  ({engine}: catch-up passes by shard: {passes}; calls that returned for more: {sliced})",
               flush=True)
         check(f"{engine}: each shard's copy ran catch-up passes", all(n > 0 for n in passes.values()), passes)
