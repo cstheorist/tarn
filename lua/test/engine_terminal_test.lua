@@ -60,7 +60,7 @@ for n, source_engine in ipairs({'memtx', 'vinyl'}) do
         local nd = {}; for k, v in pairs(def) do nd[k] = v end
         nd.id, nd.ver, nd.engine = target, ver, source_engine == 'memtx' and 'vinyl' or 'memtx'
         return {ver = ver, timeout = .2,
-            engine_change = {old_id = sid, old_ver = 0, old_engine = source_engine, old_name = name},
+            engine_change = {old_id = sid, old_ver = 0, old_engine = source_engine, old_name = name, durable = true},
             def = nd, uix = {}, uix_drop = {}, lazy_drop = {}}
     end
     local a, owner = args(first_target, 1), 'engine-terminal-' .. source_engine
@@ -121,16 +121,22 @@ for n, source_engine in ipairs({'memtx', 'vinyl'}) do
     setmetatable(track.list, {__newindex = function() error('injected dirty-list append allocation failure') end})
     local refused = tarn_autocommit({{'insert', sid, {0, 1}}}, {fence = {sid, 0}, wb = {1}})
     setmetatable(track.list, nil)
+    -- (The durable capture, lua/tarn_engine.lua, is written in the write's
+    -- own transaction: the write refused leaves no entry there.)
+    local durable = box.space['_tarn_engine_capture_' .. sid .. '_' .. (old_token:gsub('-', ''))]
+    local function entry() return durable and durable:get{require('msgpack').encode({0})} end
     check(source_engine .. ': partial marker failure aborts the source write and invalidates capture',
         refused[1] ~= 'ok' and box.space[sid]:get{0} == nil and not track.valid
-        and next(track.keys) ~= nil and #track.list == 0, refused)
+        and next(track.keys) ~= nil and #track.list == 0 and durable ~= nil and entry() == nil, refused)
     ok(tarn_autocommit({{'insert', sid, {0, 1}}}, {fence = {sid, 0}, wb = {1}}))
     check(source_engine .. ': the same key can commit after failure without trusting the broken set',
         box.space[sid]:get{0} ~= nil and not track.valid)
+    local noted = entry() ~= nil
     ok(tarn_test_hook('engine_copy', 'release')); assert(builder:join()); ok(result)
-    check(source_engine .. ': lost capture forces full recopy including the committed key behind its cursor',
-        manifest(sid).capture ~= old_token and box.space[second_target]:len() == 301
-        and box.space[second_target]:get{0} ~= nil)
+    local resumed = assert(tarn.engine.tracks[sid])
+    check(source_engine .. ': lost capture resumes from the durable capture, which holds the committed key behind its cursor',
+        noted and manifest(sid).capture == old_token and manifest(sid).resumes == 1 and resumed.valid
+        and resumed.list[1] ~= nil and resumed.list[1][1] == 0 and box.space[second_target]:len() == 300)
     ok(tarn_alter_prepare(name, a, 1)); ok(tarn_job_phase(owner, 'apply'))
     ok(tarn_alter_apply(name, a, 1)); ok(tarn_job_end(owner))
     check(source_engine .. ': recovered image publishes and fully cleans',

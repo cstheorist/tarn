@@ -2169,6 +2169,7 @@ impl Cluster {
                     old_engine: def.engine,
                     old_name: def.space_name(),
                     rebuild: true,
+                    durable: false,
                 });
             }
             if ch.engine_change.is_some() {
@@ -2177,6 +2178,13 @@ impl Cluster {
                 // (copy_index_builds checked a rebuild's).
                 if !rebuild {
                     self.require_engine_capabilities().await?;
+                }
+                // The copy keeps its capture durably only when every replica
+                // can note its writes there: a leader that can't would leave a
+                // resume after it short of them (issue #184).
+                let durable = self.every_replica_answers("tarn_engine_durable_capabilities").await;
+                if let Some(engine) = ch.engine_change.as_mut() {
+                    engine.durable = durable;
                 }
                 ch.def.counter_id = Some(def.counter_space_id());
                 ch.def.space_id = self.alloc_space_ids(1).await?;
@@ -2291,6 +2299,19 @@ impl Cluster {
                         );
                         return false;
                     }
+                }
+            }
+        }
+        true
+    }
+
+    /// Whether every replica of every shard answers capability procedure
+    /// `func` with `{'ok', 1}`.
+    async fn every_replica_answers(&self, func: &str) -> bool {
+        for shard in self.live_shards() {
+            for addr in self.shards[shard].replicas() {
+                if !self.replica_answers_v1(addr, func).await {
+                    return false;
                 }
             }
         }

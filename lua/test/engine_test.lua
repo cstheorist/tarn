@@ -215,7 +215,7 @@ local function create(engine, tag, count, with_uix)
         new_globals, old_globals, nd.uix = {u}, {old_uid}, {u}
     end
     t.args = {ver = 1, timeout = 5, def = nd, uix = new_globals, uix_drop = old_globals, lazy_drop = {},
-        engine_change = {old_id = sid, old_ver = 0, old_engine = engine, old_name = name}}
+        engine_change = {old_id = sid, old_ver = 0, old_engine = engine, old_name = name, durable = true}}
     begin_job(t)
     return t
 end
@@ -244,7 +244,8 @@ local function rebuild(engine, tag, count, timeout)
         builds = {{12, 'c_u', true, {c_part}}, {13, 'v_c', false, {{field = 2, type = 'integer'}, c_part}},
             {14, 'b_c_u', true, {{field = 3, type = 'unsigned'}, c_part}}},
         drop = {11}, renames = {{7, 'v_u'}},
-        engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = true}}
+        engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = true,
+            durable = true}}
     begin_job(t)
     return t
 end
@@ -416,8 +417,9 @@ local function exercise_rebuild(engine)
     check(label('that copy is published with the write made meanwhile'), clean(slow) and exact(slow, slow.new_id),
         difference(slow, slow.new_id))
 
-    -- A capture that writes outgrow after the deadline starts the copy
-    -- again (reset), whose cut and drain have deadlines of their own.
+    -- A capture that writes outgrow after the deadline, past its limits in
+    -- the durable capture too, starts the copy again (reset), whose cut and
+    -- drain have deadlines of their own.
     local lost = rebuild(engine, 'rebuild_lost', 260, 1)
     hook('engine_copy', 'hold')
     building = spawn(function() return call('build', lost) end)
@@ -426,7 +428,6 @@ local function exercise_rebuild(engine)
     fiber.sleep(1.2)
     tarn.cfg.engine_dirty_keys = 2
     ok(update(lost, 3, 2, 31)); ok(update(lost, 6, 2, 61)); ok(update(lost, 9, 2, 91))
-    tarn.cfg.engine_dirty_keys = nil
     hook('write', 'hold')
     writing = spawn(function() return update(lost, 12, 2, 121) end)
     hook('write', 'reached')
@@ -434,6 +435,7 @@ local function exercise_rebuild(engine)
     fiber.sleep(.2)
     hook('write', 'release')
     built = result(building)
+    tarn.cfg.engine_dirty_keys = nil
     check(label('a capture lost after the deadline starts the copy again'),
         built[1] == 'ok' and result(writing)[1] == 'ok' and phase(lost).phase == 'copied'
         and phase(lost).capture ~= token, {built, phase(lost)})
@@ -474,7 +476,8 @@ local function rebuild_layout(engine, tag, count, fill, unique_e, cfill)
         drop = {}, renames = {}, format = nd.format, old_width = 4, materialize = fill ~= nil,
         pad = fill ~= nil and {3, cfill == nil and box.NULL or cfill, fill} or box.NULL,
         checks = fill ~= nil and {{5, 'e', 'indexed', box.NULL, box.NULL, fill}} or {},
-        engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = 'layout'}}
+        engine_change = {old_id = t.old_id, old_ver = 0, old_engine = engine, old_name = t.name, rebuild = 'layout',
+            durable = true}}
     begin_job(t)
     return t
 end
@@ -555,8 +558,9 @@ local function exercise_layout(engine)
     check(label('rows in the new layout go in after it'), written[1] == 'ok'
         and box.space[t.name].index.e_idx:count{8} == 1, written)
 
-    -- Writes outgrow the capture mid-copy: the copy starts again, and pads
-    -- alike, from the job's record.
+    -- Writes outgrow the capture mid-copy, past its limits in the durable
+    -- capture too: the copy starts again, and pads alike, from the job's
+    -- record.
     local lost = rebuild_layout(engine, 'layout_lost', 260, 7, false, 5)
     hook('engine_copy', 'hold')
     building = spawn(function() return call('build', lost) end)
@@ -564,8 +568,8 @@ local function exercise_layout(engine)
     local token = phase(lost).capture
     tarn.cfg.engine_dirty_keys = 2
     ok(update(lost, 3, 2, 31)); ok(update(lost, 6, 2, 61)); ok(update(lost, 9, 2, 91))
-    tarn.cfg.engine_dirty_keys = nil
     hook('engine_copy', 'release'); ok(result(building))
+    tarn.cfg.engine_dirty_keys = nil
     ok(call('prepare', lost)); decide(lost, 'apply'); ok(call('apply', lost)); end_job(lost)
     check(label('a copy started again after its capture was lost pads every row alike'),
         phase(lost).capture ~= token and clean(lost) and same(rows(lost.new_id), padded(lost, 7, 5)),
@@ -1100,19 +1104,25 @@ local function exercise(engine)
     ok(change(loss, {{'update', loss.old_id, {1}, {{'=', 2, 88888}}}})); loss.expected[1][2] = 88888
     hook('engine_copy', 'release'); ok(result(building))
     local after = phase(loss)
-    check(label('capture-generation loss recopies already copied rows from confirmed source'),
-        after.capture ~= before.capture and after.copied == 260 and exact(loss, loss.new_id)
-        and mp.encode(rows(loss.new_id)) == mp.encode(rows(loss.old_id)), {before, after})
+    local track, noted = tarn.engine.tracks[loss.old_id], false
+    for _, key in ipairs(track and track.valid and track.list or {}) do noted = noted or key[1] == 1 end
+    check(label('capture-generation loss resumes the copy from the durable capture, which noted a write to a copied row'),
+        after.capture == before.capture and (after.resumes or 0) == 1 and after.copied == 260 and noted,
+        {before, after, noted})
     local old_owner = loss.owner; loss.owner = old_owner .. '-takeover'
     local takeover = ok(tarn_job_touch(loss.owner, old_owner)); loss.gen = takeover[2]
     assert(loss.gen > 1)
     jobs[old_owner], jobs[loss.owner] = nil, loss
     ok(call('build', loss))
+    local shadow_rows = mp.encode(rows(loss.new_id))
     stale = call('build', loss, 1)
     check(label('a stale worker cannot change a higher-generation shadow'),
         stale[1] ~= 'ok' and stale[2] == 1412 and phase(loss).gen == loss.gen
-        and exact(loss, loss.new_id), stale)
-    ok(call('prepare', loss)); decide(loss, 'apply')
+        and mp.encode(rows(loss.new_id)) == shadow_rows, stale)
+    ok(call('prepare', loss))
+    check(label('the prepared copy rereads the row written after the loss'), exact(loss, loss.new_id)
+        and mp.encode(rows(loss.new_id)) == mp.encode(rows(loss.old_id)), difference(loss, loss.new_id))
+    decide(loss, 'apply')
     stale = call('apply', loss, 1)
     check(label('a stale finisher cannot use another generation global decision'),
         stale[1] ~= 'ok' and stale[2] == 1412 and box.space[loss.name].id == loss.old_id, stale)

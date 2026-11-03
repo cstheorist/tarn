@@ -72,6 +72,10 @@ local yes,err=pcall(function()
     r.target_zero=target and target:get{0}~=nil or false
     r.target_engine=target and target.engine or false
     local m=box.space._tarn_meta:get{'engine:'..old_id}; r.receipt=m and m.value or false
+    -- (The copy's durable capture, named after its token: its entry for row 0.)
+    local d=m and type(m.value.capture)=='string' and m.value.capture~=''
+        and box.space['_tarn_engine_capture_'..old_id..'_'..(m.value.capture:gsub('-',''))]
+    r.durable_zero=d and d:get{require('msgpack').encode({0})}~=nil or false
     local j=box.space._tarn_meta:get{'job:'..name};r.job=j and j.value or false
     local cat=box.space._tarn_catalog:get{name};r.catalog_id=cat and cat.def.id or 0
     r.held=box.space._tarn_meta:get{'hold:'..new_id}~=nil
@@ -192,7 +196,7 @@ assert(tarn_create_table(def)[1]=='ok')
 local writes={};for i=1,count do writes[#writes+1]={'insert',old_id,{i,i*10,1}} end
 assert(tarn_autocommit(writes,{fence={old_id,0}})[1]=='ok')
 local nd=table.deepcopy(def);nd.id,nd.engine,nd.ver=new_id,target,5
-local a={ver=5,timeout=12,engine_change={old_id=old_id,old_ver=0,old_engine=engine,old_name=name},
+local a={ver=5,timeout=12,engine_change={old_id=old_id,old_ver=0,old_engine=engine,old_name=name,durable=true},
     def=nd,uix={},uix_drop={},lazy_drop={}}
 box.space._tarn_meta:replace{'test:engine_rf3',{a=a,owner=owner}}
 return tarn_job_begin({owner=owner,kind='alter',space=name,names={name},ver=5,a=a},0)
@@ -280,20 +284,24 @@ f:name('engine_rf3_build');f:set_joinable(true);_G.engine_rf3_build_fiber=f
         event('copy BUILD reached its hook', sent)
         if sent.calls > 1 then print('  note ' .. engine .. ': BUILD resent after ' .. json.encode(sent.refusals)) end
         ok(call(l, 'tarn_autocommit', {{'insert', old_id, {0, 777, 1}}}, {fence = {old_id, 0}}))
-        for i = 1, 3 do await('partial copy and acknowledged dirty row replicated', function()
+        for i = 1, 3 do await('partial copy, acknowledged dirty row and its durable capture entry replicated', function()
             local s = state(i)
             return s and s.receipt and s.receipt.copied == 128 and s.target_rows == 128
-                and s.source_zero and not s.target_zero
+                and s.source_zero and not s.target_zero and s.durable_zero
         end) end
         check('copy is partial and an acknowledged behind-cursor row is not in the shadow', state(l).source_rows == count + 1)
+        check('the durable capture noted that row, on every replica', state(1).durable_zero and state(2).durable_zero
+            and state(3).durable_zero)
         kill_owned(l, 'first')
     elseif stage == 'after-first' then
         local l = leader(); local a = args(l)
         local gen = ok(call(l, 'tarn_job_touch', owner .. '-resumed', owner))[2]; assert(gen == 2)
+        local f = assert(io.open(work .. '/identity-first.json')); local before = json.decode(f:read('*a')); f:close()
         ok(call(l, 'tarn_alter_build', name, a, gen)); ok(call(l, 'tarn_alter_prepare', name, a, gen))
         local s = state(l)
-        check('promotion fully recopies lost volatile capture and persists PREPARED',
-            s.receipt.phase == 'prepared' and s.target_zero and s.target_rows == count + 1 and s.held, s)
+        check('promotion resumes the copy from the durable capture and persists PREPARED',
+            s.receipt.phase == 'prepared' and s.receipt.capture == before.receipt.capture and s.receipt.resumes == 1
+            and s.target_zero and s.target_rows == count + 1 and s.held, s)
         ev(l, "box.space._tarn_meta:replace{'test:engine_rf3_token',...}", {s.receipt.capture})
     elseif stage == 'caught-up' then
         local f = assert(io.open(work .. '/killed-first')); local i = tonumber(f:read('*a')); f:close()

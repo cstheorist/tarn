@@ -754,6 +754,20 @@ storage RPC deadline (`rpc.timeout_secs`, 120 s by default). The default,
 0, means a quarter of that deadline, at most 30 s; a larger value is capped
 at half of it.
 
+A copy keeps the keys written to its table during it in two spaces, named
+`_tarn_engine_capture_<id>_<token>` and `_tarn_engine_holes_<id>_<token>`
+after the table's space id and the copy's capture (issue #184). They exist
+while the copy runs, and the copy drops them when it ends. Each write to
+the table meanwhile writes one row more, its key's entry, to the first,
+which holds one entry for each key written during the copy (in the table's
+engine: a memtx table's in memory). A
+copy whose leader changes or restarts goes on from where it was with them,
+instead of copying the table again; one whose writes outgrow
+`engine_dirty_keys` since its last catch-up pass still starts over. The SQL
+server asks for them only when every replica of every shard can write them
+(`tarn_engine_durable_capabilities`): finish or abort such copies before
+downgrading storage, as a leader from before would leave them short.
+
 A materializing ALTER retains a memtx undo journal in `_tarn_alter_undo`
 until commit cleanup or abort completes: one primary key and original tuple
 length per changed row. An ALTER that copies the table materializes in its

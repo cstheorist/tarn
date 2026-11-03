@@ -1004,6 +1004,12 @@ pub struct EngineChange {
     /// A rebuild in the same engine, with the change's index builds, drops
     /// and renames, rather than a change of engine.
     pub rebuild: bool,
+    /// The copy keeps its capture durably too (issue #184), so that one
+    /// lost by a leader change or a restart resumes instead of starting
+    /// over: only when every replica answers
+    /// `tarn_engine_durable_capabilities`, since a leader that does not note
+    /// its writes there would leave a resume after it short of them.
+    pub durable: bool,
 }
 
 /// The result of `apply`: the new definition and what the shards do.
@@ -1871,6 +1877,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
             old_engine: def.engine,
             old_name: def.space_name(),
             rebuild: false,
+            durable: false,
         }),
         format,
         drop,
@@ -2102,7 +2109,7 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     m.map(14 + !ch.lazy_drop.is_empty() as usize + ch.engine_change.is_some() as usize + made as usize);
     if let Some(engine) = &ch.engine_change {
         m.str("engine_change")
-            .map(4 + engine.rebuild as usize)
+            .map(4 + engine.rebuild as usize + engine.durable as usize)
             .str("old_id")
             .uint(engine.old_id as u64)
             .str("old_ver")
@@ -2123,6 +2130,10 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
             m.str("rebuild").str("layout");
         } else if engine.rebuild {
             m.str("rebuild").bool(true);
+        }
+        // (Storage from before ignores it, and keeps its capture in memory.)
+        if engine.durable {
+            m.str("durable").bool(true);
         }
     }
     if !ch.lazy_drop.is_empty() {
@@ -2528,6 +2539,7 @@ mod tests {
             old_engine: def.engine,
             old_name: def.space_name(),
             rebuild: true,
+            durable: false,
         });
         let args = lua_args(&ch, 7, 5.0);
         let mut rd = Rd::new(&args);
@@ -2543,12 +2555,34 @@ mod tests {
                 }
                 assert_eq!(fields["rebuild"], vec![0xc3]);
                 assert_eq!(fields["old_engine"][1..], *def.engine.name().as_bytes());
+                assert!(!fields.contains_key("durable"));
                 seen = true;
             } else {
                 rd.skip().unwrap();
             }
         }
         assert!(seen && rd.buf.is_empty());
+        // A copy that keeps its capture durably says so (issue #184).
+        ch.engine_change.as_mut().unwrap().durable = true;
+        let args = lua_args(&ch, 7, 5.0);
+        let mut rd = Rd::new(&args);
+        let mut durable = None;
+        for _ in 0..rd.map().unwrap() {
+            if rd.string().unwrap() == "engine_change" {
+                let n = rd.map().unwrap();
+                assert_eq!(n, 6);
+                for _ in 0..n {
+                    let k = rd.string().unwrap().to_string();
+                    let v = rd.raw_value().unwrap().to_vec();
+                    if k == "durable" {
+                        durable = Some(v);
+                    }
+                }
+            } else {
+                rd.skip().unwrap();
+            }
+        }
+        assert_eq!(durable, Some(vec![0xc3]));
         // A rebuild that changes the stored layout sends its format and pad.
         let mut ch = alter(&def, &cat, "ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)").unwrap();
         ch.engine_change = Some(EngineChange {
@@ -2557,6 +2591,7 @@ mod tests {
             old_engine: def.engine,
             old_name: def.space_name(),
             rebuild: true,
+            durable: false,
         });
         let args = lua_args(&ch, 7, 5.0);
         let mut rd = Rd::new(&args);
@@ -2624,6 +2659,7 @@ mod tests {
             old_engine: def.engine,
             old_name: def.space_name(),
             rebuild: true,
+            durable: false,
         });
         ch.def.space_id = 700;
         ch.def.resolve_globals().unwrap();
@@ -2718,6 +2754,7 @@ mod tests {
             old_engine: def.engine,
             old_name: def.space_name(),
             rebuild: true,
+            durable: false,
         });
         ch.def.space_id = 800;
         ch.def.resolve_globals().unwrap();
@@ -2829,6 +2866,7 @@ mod tests {
             old_engine: def.engine,
             old_name: def.space_name(),
             rebuild: true,
+            durable: false,
         });
         ch.def.space_id = 800;
         for ix in &mut ch.def.indexes {

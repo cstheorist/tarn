@@ -1,0 +1,409 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 75 and seed -6829058483154061058 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 3649] (Linux 6.18.44-fc-v230 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-durable/tla/EngineCopy.tla
+Parsing file /tmp/tlc-8490921322625975562/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-8490921322625975562/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-8490921322625975562/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-8490921322625975562/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-8490921322625975562/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-8490921322625975562/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-8490921322625975562/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module EngineCopy
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module EngineCopy
+Starting... (2026-11-03 07:14:50)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-03 07:14:51.
+Progress(11) at 2026-11-03 07:14:54: 51,776 states generated (51,776 s/min), 18,747 distinct states found (18,747 ds/min), 8,342 states left on queue.
+Error: Invariant PreparedImage is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = "new"
+/\ durable = FALSE
+/\ dirty = {}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = FALSE
+/\ swap = 0
+/\ indexes = FALSE
+/\ shadow = <<0, 0>>
+/\ started = 0
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 2: <InstallCapture line 138, col 5 to line 141, col 78 of module EngineCopy>
+/\ phase = "capture"
+/\ durable = TRUE
+/\ dirty = {}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = FALSE
+/\ shadow = <<0, 0>>
+/\ started = 0
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 3: <StartWrite([active |-> TRUE, keys |-> {1}, values |-> <<0, 0>>]) line 109, col 5 to line 118, col 80 of module EngineCopy>
+/\ phase = "capture"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {}
+/\ swept = {}
+/\ pending = [active |-> TRUE, keys |-> {1}, values |-> <<0, 0>>, gen |-> 1]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = FALSE
+/\ shadow = <<0, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 4: <FinishWrite(FALSE) line 121, col 5 to line 133, col 54 of module EngineCopy>
+/\ phase = "capture"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = FALSE
+/\ shadow = <<0, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 5: <BeginCopy line 144, col 5 to line 148, col 94 of module EngineCopy>
+/\ phase = "copy"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = FALSE
+/\ shadow = <<0, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 6: <ReadPage(1) line 151, col 5 to line 157, col 79 of module EngineCopy>
+/\ phase = "copy"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> TRUE, gen |-> 1, key |-> 1, value |-> 1, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = FALSE
+/\ shadow = <<0, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 7: <WritePage line 160, col 5 to line 167, col 77 of module EngineCopy>
+/\ phase = "copy"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {1}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = FALSE
+/\ shadow = <<1, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 8: <ReadPage(2) line 151, col 5 to line 157, col 79 of module EngineCopy>
+/\ phase = "copy"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {1}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> TRUE, gen |-> 1, key |-> 2, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = FALSE
+/\ shadow = <<1, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 9: <WritePage line 160, col 5 to line 167, col 77 of module EngineCopy>
+/\ phase = "copy"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = FALSE
+/\ shadow = <<1, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 10: <BuildIndexes line 195, col 5 to line 199, col 85 of module EngineCopy>
+/\ phase = "copy"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = TRUE
+/\ shadow = <<1, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 11: <HolderDelete(1) line 310, col 5 to line 313, col 115 of module EngineCopy>
+/\ phase = "copy"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = FALSE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = TRUE
+/\ shadow = <<0, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 12: <Fence line 170, col 5 to line 172, col 86 of module EngineCopy>
+/\ phase = "fenced"
+/\ durable = TRUE
+/\ dirty = {1}
+/\ fenced = TRUE
+/\ entry = <<0, 0>>
+/\ tailCleared = FALSE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = TRUE
+/\ shadow = <<0, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 13: <TailClear line 178, col 5 to line 185, col 99 of module EngineCopy>
+/\ phase = "fenced"
+/\ durable = TRUE
+/\ dirty = {}
+/\ fenced = TRUE
+/\ entry = <<0, 0>>
+/\ tailCleared = TRUE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = TRUE
+/\ swap = 0
+/\ indexes = TRUE
+/\ shadow = <<0, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+State 14: <Prepare line 202, col 5 to line 206, col 85 of module EngineCopy>
+/\ phase = "prepared"
+/\ durable = TRUE
+/\ dirty = {}
+/\ fenced = TRUE
+/\ entry = <<0, 0>>
+/\ tailCleared = TRUE
+/\ unsettled = FALSE
+/\ cleared = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2}
+/\ swept = {}
+/\ pending = [active |-> FALSE, keys |-> {}, values |-> <<0, 0>>, gen |-> 0]
+/\ settled = 0
+/\ source = <<1, 0>>
+/\ late = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ generation = 1
+/\ page = [active |-> FALSE, gen |-> 0, key |-> 1, value |-> 0, dirty |-> FALSE]
+/\ capture = FALSE
+/\ swap = 0
+/\ indexes = TRUE
+/\ shadow = <<0, 0>>
+/\ started = 1
+/\ gen = 1
+/\ unconfirmedCopied = FALSE
+/\ hole = <<0, 0>>
+
+174978 states generated, 55295 distinct states found, 18158 states left on queue.
+The depth of the complete state graph search is 14.
+Finished in 07s at (2026-11-03 07:14:56)
+Trace exploration spec path: ./EngineCopy_TTrace_1793708089.tla
