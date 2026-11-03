@@ -114,7 +114,7 @@ of workload, fault budget and options. The names say what is checked:
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
 | `ReplicatedVinylBuild` | a separate model of a vinyl index build on a replicated shard: behind the table's drained fence, and with one synchronous write in flight while it runs, the index is complete and the replicas keep applying |
 | `ReplicatedBuildFence` | a separate model of an ALTER TABLE's vinyl builds on a replicated shard across leader changes: with a follower caught up before each build and a commit only on a node that still leads, no node meets a build's DDL row it refuses |
-| `ShadowUnique` | a separate model of a copy whose unique index exists before its first row: a stale copy that holds a page row's value leaves the copy, and the final pass removes every dirty key before it puts their rows back; a prepared copy is the source, a change fails with 1062 only for a duplicate the source held, and the final pass has only keys that writes touched |
+| `ShadowUnique` | a separate model of a copy whose unique index exists before its first row: a stale copy that holds a page row's value leaves the copy, and the final pass, like each catch-up pass, removes every key of its set before it puts their rows back; a prepared copy is the source, a change fails with 1062 only for a duplicate the source held, and the final pass has only keys that writes touched |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
@@ -1319,6 +1319,20 @@ conflicts an index meets during the copy. PREPARED certifies that image and
 all those indexes; a restart/APPLY must preserve it, its persistent fence
 and its roll-forward state instead of rebuilding it.
 
+A catch-up pass (issue #184), between pages or before the fence, takes the
+dirty keys and leaves a fresh set to later writes. Once a write noted in
+its set has terminated, the pass removes the set's copies and puts their
+confirmed rows back. The pending write stands for both a caller still in
+its commit, which the pass waits for, and a write whose caller left it in
+the synchronous queue, which the pass's marker commits after. The fence
+waits for any pass in progress, a pass that fails puts its keys back into
+the dirty set, and a restart drops it with the rest of the copy.
+`BugPassWithoutSettle` rereads a key while the write that dirtied it is
+still pending, which then commits with its key in neither set.
+`BugPassDropsKeys` removes the copies without rereading them.
+`BugAbandonLosesKeys` drops the keys of a pass that fails before it
+rereads them. Each breaks `PreparedImage`.
+
 `EngineCutover` separates all-shard preparation/auxiliary readiness, a
 confirmed central decision, native rename, local catalog publication and
 old-space cleanup. A crash after rename resumes from explicit original
@@ -1585,6 +1599,48 @@ start and at BUILD, no pending new space for made generations, a late
 start after ABORT, an online start always refused, and a build bound to
 the new space.
 
+[A suite for catch-up passes](../lua/test/engine_catchup_test.lua) runs
+copies on both engines, 34 checks with the native module and as many
+without:
+- a copy written to more keys than its capture holds runs passes and never
+  starts over, and leaves the final pass at most `engine_fence_keys` keys;
+  its passes come at half the capture's limit, under `engine_catchup_keys`;
+  a threshold of 0 runs no pass over an empty capture;
+- unique values change hands across a pass, by way of NULL, with an insert
+  and a move to a new primary key, and meet no false duplicate;
+- a row written since a pass's swap that held the unique value a reread row
+  holds now leaves the shadow until the final pass;
+- a write in flight at a pass's swap, held after its statements and before
+  its commit, is reread only once it has committed;
+- a write whose caller left it in the synchronous queue at a pass's swap,
+  a row inserted again behind the copy's cursor, is reread as it committed;
+- a pass whose fiber is cancelled after its swap puts its keys back, and
+  the next BUILD goes on with the same capture; with no room left for them,
+  the capture is lost and the copy starts over; either copy is exact;
+- a pass that fails after removing its keys' copies, its transaction cut
+  lost as another job's cut would lose it, puts them back too, and the
+  BUILD sent again rereads them;
+- another engine job's cut during a pass, with a commit to that job's
+  table in flight, fails the pass for now (1213); it puts its keys back,
+  and both copies finish exact;
+- PREPARE catches up over more keys than a batch before it fences;
+- a capture lost during a pass fails it for now (1213), and one lost after
+  a pass starts the copy over; either copy is then exact;
+- writes that refill the capture during each pass of the copy, and writes
+  that outpace the passes before the fence, fail the change (1205), and
+  ABORT ends it with the table as it was.
+
+Each of thirteen mutations of the passes fails it: no wait for the commits
+in flight, no marker, no removal or no reread of the set's copies, a holder
+always taken for a duplicate, no restore of a failed pass's keys or a
+restore past the capture's limits, no passes during the copy or before the
+fence, no limit on either, passes at `engine_catchup_keys` past half the
+capture's limit, and passes over an empty capture at a threshold of 0. Only the marker's count in the job's record catches
+the missing marker. In Tarantool 3.9 a pass's first delete batch also waits
+for the synchronous queue, since a delete of a missing key is logged, and
+so orders the reread after a detached write without the marker; the
+marker doesn't rely on that.
+
 Without the padding of either path, the new format, the refusals, ABORT's
 leniency, either read fix, the kept spaces' renames or their lookup through
 the catalog, the suite fails. It verifies
@@ -1611,7 +1667,8 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
   Bug_EngineCopyTailIgnoresDeletes Bug_EngineCopySkipFinalDrain \
   Bug_EngineCopyLostCaptureContinues Bug_EngineCopyStaleBatch \
   Bug_EngineCopyRebuildPrepared Bug_EngineCopyPrepareWithoutIndexes \
-  Bug_EngineCopyLosePersistentFence EngineCutover \
+  Bug_EngineCopyLosePersistentFence Bug_EngineCopyPassWithoutSettle \
+  Bug_EngineCopyPassDropsKeys Bug_EngineCopyAbandonLosesKeys EngineCutover \
   Bug_EngineCutoverPublishBeforeDecision Bug_EngineCutoverPublishBeforeAuxReady \
   Bug_EngineCutoverDropBeforePublish Bug_EngineCutoverAbortAfterDecision \
   Bug_EngineCutoverApplyAfterAbort Bug_EngineCutoverOldStreamValidates \
@@ -1628,18 +1685,21 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 
 | Configuration | Distinct states | Depth | Expected result |
 |---|---:|---:|---|
-| `EngineCopy` | 9,667 | 20 | passes |
-| `Bug_EngineCopyBeforeCapture` | 10,177 | 11 | violates `PreparedImage` |
-| `Bug_EngineCopyCaptureOnlyNewKeys` | 4,880 | 12 | violates `PreparedImage` |
-| `Bug_EngineCopyLosePersistentFence` | 3,809 | 11 | violates `PreparedImage` |
-| `Bug_EngineCopyLostCaptureContinues` | 12,108 | 15 | violates `PreparedImage` |
-| `Bug_EngineCopyPrepareWithoutIndexes` | 1,840 | 9 | violates `PreparedImage` |
-| `Bug_EngineCopyRebuildPrepared` | 3,809 | 11 | violates `PreparedImage` |
-| `Bug_EngineCopySkipFinalDrain` | 6,539 | 13 | violates `PreparedImage` |
-| `Bug_EngineCopySkipPrefixDrain` | 6,382 | 12 | violates `PreparedImage` |
-| `Bug_EngineCopyStaleBatch` | 11,291 | 17 | violates `PreparedImage` |
-| `Bug_EngineCopyTailIgnoresDeletes` | 6,372 | 13 | violates `PreparedImage` |
-| `Bug_EngineCopyUnconfirmedSource` | 288 | 6 | violates `ConfirmedCopies` |
+| `EngineCopy` | 25,557 | 21 | passes |
+| `Bug_EngineCopyBeforeCapture` | 13,112 | 11 | violates `PreparedImage` |
+| `Bug_EngineCopyCaptureOnlyNewKeys` | 7,484 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyLosePersistentFence` | 6,206 | 11 | violates `PreparedImage` |
+| `Bug_EngineCopyLostCaptureContinues` | 23,729 | 15 | violates `PreparedImage` |
+| `Bug_EngineCopyPrepareWithoutIndexes` | 2,513 | 9 | violates `PreparedImage` |
+| `Bug_EngineCopyRebuildPrepared` | 6,206 | 11 | violates `PreparedImage` |
+| `Bug_EngineCopySkipFinalDrain` | 11,898 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopySkipPrefixDrain` | 9,425 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyStaleBatch` | 25,432 | 17 | violates `PreparedImage` |
+| `Bug_EngineCopyTailIgnoresDeletes` | 11,714 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopyUnconfirmedSource` | 299 | 6 | violates `ConfirmedCopies` |
+| `Bug_EngineCopyPassDropsKeys` | 16,301 | 15 | violates `PreparedImage`: a pass removes its keys' copies without rereading them |
+| `Bug_EngineCopyPassWithoutSettle` | 25,239 | 15 | violates `PreparedImage`: a pass rereads a key whose write is still pending, which then commits with its key in neither set |
+| `Bug_EngineCopyAbandonLosesKeys` | 16,983 | 14 | violates `PreparedImage`: a row deleted after its page was read is copied stale, and a pass that takes its key fails before rereading it |
 | `EngineCutover` | 70,982 | 26 | passes |
 | `Bug_EngineCutoverAbortAfterDecision` | 43,487 | 12 | violates `NoAbortPublished` |
 | `Bug_EngineCutoverApplyAfterAbort` | 49,386 | 13 | violates `CatalogHasSpace` |
@@ -1667,7 +1727,8 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 
 The three configurations for kept global index spaces are generated by
 `gen_cfgs.sh` and bring the default check list from 337 to 340, the three
-for kept lazy generations to 343, and the six for made ones to 349.
+for kept lazy generations to 343, the six for made ones to 349, and the five
+for catch-up passes (three in `EngineCopy`, two in `ShadowUnique`) to 354.
 
 ### Unique indexes on an engine copy's shadow (issue #267)
 
@@ -1698,17 +1759,31 @@ function that pads it with the fills its indexes need. So the model's
 values read as the padded rows, and a duplicate means two rows whose padded
 keys are equal at once, such as a fill that rows share.
 
+A catch-up pass (issue #184) runs between pages: it takes the dirty keys,
+and a fresh set takes later writes. Once the write noted in its set has
+ended, every key of its set leaves the shadow, and then their confirmed
+rows go back in, each read and written in separate steps. A copy that
+holds such a row's value leaves if its key is in the fresh set, and is
+otherwise a duplicate in the source. The fence waits for a pass in
+progress; a pass that fails puts its keys back. `DirtyOnlyWritten` covers
+the pass's set with the dirty keys. `BugPassHolderOldSet` takes the pass's
+own set, rather than the fresh one, for the stale copies, and
+`BugPassInPlace` puts the pass's rows back one at a time.
+
 ```sh
 tla/check.sh ShadowUnique Bug_ShadowUniqueFailOnDirtyHolder \
-  Bug_ShadowUniqueEvictClean Bug_ShadowUniqueTailInPlace
+  Bug_ShadowUniqueEvictClean Bug_ShadowUniqueTailInPlace \
+  Bug_ShadowUniquePassHolderOldSet Bug_ShadowUniquePassInPlace
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
 |---|---:|---:|---|
-| `ShadowUnique` | 183,878 | 21 | passes (three keys, two values, three writes) |
-| `Bug_ShadowUniqueFailOnDirtyHolder` | 71,776 | 9 | violates `NoFalseDuplicate`: a row takes a value a copied row gave up, and its page fails against that row's stale copy |
-| `Bug_ShadowUniqueEvictClean` | 83,024 | 9 | violates `PreparedImage`: two rows hold one value from the start, and the copy of the first, which no write touched, leaves the shadow for the second's sake and never comes back |
-| `Bug_ShadowUniqueTailInPlace` | 177,216 | 13 | violates `NoFalseDuplicate`: a value moves from one row to another, and putting the dirty rows back one at a time meets the old row's copy |
+| `ShadowUnique` | 877,430 | 23 | passes (three keys, two values, three writes) |
+| `Bug_ShadowUniqueFailOnDirtyHolder` | 119,635 | 9 | violates `NoFalseDuplicate`: a row takes a value a copied row gave up, and its page fails against that row's stale copy |
+| `Bug_ShadowUniqueEvictClean` | 147,806 | 9 | violates `PreparedImage`: two rows hold one value from the start, and the copy of the first, which no write touched, leaves the shadow for the second's sake and never comes back |
+| `Bug_ShadowUniqueTailInPlace` | 569,685 | 13 | violates `NoFalseDuplicate`: a value moves from one row to another, and putting the dirty rows back one at a time meets the old row's copy |
+| `Bug_ShadowUniquePassHolderOldSet` | 568,694 | 13 | violates `NoFalseDuplicate`: a row written since a pass's swap gives up its value to a row of the pass, whose reread meets the first row's stale copy and takes it for clean, as its key isn't in the pass's set |
+| `Bug_ShadowUniquePassInPlace` | 234,991 | 10 | violates `NoFalseDuplicate`: a row gives up its value and another takes it before a pass, and putting the pass's rows back one at a time meets the first row's stale copy |
 
 `lua/test/engine_test.lua` runs the same cases on both engines, through a
 rebuild that adds unique indexes, one with NULL in the last part of many
@@ -1724,7 +1799,10 @@ that suite. `tests/indexcopy.sh` runs the copy through SQL on 2 shards x 3
 replicas with fsync while sessions increment a column, hand unique values
 from row to row, swap them by way of NULL, insert, delete and move rows to
 new primary keys, and checks the rows against those sessions' models; it
-fails when the final pass is skipped. It also copies, on each engine, a
+fails when the final pass is skipped. Its first copy of each table runs
+with small catch-up bounds (16 captured keys, 8 left for the fence), so
+catch-up passes run on every shard while unique values move (issue #184).
+It also copies, on each engine, a
 table with a global unique index and one with a lazy index, and checks
 that every replica keeps the index's space, or the generation and its
 target, bound to the copy, and that they find every row. Last, two ALTERs
