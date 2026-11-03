@@ -3424,6 +3424,17 @@ fsync. Its source and binary receipts, alternating pairs, actual transfer
 and CPU measurements remain required; correctness runs with diagnostic
 checks enabled do not qualify production performance.
 
+The [retained run 41729770781](../tests/evidence/typed-read/41729770781/README.md)
+contains all six raw measurement files, four wire captures, source/artifact
+receipts and a standard-library verifier. All 132 off/on wire cases pass;
+reference equality remains 30/33 MariaDB and 29/33 MySQL per lane, with
+explicit diagnostic/fallback differences. Native-enabled direct timings
+have 20 consistently faster, seven consistently slower and 21 mixed cells;
+all ten eligible 64 KiB cells improve in every pair. The full ratios,
+instrumented bytes/RPCs and quantized process CPU retain the narrow-payload
+regressions. This shared-CI run establishes neither capacity nor an
+independently reproduced build, and makes no policy/default change.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request:

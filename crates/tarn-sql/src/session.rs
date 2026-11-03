@@ -4713,6 +4713,33 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn failed_binary_diagnostic_prepare_replaces_prior_duplicate_warnings() {
+        for count in [1, 70] {
+            let mut session = diagnostic_session();
+            let pool = session.cluster.resources.clone();
+            let query = pool.query();
+            let mut warnings = DmlWarnings::new(&pool, pool.limits.query_bytes);
+            crate::budget::scope_sync(query.clone(), || {
+                for _ in 0..count {
+                    warnings.duplicate(2048, || SqlError::dup_key("1", "PRIMARY")).unwrap();
+                }
+            });
+            session.note_dml_warnings(warnings);
+            drop(query);
+            assert_eq!(session.warning_count(), count as u16);
+            assert_eq!(session.warnings.len(), count.min(admin::MAX_ERROR_COUNT));
+            assert!(session.warnings.iter().all(|w| w.level == "Warning" && w.code == 1062));
+
+            let error = session.prepare(1, "SELECT @@warning_count+0").unwrap_err();
+            assert_eq!((error.code, error.sqlstate), (1235, *b"42000"));
+            assert_terminal_diagnostic(&mut session, &error).await;
+            assert_eq!(session.error_count, 1);
+            assert_eq!(session.warning_bytes, (256 + error.message.len() as u64) * 8);
+            assert_eq!(session.retained.used(), session.warning_bytes);
+        }
+    }
+
     #[test]
     fn terminal_diagnostics_keep_dml_messages_and_account_retained_copies() {
         let mut session = diagnostic_session();
