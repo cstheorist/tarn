@@ -162,3 +162,49 @@ The default profile selection remains the eight earlier profiles; select
 the three new profiles explicitly with `--profiles`, or use manual mode
 `blocked`. All observations remain diagnostic, with `qualification_pass=false`.
 
+
+## Fixed upstream functional control
+
+`scripts/gc_upstream_control.py` adapts the ordinary reproducer published by
+corsix in [LuaJIT #1085](https://github.com/LuaJIT/LuaJIT/issues/1085)
+(September 18, 2023). `upstream_control.lua` preserves its 100-iteration loop,
+`set({get()})` followed immediately by `collectgarbage('step', 1)`, one call
+while the captured upvalue is open, and `f();f()` after it closes. Receipt
+accounting stays outside that workload. Afterward it checks an exactly
+300-node plain-table chain, ending in the initial empty `{nil}` node.
+
+```sh
+python3 scripts/gc_upstream_control.py --source "$PWD" \
+  --runtime /absolute/extracted/upvalue-runtime --arm baseline \
+  --output /absolute/fresh-upstream-directory
+```
+
+This Linux x86-64 control accepts only the audited binaries, runtime receipts
+and evidence from run `41764862465`, using the same verifier as the trace
+observer. It verifies clean source and exact runtime inputs before and after
+collection; no rebuild is performed. Each arm runs exactly three fresh
+JIT-on and three fresh JIT-off processes, with the runtime's normal JIT
+thresholds, a 10-second deadline per child, core limit zero and 8 MiB per-file
+limit. Timeout cleanup sends TERM, then KILL after one second if needed,
+only to the owned unreaped child. There are no tuning, workload repetition,
+retry or automatic search options. The fixed stop rule is six processes per
+arm, including when an earlier observation fails.
+
+Each process flushes an initial JSON preflight with actual Tarantool/LuaJIT
+versions, initial/effective JIT flags, architecture, GC64, workload configuration
+and supplied verified source/runtime identities before the workload. A second
+JSON receipt records completion, the chain invariant and final JIT state.
+`upstream.json` and per-trial invocation/results retain every exit, signal,
+timeout, raw stdout/stderr, sizes and hashes. A signal after valid preflight is
+explicitly `process_loss`; loss before valid preflight is `setup_failure`.
+Missing completion, malformed receipts, changed identities, timeout and file
+limits cannot complete collection. A caught invariant failure or post-preflight
+process loss can be fully collected while remaining a failed functional result.
+
+Collection status and functional outcome are separate. A fully collected
+baseline failure can exit the collector successfully and remains explicitly
+`unsuccessful_observation`; a candidate failure exits unsuccessfully. Six
+passes report `bounded_negative`, and every result keeps
+`qualification_pass=false`. This ordinary functional diagnostic establishes
+neither particular trace execution nor the cause or fix of Tarn #160. It
+performs no trace observation, machine-code analysis or core collection.
