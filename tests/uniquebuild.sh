@@ -16,7 +16,9 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-# (Two SQL servers: the second takes the build over when the first stops.)
-TARN_DDL_JOB_STALE=${TARN_DDL_JOB_STALE:-3} \
+# (Two SQL servers: the second takes the build over when the first stops.
+# The shards fail an atomic step that yields, and check the native module's
+# copy of the lock index.)
+TARN_DDL_JOB_STALE=${TARN_DDL_JOB_STALE:-3} TARN_CHECK_YIELDS=1 TARN_CHECK_LOCKS=1 \
   "$ROOT/scripts/cluster.sh" start -d "$DIR" -n 2 -r 1 -s 2 -b "$BASE" -p "$PORT" -m 256 ${ENGINE:+-e "$ENGINE"}
 python3 "$ROOT/tests/sql/uniquebuildtest.py" --tarn "127.0.0.1:$PORT,127.0.0.1:$((PORT + 1))" --cluster-dir "$DIR" "$@"

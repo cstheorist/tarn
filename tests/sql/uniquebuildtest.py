@@ -459,12 +459,16 @@ def main():
     finally:
         for node, v in limits.items():
             ev(node, "tarn.cfg.alter_check_rows = ...", [v])
+    logs = [line for log in sorted(cl.dir.glob("s*.log")) for line in log.read_text(errors="replace").splitlines()]
     # (Every SQL server here maintains building indexes: no shard refused
     # one's write for not saying so, which it would send again another way.)
-    refused = [line for log in sorted(cl.dir.glob("s*.log")) for line in log.read_text(errors="replace").splitlines()
-               if "does not maintain building indexes" in line]
+    refused = [line for line in logs if "does not maintain building indexes" in line]
     check("no shard refused a write as from a server that does not maintain building indexes", not refused,
           refused[:3])
+    # (with TARN_CHECK_YIELDS and TARN_CHECK_LOCKS, as tests/uniquebuild.sh starts the shards)
+    bad = [line for line in logs if "yielded inside" in line or "lock copy differs" in line]
+    check("no atomic step yielded, and the native module's copy of the lock index held what it held", not bad,
+          bad[:3])
     q(connect(endpoints[0], db=None), f"DROP DATABASE {DB}")
     print("all ok" if fails == 0 else f"{fails} failed")
     raise SystemExit(1 if fails else 0)
