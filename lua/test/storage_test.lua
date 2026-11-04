@@ -769,7 +769,9 @@ check('an update of a row older than an added field starts from its fill value',
 aw(6, {'insert', asid, {3, 21, 'q', 1, box.NULL}})
 local ux = {{8, 'uv', true, {{field = 2, type = 'integer'}}}}
 r = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(7, {builds = ux})})
-check('a unique index the rows violate: 1062, and no index is left', r[2] == 1062 and aindex(8) == nil, {r, aindex(8)})
+check("a unique index the rows violate: 1062, MySQL's message with the key, and no index is left",
+      r[2] == 1062 and tostring(r[3]):match("^Duplicate entry '%-?%d+' for key 'uv'$") ~= nil and aindex(8) == nil,
+      {r, aindex(8)})
 r = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(7, {checks = {{5, 'w', 'notnull', box.NULL, box.NULL, box.NULL}}})})
 check('a NOT NULL check counts a short row by its fill value (NULL here)', r[1] == 'error' and r[2] == 1265, r)
 r = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(7, {checks = {{5, 'w', 'range', 0, 100, 0}}})})
@@ -1519,6 +1521,99 @@ check('ABORT removes all candidates after the earlier PREPARE quiesces',
       r4[1] == 'ok' and r5[1] == 'ok' and rw[1] == 'ok'
       and c[1]:eval('return box.space[20023] == nil and box.space["test.ua"].index[7] == nil')
       and c[1]:eval('return box.space._tarn_meta:get{"fence:20020"}.value.aborted') == true, {r4, r5, rw})
+end
+
+print('ALTER TABLE builds a global index online (issue #292)')
+do   -- (a block: the main chunk is near Lua's limit of 200 locals)
+local bfmt = {{name = 'id', type = 'unsigned'}, {name = 'h', type = 'string'}, {name = 'bucket_id', type = 'unsigned'}}
+local bidx = {{name = 'primary', unique = true, parts = {{field = 'id', type = 'unsigned'}}},
+              {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}}
+for i = 1, 2 do
+    c[i]:call('tarn_create_table', {{name = 'test.ub', id = 20030, engine = 'memtx', format = bfmt, indexes = bidx}})
+end
+c[1]:call('tarn_autocommit', {{{'insert', 20030, {1, 'a', 1}}, {'insert', 20030, {2, 'a', 1}}}})
+-- A building index's entries, keyed by the key, and its conflicts, by the
+-- key and the row's primary key.
+local function hidden(name, id, parts)
+    return {name = name, id = id, engine = 'memtx',
+            format = {{name = 'h', type = 'string'}, {name = 'id', type = 'unsigned'}, {name = 'bucket_id', type = 'unsigned'}},
+            indexes = {{name = 'uh', unique = true, parts = parts},
+                       {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}}}
+end
+local entries = hidden('_tarn_uix_20030_1', 20031, {{field = 'h', type = 'string'}})
+local conflicts = hidden('_tarn_uix_20030_1c', 20032, {{field = 'h', type = 'string'}, {field = 'id', type = 'unsigned'}})
+local function bargs(ver, extra, uix, building)
+    local a = {ver = ver, timeout = 1, checks = {}, builds = {}, drop = {}, renames = {}, uix = {}, uix_drop = {},
+               building = true,
+               def = {name = 'test.ub', id = 20030, format = bfmt, indexes = bidx, json = '{}', ver = ver,
+                      uix = uix, building = building}}
+    for k, v in pairs(extra or {}) do a[k] = v end
+    return a
+end
+-- A write, with or without the fence pair of a SQL server that maintains
+-- building indexes.
+local MARK = 0xffffffffffffffffULL
+local function bw(ver, op, mark)
+    local fence = {20030, ver}
+    if mark then fence[3], fence[4] = 0, MARK end
+    return c[1]:call('tarn_autocommit', {{op}, {fence = fence}})
+end
+local function exists(id) return c[1]:eval('return box.space[...] ~= nil', {id}) end
+local limit = c[1]:eval('local o = tarn.cfg.alter_check_rows; tarn.cfg.alter_check_rows = 1; return o')
+local a1 = bargs(15, {uix = {entries, conflicts}}, {entries, conflicts}, true)
+r = c[1]:call('tarn_alter_prepare', {'test.ub', a1, 1})
+check('a building step makes both spaces, with no row limit, and stores its fence', r[1] == 'ok'
+      and exists(20031) and exists(20032)
+      and c[1]:eval('return box.space._tarn_meta:get{"fence:20030"}.value.ver') == 15, r)
+c[1]:eval('tarn.stale_fences()')
+local rw = bw(0, {'replace', 20030, {3, 'b', 1}})
+check('... which outlives a rebuild from storage (a restart, a new leader)', rw[1] == 'error' and rw[2] == 1412, rw)
+r = c[1]:call('tarn_alter_apply', {'test.ub', a1, 1})
+check('APPLY publishes the index building', r[1] == 'ok'
+      and c[1]:eval('return box.space._tarn_catalog:get{"test.ub"}.def.building') == true, r)
+rw = bw(15, {'replace', 20030, {3, 'b', 1}})
+check('then a write that does not say it maintains building indexes gets 1412', rw[1] == 'error' and rw[2] == 1412, rw)
+rw = bw(15, {'replace', 20030, {3, 'b', 1}}, true)
+check('... and one that says so goes through', rw[1] == 'ok', rw)
+rw = c[1]:call('tarn_autocommit', {{{'replace', 20031, {'b', 3, 1}}}, {fence = {20030, 15}}})
+check("... as for a write of the index's entries alone", rw[1] == 'error' and rw[2] == 1412, rw)
+c[1]:eval('tarn.stale_fences()')
+rw = bw(15, {'replace', 20030, {4, 'c', 1}})
+local rm = bw(15, {'replace', 20030, {4, 'c', 1}}, true)
+check('... also after a rebuild from storage', rw[1] == 'error' and rw[2] == 1412 and rm[1] == 'ok', {rw, rm})
+-- Rows 1 and 2 share a key: one holds the entry, the other is a conflict.
+rw = c[1]:call('tarn_autocommit', {{{'replace', 20031, {'a', 1, 1}}, {'replace', 20032, {'a', 2, 1}}},
+                                   {fence = {20030, 15, 0, MARK}}})
+local a2 = bargs(16, {uix_check = {20032}, uix_drop = {20032}}, {entries})
+r = c[1]:call('tarn_alter_prepare', {'test.ub', a2, 1})
+check('the step that publishes it enforcing refuses a conflict left behind its fence (1062)',
+      rw[1] == 'ok' and r[1] == 'duplicate' and r[2] == 1062
+      and tostring(r[3]):find("Duplicate entry 'a' for key 'uh'", 1, true) ~= nil, {rw, r})
+c[1]:call('tarn_alter_abort', {'test.ub', a2, 1})
+r = c[1]:call('tarn_alter_prepare', {'test.ub', a2, 1})
+rw = bw(15, {'replace', 20030, {5, 'd', 1}}, true)
+check('its ABORT leaves a tombstone: a late PREPARE of it is refused, and the writes go on',
+      c[1]:eval('return box.space._tarn_meta:get{"fence:20030"}.value.aborted') == true
+      and r[1] == 'error' and r[2] == 1412 and rw[1] == 'ok' and exists(20032), {r, rw})
+rw = c[1]:call('tarn_autocommit', {{{'delete', 20032, {'a', 2}}}, {fence = {20030, 15, 0, MARK}}})
+local a3 = bargs(17, {uix_check = {20032}, uix_drop = {20032}}, {entries})
+r = {c[1]:call('tarn_alter_prepare', {'test.ub', a3, 1}), c[1]:call('tarn_alter_apply', {'test.ub', a3, 1})}
+check('with no conflict left it publishes the index enforcing, and drops the conflicts',
+      rw[1] == 'ok' and r[1][1] == 'ok' and r[2][1] == 'ok' and not exists(20032) and exists(20031)
+      and c[1]:eval('return box.space._tarn_catalog:get{"test.ub"}.def.building') == nil, r)
+rw = bw(17, {'replace', 20030, {6, 'e', 1}})
+check('then the writes need no mark again', rw[1] == 'ok', rw)
+-- A failed build drops the index: its own fenced step, the spaces dropped.
+local a4 = bargs(18, {uix = {table.deepcopy(conflicts)}}, {entries, conflicts}, true)
+a4.uix[1].name, a4.uix[1].id = '_tarn_uix_20030_2c', 20033
+r = c[1]:call('tarn_alter_prepare', {'test.ub', a4, 1})
+c[1]:call('tarn_alter_abort', {'test.ub', a4, 1})
+check("an aborted building step drops its spaces", r[1] == 'ok' and not exists(20033), r)
+local a5 = bargs(19, {uix_drop = {20031}})
+r = {c[1]:call('tarn_alter_prepare', {'test.ub', a5, 1}), c[1]:call('tarn_alter_apply', {'test.ub', a5, 1})}
+check('the step that drops the index drops its entries', r[1][1] == 'ok' and r[2][1] == 'ok'
+      and not exists(20031), r)
+c[1]:eval('tarn.cfg.alter_check_rows = ...', {limit})
 end
 
 -- Issue #77: a read returns its rows a page at a time (at most

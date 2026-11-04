@@ -361,6 +361,10 @@ pub struct Txn {
     /// Definition version (`TableDef::ver`) each table was written with,
     /// by space id (see [`Txn::check_def`]).
     pub defs: BTreeMap<u32, u64>,
+    /// The tables written whose global indexes include a building one
+    /// (catalog), by space id: their commits say that this server maintains
+    /// building indexes (`encode_fence`).
+    pub building: BTreeSet<u32>,
     /// Set after an error that leaves the transaction unusable (e.g. a
     /// conflict detected mid-transaction); COMMIT then fails.
     pub doomed: Option<SqlError>,
@@ -393,6 +397,12 @@ fn failed_lock_gen(d: &[u8]) -> Option<String> {
 
 /// msgpack bytes of a key: the canonical identity of a row in the buffer
 /// (identical to Lua's msgpack.encode of the key array on the shard).
+/// The pair a commit's fence list ends with when it writes a table whose
+/// global indexes include a building one (`Txn::encode_fence`): no space has
+/// id 0, and no definition fence is above `u64::MAX`, so storage from before
+/// building indexes passes it.
+pub const BUILDING_FENCE: (u32, u64) = (0, u64::MAX);
+
 pub fn key_bytes(key: &[Value]) -> Bytes {
     let mut m = Mp::new();
     m.vals(key);
@@ -429,6 +439,7 @@ impl Txn {
             rpoints: BTreeMap::new(),
             rranges: BTreeMap::new(),
             defs: BTreeMap::new(),
+            building: BTreeSet::new(),
             doomed: None,
             mver: cluster.member_ver(),
         }
@@ -771,7 +782,12 @@ impl Txn {
     /// Generation of this transaction's row locks on `shard` (nil if none).
     /// For each table this transaction writes on `shard`: its space id and
     /// the oldest definition version a write was encoded with (the shard
-    /// refuses writes made with a replaced definition, 1412).
+    /// refuses writes made with a replaced definition, 1412). Then, if a
+    /// table among them has a building global index (catalog), the pair
+    /// `BUILDING_FENCE`: the shard refuses (1412) writes to such a table
+    /// from SQL servers that do not say they maintain building indexes,
+    /// which would write its entries as if it enforced them. (Storage from
+    /// before has no space 0, and ignores the pair.)
     fn encode_fence(&self, shard: usize, m: &mut Mp) {
         let mut f: BTreeMap<u32, u64> = BTreeMap::new();
         for w in self.writes.values().filter(|w| w.shard == shard) {
@@ -781,9 +797,13 @@ impl Txn {
             let v = f.entry(sid).or_insert(ver);
             *v = (*v).min(ver);
         }
-        m.arr(f.len() * 2);
+        let building = f.keys().any(|sid| self.building.contains(sid));
+        m.arr((f.len() + building as usize) * 2);
         for (sid, ver) in f {
             m.uint(sid as u64).uint(ver);
+        }
+        if building {
+            m.uint(BUILDING_FENCE.0 as u64).uint(BUILDING_FENCE.1);
         }
     }
 
@@ -2904,6 +2924,7 @@ mod tests {
             rpoints: BTreeMap::new(),
             rranges: BTreeMap::new(),
             defs: BTreeMap::new(),
+            building: BTreeSet::new(),
             doomed: None,
             mver: 0,
         }

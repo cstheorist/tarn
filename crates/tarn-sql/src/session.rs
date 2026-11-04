@@ -20,6 +20,8 @@ use std::sync::Arc;
 use tarn_common::{Column, ColumnType, SqlError, SqlResult, Value};
 use tarn_iproto::Iter;
 
+mod building;
+
 #[derive(Debug)]
 pub enum Output {
     Ok {
@@ -2128,7 +2130,21 @@ impl Session {
         let mut writes = writes;
         writes.map(4).str("lock_timeout").f64(self.lock_wait_timeout);
         writes.str("found_rows").bool(self.found_rows_flag);
-        writes.str("fence").arr(2).uint(table.space_id as u64).uint(table.ver);
+        // A table with a global index being built: the pair that says this
+        // server maintains building indexes (`txn::BUILDING_FENCE`), which
+        // the shard requires of every write to the table. (This update
+        // changes no column of a global index: `simple_update`.)
+        let building = table.globals.iter().any(|g| g.building());
+        writes
+            .str("fence")
+            .arr(if building { 4 } else { 2 })
+            .uint(table.space_id as u64)
+            .uint(table.ver);
+        if building {
+            writes
+                .uint(crate::txn::BUILDING_FENCE.0 as u64)
+                .uint(crate::txn::BUILDING_FENCE.1);
+        }
         writes.str("wb").arr(wb.len());
         for &b in &wb {
             writes.uint(b as u64);
@@ -2424,12 +2440,20 @@ impl Session {
     /// entries commit with the row, so the commit refuses a key another row
     /// holds (1062 under the key's name). READ COMMITTED locks the key of
     /// each entry it deletes; the keys it inserts were locked when their
-    /// holders were looked up.
+    /// holders were looked up. A building index records conflicts instead
+    /// (`building`).
     async fn stage(&self, txn: &mut Txn, w: BufWrite, old: Option<&Row>) -> SqlResult<()> {
         let t = w.table.clone();
+        if t.globals.iter().any(|g| g.building()) {
+            txn.building.insert(t.space_id);
+        }
         for g in &t.globals {
             let new = if w.op == WOp::Delete { None } else { w.row.as_deref() };
             let (before, after) = (old.and_then(|r| g.entry(&t, r)), new.and_then(|r| g.entry(&t, r)));
+            if g.building() {
+                self.stage_building(txn, g, before, after).await?;
+                continue;
+            }
             let d = tarn_verified::uix::index_delta(
                 old.is_some(),
                 old.is_some() && before.is_none(),
@@ -3725,8 +3749,7 @@ impl Session {
                     .ok_or_else(|| SqlError::no_table(&db, &table))?;
                 let mut rows = Vec::new();
                 for ix in t
-                    .indexes
-                    .iter()
+                    .shown_indexes()
                     .filter(|ix| ix.cols.iter().all(|&c| !t.columns[c].hidden))
                 {
                     for (seq, &c) in ix.cols.iter().enumerate() {
@@ -4396,9 +4419,13 @@ fn describe(t: &TableDef, full: bool) -> (Arc<[Column]>, Vec<Vec<Value>>) {
     for (i, c) in t.visible_columns() {
         let key = if t.is_pk_col(i) {
             "PRI"
-        } else if t.indexes[1..].iter().any(|ix| ix.cols.first() == Some(&i) && ix.unique) {
+        } else if t
+            .shown_indexes()
+            .skip(1)
+            .any(|ix| ix.cols.first() == Some(&i) && ix.unique)
+        {
             "UNI"
-        } else if t.indexes[1..].iter().any(|ix| ix.cols.first() == Some(&i)) {
+        } else if t.shown_indexes().skip(1).any(|ix| ix.cols.first() == Some(&i)) {
             "MUL"
         } else {
             ""
@@ -4498,7 +4525,7 @@ fn show_create(t: &TableDef) -> String {
         }
         lines.push(l);
     }
-    for ix in &t.indexes {
+    for ix in t.shown_indexes() {
         if ix.cols.iter().any(|&c| t.columns[c].hidden) {
             continue;
         }

@@ -8,6 +8,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `ALTER TABLE ... ADD UNIQUE` (and `CREATE UNIQUE INDEX`) of a key without
+  the shard key builds the key's global index while writes go on, with no
+  row limit ([#292](https://github.com/cstheorist/tarn/issues/292)). While
+  it builds, a write that gives a row a key another row holds records a
+  conflict instead of failing, and a backfill gives the rows from before
+  their entries in transactions that validate them. The key is published
+  only once no conflict is left behind the table's drained fence; else the
+  change fails with 1062, as in MariaDB, and leaves the table as it was. A
+  server that takes the job over goes on from the backfill's stored
+  cursors. `TLA+` models (`GlobalUniqueBuild`, `GlobalUniqueWrites`) and
+  Verus proofs (`uix::leave_key`, `uix::join_key`) cover the design, and
+  `tests/uniquebuild.sh` runs it through SQL, on memtx and on vinyl, with a
+  takeover. `global_index_build = "fenced"` in `cluster.json` keeps the
+  earlier fill behind the fence, which a change that does more also uses.
+  A unique index whose build finds two rows with one key now names the key
+  in its 1062, as MySQL does.
+
 - The MySQL contract workflow checks which storage paths its histories
   took. With the native procedures, the memtx histories must include
   requests the native procedures served and requests they handed to the Lua

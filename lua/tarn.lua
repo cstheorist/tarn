@@ -484,6 +484,11 @@ end
 -- its _tarn_catalog entry), raised in memory by an ALTER in progress.
 local FENCE = {}
 local FENCE_STALE = true   -- rebuilt from _tarn_catalog before the next check
+-- M.uix_building[space_id]: a global index of the table is building (issue
+-- #292, `building` in its _tarn_catalog entry): its writes must come from
+-- SQL servers that maintain building indexes, which say so with the pair
+-- {0, 2^64 - 1} in their fence list (stale_definition). Rebuilt with FENCE.
+M.uix_building = {}
 
 -- Tables held by a TRUNCATE or DROP TABLE (see "CREATE TABLE, DROP TABLE and
 -- TRUNCATE" below). From its PREPARE to its APPLY on this shard, a TRUNCATE
@@ -531,11 +536,13 @@ function BK.term_mark()
 end
 
 local function fence_rebuild()
-    local f = {}
+    local f, building = {}, {}
     for _, t in box.space._tarn_catalog:pairs() do
         local sp = box.space[t.name]
         if sp ~= nil and t.def.ver ~= nil then f[sp.id] = t.def.ver end
+        if sp ~= nil and t.def.building == true then building[sp.id] = true end
     end
+    M.uix_building = building
     local held, n = {}, 0
     for _, t in box.space._tarn_meta:pairs({'hold:'}, {iterator = 'GE'}) do
         if t.key:sub(1, 5) ~= 'hold:' then break end
@@ -655,12 +662,23 @@ end
 -- fence between this check and the writes that follow it.
 local function stale_definition(fence)
     if fence == nil or fence == box.NULL then return nil end
+    local building = false   -- (the pair {0, 2^64 - 1}: see M.uix_building)
+    for i = 1, #fence, 2 do
+        if fence[i] == 0 then building = true end
+    end
     for i = 1, #fence, 2 do
         local cur = FENCE[fence[i]]
         if cur ~= nil and cur > fence[i + 1] then
             M.stats.stale_defs = M.stats.stale_defs + 1
             log.info('a write to space %s refused (1412): its fence is version %s, the write was made with %s',
                      tostring(fence[i]), tostring(cur), tostring(fence[i + 1]))
+            return {'error', 1412, STALE_DEF_MSG}
+        end
+        if not building and M.uix_building[fence[i]] then
+            M.stats.stale_defs = M.stats.stale_defs + 1
+            log.info('a write to space %s refused (1412): a global index of the table is building, '
+                     .. 'and the SQL server that made the write does not maintain building indexes',
+                     tostring(fence[i]))
             return {'error', 1412, STALE_DEF_MSG}
         end
     end
@@ -1120,17 +1138,23 @@ function BK.ns_fence(sid)
     local a = BK.ns_fences
     if a == nil then return end
     local spaces = BK.NS_SPACES
+    -- (A table with a building global index: the highest fence there is, so
+    -- that the native procedures hand its writes to stale_definition.)
+    local function fence_of(s, v)
+        if M.uix_building[s] then return 0xffffffffffffffffULL end
+        return v
+    end
     if sid == nil then
         ffi.fill(a, ffi.sizeof('uint64_t') * spaces)
         for s, v in pairs(FENCE) do
             local k = s % spaces
-            if box.space[s] ~= nil and v > a[k] then a[k] = v end
+            if box.space[s] ~= nil and fence_of(s, v) > a[k] then a[k] = fence_of(s, v) end
         end
         return
     end
     local k, m = sid % spaces, 0
     for s, v in pairs(FENCE) do
-        if box.space[s] ~= nil and s % spaces == k and v > m then m = v end
+        if box.space[s] ~= nil and s % spaces == k and fence_of(s, v) > m then m = fence_of(s, v) end
     end
     a[k] = m
 end
@@ -1766,6 +1790,30 @@ function UIX.dup(sp, tuple)
     local parts = {}
     for i = 1, #sp.index[0].parts do parts[i] = UIX.key_text(tuple[i]) end
     return string.format("Duplicate entry '%s' for key '%s'", table.concat(parts, '-'), sp.index[0].name)
+end
+
+-- MySQL's message for conflict `tuple` of a building global index's
+-- conflicts space `c` (issue #292): its first fields are the key, which its
+-- entries space (`c`'s name without the 'c') indexes.
+function UIX.conflict_dup(c, tuple)
+    local e = box.space[c.name:sub(1, -2)]
+    local n = e ~= nil and #e.index[0].parts or #c.index[0].parts
+    local parts = {}
+    for i = 1, n do parts[i] = UIX.key_text(tuple[i]) end
+    return string.format("Duplicate entry '%s' for key '%s'", table.concat(parts, '-'), c.index[0].name)
+end
+
+-- MySQL's message for row `tuple` (as a TUPLE_FOUND error carries it) that
+-- unique index build `b` ({id, name, unique, parts}) could not take: with
+-- its key, unless a part is a weight field, which is not the column's value.
+function UIX.build_dup(b, tuple)
+    local parts = {}
+    for i, p in ipairs(b[4]) do
+        local v = type(tuple) == 'table' and tuple[p.field] or nil
+        if v == nil or p.type == 'varbinary' then return "Duplicate entry for key '" .. b[2] .. "'" end
+        parts[i] = UIX.key_text(v)
+    end
+    return string.format("Duplicate entry '%s' for key '%s'", table.concat(parts, '-'), b[2])
 end
 
 -- The global index spaces of table space `sid`: the spaces named after it,
@@ -5742,7 +5790,7 @@ local function build_indexes(sp, builds)
                 {id = b[1], type = 'tree', unique = b[3], parts = b[4]})
             if not ok then
                 if type(err) == 'cdata' and err.code == box.error.TUPLE_FOUND then
-                    return {'duplicate', 1062, "Duplicate entry for key '" .. b[2] .. "'"}
+                    return {'duplicate', 1062, UIX.build_dup(b, err.new_tuple)}
                 end
                 -- A leader that resigned (build_native_index): the step is
                 -- refused as a whole, as by any other write on a replica,
@@ -5995,9 +6043,15 @@ function tarn_alter_prepare(name, a, gen)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     local cur = catalog_ver(sp.name)
     if cur >= a.ver then return {OK, 'applied'} end
+    -- A step of an online build of global indexes (issue #292): the spaces
+    -- it makes are a building index's, which writes and the backfill fill
+    -- while the index builds, not this fence's fill; but its fence is
+    -- stored like a fill's, so that a restart or a leader change before
+    -- APPLY keeps it (tla/GlobalUniqueBuild.tla, BugVolatileFence).
+    local building = a.building == true
     -- A lazy index whose baseline scan has not run while writes went on
     -- (tarn_lazy_start) scans behind this fence.
-    local uix_fill = a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0
+    local uix_fill = not building and a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0
     local lazy_fill = M.lazy.needs_scan(a.def)
     local fills = uix_fill or lazy_fill
     if (a.checks ~= nil and a.checks ~= box.NULL and #a.checks > 0) or fills then
@@ -6021,6 +6075,7 @@ function tarn_alter_prepare(name, a, gen)
     end
     fence_fresh()
     if a.materialize == true then return UIX.mat_prepare(sp, a, gen) end
+    fills = fills or building
     -- Stored first when a new global index is filled (see fence_rebuild).
     if fills then
         local had = UIX.record(sp.id)
@@ -6060,6 +6115,14 @@ function tarn_alter_prepare(name, a, gen)
     if bad then return undo(bad) end
     bad = build_indexes(sp, a.builds)
     if bad then return undo(bad) end
+    -- The step that publishes building indexes as enforcing (issue #292):
+    -- behind the drained fence, their conflicts on this shard must be gone,
+    -- or two rows share a key and the change fails.
+    for _, id in ipairs(a.uix_check or {}) do
+        local c = box.space[id]
+        local t = c ~= nil and c:select({}, {limit = 1})[1] or nil
+        if t ~= nil then return undo({'duplicate', 1062, UIX.conflict_dup(c, t)}) end
+    end
     if fills then
         -- The steps above may yield for long: a later run of the job may have
         -- prepared meanwhile, or the change been aborted.
@@ -6212,6 +6275,7 @@ function tarn_alter_apply(name, a, gen)
     box.space._tarn_meta:delete{'fence:' .. sp.id}
     box.commit()
     if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
+    M.uix_building[sp.id] = a.def.building == true or nil
     BK.ns_fence(sp.id)
     invalidate_key_defs()
     M.stats.alters = M.stats.alters + 1
@@ -6267,7 +6331,7 @@ function tarn_alter_abort(name, a, gen)
     -- stays as it is).
     local r = UIX.record(sp.id)
     local later = r ~= nil and r.ver > a.ver
-    if not later and a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0 then
+    if not later and ((a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0) or a.building == true) then
         box.space._tarn_meta:replace{'fence:' .. sp.id, {ver = a.ver, aborted = true}}
     elseif not later and r ~= nil and not r.aborted then
         box.space._tarn_meta:delete{'fence:' .. sp.id}
@@ -8178,6 +8242,7 @@ BK.production_functions = {
         'tarn_txn_cas',
         'tarn_txn_status',
         'tarn_txn_statuses',
+        'tarn_uix_building_capabilities',
         'tarn_uix_fill',
         'tarn_unlock',
         'tarn_validate',
@@ -8289,6 +8354,11 @@ function tarn_engine_rebuild_drops_capabilities() return {'ok', 1} end
 -- #184): every leader must note its writes there. The SQL server asks for
 -- it only when every replica answers.
 function tarn_engine_durable_capabilities() return {'ok', 1} end
+-- Building global indexes (issue #292): ALTER steps with a.building and
+-- a.uix_check, catalog entries with def.building, and the fence pair that
+-- says a write maintains building indexes. The SQL server builds a global
+-- index online only when every replica answers.
+function tarn_uix_building_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()
     return M.engine.decision(name, old_id, new_id, ver, gen)

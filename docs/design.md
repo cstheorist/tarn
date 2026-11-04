@@ -490,7 +490,64 @@ unique within each shard. Writes made directly through Tarantool bypass the
 global index.
 
 `ALTER TABLE ... ADD UNIQUE` (and `CREATE UNIQUE INDEX`) of such a key on a
-table with rows builds the global index from them (issue #88). PREPARE
+table with rows builds its global index while writes go on (issue #292),
+when the change only adds such keys, `global_index_build` in `cluster.json`
+is `online` (the default), and every replica answers
+`tarn_uix_building_capabilities`. `tla/GlobalUniqueBuild.tla` and
+`tla/GlobalUniqueWrites.tla` model the build (§3). It is one job
+(`cluster/uix_build.rs`) of three schema-change steps, each with BUILD,
+PREPARE and APPLY as in §2.10, and a backfill:
+
+1. **Building.** The first step publishes the key as building: a
+   definition that lists the index with its entries' space and a
+   *conflicts* space, `_tarn_uix_<table space id>_<index id>c`, keyed by
+   the entries' columns and sharded by the key, and that has no index of
+   the key on the table's own space yet. From then on every write to the
+   table maintains the entries in its transaction (`session/building.rs`).
+   A row that joins a free key takes its entry. A row that joins a key
+   another row's entry holds is recorded as a conflict there instead of
+   failing, as MariaDB's online `ADD UNIQUE` refuses no concurrent write. A
+   row that leaves a key it holds hands the entry to the key's first
+   conflict, or deletes it, and a conflict that leaves is dropped
+   (`uix::leave_key` and `uix::join_key`, §3). A write that changes a key's
+   conflicts also writes the key's entry, with the same holder if it stays,
+   so that two transactions that change one key's rows conflict there. A
+   serializable transaction reads the entry and the key's conflicts through
+   its streams, its own writes applied, and its commit validates them; a
+   READ COMMITTED one locks the entries' keys (X), in key order, and reads
+   them under the locks.
+2. **Backfill.** The rows written before the first step get their
+   entries, or are recorded as conflicts, a page of 64 rows at a time, each
+   shard's in primary-key order, through serializable transactions whose
+   commit validates the rows, entries and conflicts they read. A row whose
+   entry or conflict is there already is passed. Once a page commits, the
+   job stores the shard's cursor past it. A page that conflicts with the
+   table's writes is tried again a row at a time.
+3. **Enforcing.** The second step builds the key's index on the table's
+   own space, and its PREPARE checks, behind the table's fence, that the
+   shard holds no conflict. APPLY publishes the key as an ordinary global
+   unique index and drops the conflicts space. A conflict left, or two rows
+   of one shard that share the key, fail the step with 1062 ("Duplicate
+   entry '<key>' for key '<name>'"): the third step then publishes the
+   table as it was and drops the index's spaces, and the statement fails
+   with that error.
+
+Each step stores the table's fence on every shard, and drains it before
+any shard publishes. While the index builds, the shards also refuse (1412)
+a write to the table that does not carry the fence pair `(0, 2^64 - 1)`
+(`txn::BUILDING_FENCE`), by which a SQL server says that it maintains
+building indexes: a server from before would write the entries as if it
+enforced the key. The job's phase names its stage and the step's phase in
+it (`building:apply`, `backfill`, `enforcing:prepare`, `dropping:abort`),
+and its arguments hold the steps', the backfill's cursors and the error to
+report, so a server that takes the job over (§2.10) goes on from there. The
+job holds the table, and bucket moves wait for it throughout, so that no row
+escapes the cursors. Neither the backfill nor the check of the conflicts
+counts against `tarn.cfg.alter_check_rows`.
+
+Otherwise (`global_index_build` is `fenced`, the change does more, or a
+replica cannot) the change fills the global index from the rows behind the
+table's fence (issue #88). PREPARE
 raises the table's fence on every shard (§2.10) and creates the empty space,
 and stores the fence (`fence:<space id>` in `_tarn_meta`) so that it
 outlives a restart or a leader change: only the new definition writes the
@@ -511,8 +568,7 @@ before it filled. APPLY then installs the definition that maintains the
 index and removes the stored fence. Like a row check, the fill is refused
 (1846) when a shard holds more than `tarn.cfg.alter_check_rows` rows of the
 table. Writes to the table wait meanwhile, as they do while a memtx index is
-built; an online build, as #43 does for vinyl indexes, is still to come.
-Dropping the key drops the space in APPLY. Renaming one, or changing its
+built. Dropping the key drops the space in APPLY. Renaming one, or changing its
 columns or their types, is refused (1846).
 
 ### 1.5 Native procedures
@@ -2602,10 +2658,9 @@ native module as plain Rust. What is proven:
   key has a NULL part), and that a write that keeps the key writes no entry.
   That the new entry's key is free is the commit protocol's job, which TLC
   checks (`Uniq*`, §2.2). For an index being built while writes go on
-  (issue #292, a design that `tla/GlobalUniqueBuild.tla` and
-  `tla/GlobalUniqueWrites.tla` model and the server does not implement
-  yet), a key's rows are its entry's holder and
-  the rows recorded as conflicts there. `leave_key` and `join_key` decide
+  (issue #292, §1.4, which `tla/GlobalUniqueBuild.tla` and
+  `tla/GlobalUniqueWrites.tla` model), a key's rows are its entry's holder
+  and the rows recorded as conflicts there. `leave_key` and `join_key` decide
   what a write does at the key its row leaves and at the one it joins. It
   is proven that a well-formed key stays well formed, and that its rows
   lose the leaving row, or gain the joining one, and no other row.
@@ -2636,7 +2691,7 @@ throughput measurements:
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE`; bucket moves (`bucket_test.lua`): the map, requests refused for buckets the shard does not own on every read, write, lock and commit path (also writes that name no bucket, by their rows' `bucket_id`), a move step by step (copy in pages, writes during the copy in the last copy, the hold failing scans of the receiving shard, the fence refusing writes, row locks and PREPAREs but serving reads, send and receive, repeated steps), the fence breaking row locks and waiting for prepared transactions (also after a leader change, from the lock records) and for a local commit in flight, notes lost to a leader change and the copy made again, giving a move up, an APPLY during a move, a read of every shard that waits for a lock while a bucket is sent, moves and schema changes waiting for each other, the map read again while a send, a last copy or a receive waits for its quorum, two servers making a shard's map at once with different counts; recovery and garbage collection while one of three shards is stopped (`recovery_faults.sh`): newer transactions resolved and collected behind more blocked ones than a pass takes, the blocked ones' records and locks kept, then resolved once the shard is back | 405/405 and 138/138; 20/20 |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; online builds of global unique indexes (each step's stored fence, writes without the building fence pair refused, a conflict left failing the enforcing step with MySQL's 1062, ABORT's tombstone, the index's spaces dropped); jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE`; bucket moves (`bucket_test.lua`): the map, requests refused for buckets the shard does not own on every read, write, lock and commit path (also writes that name no bucket, by their rows' `bucket_id`), a move step by step (copy in pages, writes during the copy in the last copy, the hold failing scans of the receiving shard, the fence refusing writes, row locks and PREPAREs but serving reads, send and receive, repeated steps), the fence breaking row locks and waiting for prepared transactions (also after a leader change, from the lock records) and for a local commit in flight, notes lost to a leader change and the copy made again, giving a move up, an APPLY during a move, a read of every shard that waits for a lock while a bucket is sent, moves and schema changes waiting for each other, the map read again while a send, a last copy or a receive waits for its quorum, two servers making a shard's map at once with different counts; recovery and garbage collection while one of three shards is stopped (`recovery_faults.sh`): newer transactions resolved and collected behind more blocked ones than a pass takes, the blocked ones' records and locks kept, then resolved once the shard is back | 405/405 and 138/138; 20/20 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries (MySQL's and MessagePack's), values skipped however nested, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, collation weights against MariaDB's, weight fields and the `ALTER TABLE` rules for them, index use under a collation, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection), the bucket map from the shards' reports (a bucket between send and receive, overlapping and inconsistent reports) and the bucket count of a new map; the rebalancer's plans (even weights, and even shares of buckets of uneven sizes) and its record | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
 | `tests/sql/difftest.py` | 465 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors; tables without a primary key, `information_schema.TABLES`, `SELECT ... INTO @var`, SQL-level `PREPARE` / `EXECUTE`, `CLIENT_FOUND_ROWS`, row-value comparisons, `DATETIME` spellings, hexadecimal literals and introducers (binary strings, their coercibility, plans cached per kind of literal); collations (98 cases): `=`, `IN`, `LIKE`, ranges and lookups through case-insensitive indexes, `ORDER BY`, `GROUP BY`, `DISTINCT`, `UNION`, joins, unique and primary keys that refuse case and accent variants, upserts, coercibility and 1267, `WEIGHT_STRING()` of every kind of character, case-insensitive keys in transactions and at READ COMMITTED, `ALTER TABLE` with collations, case-insensitive keys of tables without a primary key, keyset cursors over case-insensitive keys | 465/465 identical |
@@ -2650,6 +2705,7 @@ throughput measurements:
 | `tests/election.sh` | one shard of 3 replicas with an election watchdog period of 1 s: a leader for 4 s, then both followers stopped and resumed | no replica stands while there is a leader; the leader resigns without its quorum and does not stand without it; a leader again within 10 s of the followers' return |
 | `tests/vinylbuild.sh` | one shard of 3 replicas with fsync: ALTER TABLE adds three indexes to a vinyl table of 20,000 rows while 16 writers insert into another vinyl table | every replica applies the builds and the rows after them within 15 s; writes go on during the builds and after them; each index holds every row on every replica |
 | `tests/indexcopy.sh` | 2 shards of 3 replicas with fsync, through SQL: ALTER TABLE adds an index and a unique index to a memtx and to a vinyl table of 30,000 rows, with small catch-up bounds so that every shard's copy runs catch-up passes, the SQL server sending BUILD and PREPARE in 0.05 s slices, so that each shard's copy takes several calls, and keeping each copy's capture durably, then two columns with fills and indexes on them, which it copies (§2.11), while sessions update the table, move unique values and rows, and insert into a second table; a duplicate, and a fill rows share under a new unique index, fail their changes; a column renamed, then dropped, with an index; on each engine, a table of 20,000 rows with a global unique index and one with a lazy index, each through two ALTERs that copy it while a session writes; on each engine, an ALTER whose first shard's capture outgrows its limits while the other shard's BUILD is held (test hooks); an engine change follows | no election term changes; writes go on and none fails; every replica holds the same rows and indexes, each index every row; the new unique index refuses a duplicate; the failed changes leave their tables as they were and no copy behind; the global index's space and the lazy index's generation, target and entries are kept, bound to the copy, and find every row; the shard whose capture outgrew it copies its table again in the catch-up round, before any shard fences (the phases each leader's copy record takes, logged with the host's monotonic clock) |
+| `tests/uniquebuild.sh` | 2 shards of one replica, two SQL servers, through SQL, on memtx and on vinyl, with `alter_check_rows` at 500: ALTER TABLE adds a unique key without the shard key to a table of 20,000 rows while a session hands values from row to row, perhaps on the other shard, sets them to NULL and back, inserts, deletes and moves rows to new primary keys, and another increments a column; a table where two rows share a value before the change, and one where a session inserts a value a row holds during it; the first case again with the change's SQL server killed during the backfill and the writes sent to the other | the changes succeed above `alter_check_rows`, writes go on and none fails (but for those that met a transaction the killed server left prepared: 1213, sent again); the rows match the sessions' models; the index holds one entry per row with a value, the row's, and no conflicts space is left; every row is found by its value; the key refuses a duplicate; the duplicates fail their changes with MariaDB's 1062 and leave the tables as they were; the other server takes the change over and finishes it; no shard refuses a write as from a server that does not maintain building indexes |
 | `tests/bucketcount.sh` | the number of buckets a SQL server gives the map it makes: the configured `bucket_count`; 3,000 on shards that have tables but no map (a cluster made before bucket moves, simulated by removing the map and restarting the nodes); 30,000 on a new cluster; each time the shards' ranges and, with rows, their bucket ids, reads by key and writes | 20/20 |
 | `tests/ddlfaults.sh` | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with shard 2 down, and with shard 2 killed while a test hook holds its APPLY; the abandoned jobs are finished by the SQL server (`ddl_job_stale` = 2 s) | 6/6: rolled back with the shard down (the table on no shard, or unchanged), rolled forward when killed while applying; checked on each shard directly |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection; on a memtx table through the native procedure and through `tarn_autocommit`, and on a vinyl table | the client gets 1180 (outcome unknown), the row is incremented exactly once |
