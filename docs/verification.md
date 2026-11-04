@@ -115,7 +115,7 @@ of workload, fault budget and options. The names say what is checked:
 | `ReplicatedVinylBuild` | a separate model of a vinyl index build on a replicated shard: behind the table's drained fence, and with one synchronous write in flight while it runs, the index is complete and the replicas keep applying |
 | `ReplicatedBuildFence` | a separate model of an ALTER TABLE's vinyl builds on a replicated shard across leader changes: with a follower caught up before each build and a commit only on a node that still leads, no node meets a build's DDL row it refuses |
 | `ShadowUnique` | a separate model of a copy whose unique index exists before its first row: a stale copy that holds a page row's value leaves the copy, and the final pass, like each catch-up pass, removes every key of its set before it puts their rows back; a prepared copy is the source, a change fails with 1062 only for a duplicate the source held, and the final pass has only keys that writes touched |
-| `GlobalUniqueBuild` | a separate model of an online build of a global unique index (issue #292): a building version whose writes record conflicts, a backfill whose writes commit only for unchanged rows, and an enforcing version published behind a drained fence only with no conflict left; the index never holds a stale entry, and once enforcing it holds every row, one per key |
+| `GlobalUniqueBuild` / `GlobalUniqueWrites` | separate models of an online build of a global unique index (issue #292): a building version whose writes record conflicts, a backfill whose writes commit only for unchanged rows, an enforcing version published behind a durable, drained fence only with no conflict left, and a version without the index when the change fails; the building version's transactions decide from their own writes and serialize at their commit; the index never holds a stale entry, and once enforcing it holds every row, one per key |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
@@ -2035,10 +2035,11 @@ default check list from 333 to 337.
 
 ### Online builds of global unique indexes (issue #292)
 
-`GlobalUniqueBuild.tla` models the design for building a global unique
-index while writes go on. Such an index is a unique key without the shard
-key, whose entries live in a space of their own, sharded by the key. The
-table's definition goes through three versions:
+`GlobalUniqueBuild.tla` and `GlobalUniqueWrites.tla` model the design for
+building a global unique index while writes go on. Such an index is a
+unique key without the shard key, whose entries live in a space of their
+own, sharded by the key. Both models take the rules a write follows from
+`GlobalUniqueRules.tla`. The table's definition goes through four versions:
 - **0**, without the index.
 - **1**, with the index building. Every write maintains the index's entries
   in its own transaction. A row whose key another row's entry holds is
@@ -2047,55 +2048,120 @@ table's definition goes through three versions:
   a conflicting row takes the entry over (`uix::leave_key` and
   `uix::join_key`, proven below).
 - **2**, with the index enforcing.
+- **3**, without the index, once the change has failed. Each shard drops
+  its part of the index's spaces as it publishes version 3.
 
-A step to a new version fences every shard and waits for the writes in
-flight there before any shard publishes it, as an ALTER's PREPARE and APPLY
-do. Between the steps, a backfill gives the rows written before version 1
-their entries. It reads a row, and its write commits only if the row still
-has the key it read. The step to version 2 decides once every shard is
-fenced and drained and the backfill has passed every row. It publishes only
-if no conflict is left; otherwise the change fails.
-
-The model's setup:
+**`GlobalUniqueBuild`** checks the steps between the versions:
+- A step fences every shard and waits for the writes in flight there (the
+  drain) before any shard publishes it, as an ALTER's PREPARE and APPLY do.
+  The coordinator counts a fence only once it is durable, so a leader
+  change keeps it.
+- Between the steps to 1 and 2, a backfill gives the rows written before
+  version 1 their entries, in primary-key order. It reads a row, and its
+  write commits only if the row still has the key it read and no write is
+  prepared on it. Its cursor passes the row once the write commits.
+- The step to version 2 decides once every shard is fenced and drained and
+  the backfill has passed every row. It publishes only if no conflict is
+  left. Otherwise the change fails (1062) and takes the step to version 3,
+  as a cancel during the backfill does.
 - Three rows on two shards take any keys of two (or none), from any initial
-  table.
-- A key's entry and conflicts live on the key's shard.
-- A write of version 0 or 1 prepares on every shard it touches, and later
-  commits with no further check.
-- A shard refuses a write made with an older version than its own, or
-  while it is fenced.
+  table. A key's entry and conflicts live on the key's shard. Rows don't
+  move between shards: bucket moves wait for schema jobs, and one job spans
+  the whole build.
+- A write of version 0, 1 or 3 prepares on every shard it touches, and later
+  commits with no further check. A shard refuses a write made with an older
+  version than its own, or while it is fenced. A write's reads of the index
+  and its effects are one step at its commit; `GlobalUniqueWrites` checks
+  that the commit protocol makes them so.
 
 Its invariants:
-- `NoStale`: every entry and conflict is its row's current key.
+- `NoStale`: while the index lives, every entry and conflict is its row's
+  current key.
 - `WellFormed`: a key with no entry has no conflict, and the holder of an
   entry is not among its conflicts.
 - `Enforced`: once a shard publishes version 2, every row with a key holds
   its key's entry and no conflict is left. With `NoStale`, the index is
   then exact, with one row per key.
+- `Dropped`: once a key's shard publishes version 3, the key has no entry
+  and no conflict, so no write of the index commits after its spaces are
+  dropped.
+
+The step to version 1 needs its fence: a shard that has lost it takes
+writes of both versions (`Bug_GlobalUniqueBuildVolatileFence` below). It
+does not need its drain for these invariants. A write of version 0 still in
+flight holds its row's lock, which the backfill's write waits out, so the
+backfill reads what that write left. A variant without that drain passes
+(390,638 states), and the step drains anyway, as every ALTER step does.
+
+**`GlobalUniqueWrites`** checks the writes of version 1 as transactions:
+- A transaction's statement decides from the transaction's view: the
+  committed rows and index, overlaid with the transaction's own earlier
+  writes. It buffers its writes, which the commit applies.
+- The decision still holds at the commit only if what the statement read
+  is unchanged by then: its row, and the entry and conflicts of the row's
+  old and new keys. The commit protocol's PREPARE validates these reads
+  and locks them until the COMMIT. Under READ COMMITTED a statement must
+  lock them as it reads them, which allows fewer interleavings still. A
+  decision about a key thus serializes with every other decision about
+  it.
+- A transaction whose validation fails is retried, so a race for a key
+  fails no write of the building version with 1062.
+- One transaction of two statements runs beside the backfill and other
+  transactions' writes, each of which commits as one step. Two rows take
+  any keys of two (or none), from any initial table. The backfill's write
+  commits only if the row is unchanged and the prepared transaction locks
+  neither the row nor its key.
+
+Its invariants are `NoStale` and `WellFormed`, as above, and:
+- `Passed`: every row the backfill's cursor has passed holds its key's
+  entry or is among its conflicts, unless the backfill is writing it or
+  the prepared transaction, whose commit leaves it so, has locked it.
+- `Serialized`: a prepared transaction's writes are those its statements
+  would make if they ran then, as one step, which is what
+  `GlobalUniqueBuild` takes a write to be.
 
 ```sh
 tla/check.sh GlobalUniqueBuild Bug_GlobalUniqueBuildBackfillUnvalidated \
-  Bug_GlobalUniqueBuildSkipConflict Bug_GlobalUniqueBuildNoPromote \
   Bug_GlobalUniqueBuildPublishConflicts Bug_GlobalUniqueBuildEarlyPublish \
-  Bug_GlobalUniqueBuildNoDrainToBuilding Bug_GlobalUniqueBuildNoDrainToEnforcing \
-  Bug_GlobalUniqueBuildStaleWrite
+  Bug_GlobalUniqueBuildNoDrainToEnforcing Bug_GlobalUniqueBuildNoDrainToAbort \
+  Bug_GlobalUniqueBuildStaleWrite Bug_GlobalUniqueBuildVolatileFence \
+  GlobalUniqueWrites Bug_GlobalUniqueWritesKeyUnserialized \
+  Bug_GlobalUniqueWritesNoOverlay Bug_GlobalUniqueWritesCursorEarly \
+  Bug_GlobalUniqueWritesSkipConflict Bug_GlobalUniqueWritesNoPromote \
+  Bug_GlobalUniqueWritesBlindLeave Bug_GlobalUniqueWritesJoinReplace
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
 |---|---:|---:|---|
-| `GlobalUniqueBuild` | 623,822 | 18 | passes (three rows, two keys, two shards) |
-| `Bug_GlobalUniqueBuildBackfillUnvalidated` | 15,660 | 10 | violates `NoStale`: a backfill write commits the key it read for a row a write has moved since |
-| `Bug_GlobalUniqueBuildSkipConflict` | 545,959 | 17 | violates `Enforced`: a write of version 1 drops a row whose key another row's entry holds, and the index is published without it |
-| `Bug_GlobalUniqueBuildNoPromote` | 28,730 | 11 | violates `WellFormed`: the holder leaves its key, and a conflicting row is left with no entry to hold |
-| `Bug_GlobalUniqueBuildPublishConflicts` | 553,592 | 17 | violates `Enforced`: version 2 is published with a conflict left, so two rows share a key |
-| `Bug_GlobalUniqueBuildEarlyPublish` | 45,857 | 11 | violates `Enforced`: version 2 is published before the backfill passed a row the table had before the change |
-| `Bug_GlobalUniqueBuildNoDrainToBuilding` | 42,213 | 10 | violates `NoStale`: a write of version 0, in flight when version 1 is published, moves a row without its entry |
-| `Bug_GlobalUniqueBuildNoDrainToEnforcing` | 625,795 | 19 | violates `Enforced`: a write of version 1, in flight when version 2 is decided, records a conflict after the check |
-| `Bug_GlobalUniqueBuildStaleWrite` | 13,855 | 9 | violates `NoStale`: a shard takes a write of version 0 after publishing version 1 |
+| `GlobalUniqueBuild` | 196,180 | 25 | passes (three rows, two keys, two shards) |
+| `Bug_GlobalUniqueBuildBackfillUnvalidated` | 15,884 | 10 | violates `NoStale`: a backfill write commits the key it read for a row a write has moved since |
+| `Bug_GlobalUniqueBuildPublishConflicts` | 163,665 | 17 | violates `Enforced`: version 2 is published with a conflict left, so two rows share a key |
+| `Bug_GlobalUniqueBuildEarlyPublish` | 30,170 | 11 | violates `Enforced`: version 2 is published before the backfill passed a row the table had before the change |
+| `Bug_GlobalUniqueBuildNoDrainToEnforcing` | 185,730 | 19 | violates `Enforced`: a write of version 1, in flight when version 2 is decided, records a conflict after the check |
+| `Bug_GlobalUniqueBuildNoDrainToAbort` | 56,090 | 13 | violates `Dropped`: a write of version 1, in flight when a cancel's version 3 is decided, writes its entry after its shard dropped the index |
+| `Bug_GlobalUniqueBuildStaleWrite` | 12,962 | 9 | violates `NoStale`: a shard that published version 1 takes a write of version 0, which moves a row without its entry |
+| `Bug_GlobalUniqueBuildVolatileFence` | 40,403 | 10 | violates `NoStale`: a leader change loses a shard's fence during the step to version 1; still at version 0, the shard takes a write of version 1 that gives a row its entry, then one of version 0 that moves the row without it |
+| `GlobalUniqueWrites` | 117,977 | 13 | passes (two rows, two keys, a transaction of two statements) |
+| `Bug_GlobalUniqueWritesKeyUnserialized` | 1,144 | 4 | violates `Serialized`: a statement decides that its row takes a free key's entry; another write takes the entry first, and the transaction's validation, which leaves out the key, passes |
+| `Bug_GlobalUniqueWritesNoOverlay` | 1,105 | 4 | violates `Serialized`: a transaction's row takes a free key's entry, then leaves the key; the second statement reads the committed index, misses the entry, and leaves it |
+| `Bug_GlobalUniqueWritesCursorEarly` | 8,835 | 5 | violates `Passed`: the backfill's cursor passes a row as it reads it; the row's write is refused by a prepared transaction's lock on its key, and the row is left without its entry |
+| `Bug_GlobalUniqueWritesSkipConflict` | 2,416 | 4 | violates `Passed`: the backfill drops a row whose key another row's entry holds, instead of recording a conflict |
+| `Bug_GlobalUniqueWritesNoPromote` | 1,486 | 4 | violates `WellFormed`: the holder leaves its key, and a conflicting row is left with no entry to hold |
+| `Bug_GlobalUniqueWritesBlindLeave` | 3,270 | 4 | violates `Passed`: a row that held no entry leaves a key that two rows had before the change, and deletes the entry the backfill gave the other one |
+| `Bug_GlobalUniqueWritesJoinReplace` | 2,898 | 4 | violates `Passed`: a row joining a key takes the entry from the row the backfill gave it |
+
+Without `Serialized` among the invariants, the first two controls break
+the index itself:
+- `KeyUnserialized` violates `WellFormed` (15,339 states, depth 6). A
+  transaction moves a key's holder away and, seeing no conflict, drops the
+  entry. Meanwhile another write records a conflict at the key, and the
+  conflict is left with no entry.
+- `NoOverlay` violates `NoStale` (5,236 states, depth 5): the entry the
+  transaction wrote is committed stale.
 
 This is the design's model, and the server does not implement it yet
-(#292). The nine configurations are generated by `gen_cfgs.sh` and bring
-the default check list from 373 to 382.
+(#292). The sixteen configurations are generated by `gen_cfgs.sh` and
+bring the default check list from 373 to 389.
 
 ### Detached source transactions
 
@@ -3022,7 +3088,7 @@ result. Verus proves:
   other rows' entries alone and holds the new version's instead; it writes
   nothing when the entry does not change, deletes only an entry that
   exists and inserts only one that should. For an index being built (issue
-  #292, `GlobalUniqueBuild` above), a key's rows are its entry's holder and
+  #292, `GlobalUniqueRules` above), a key's rows are its entry's holder and
   the rows recorded as conflicts there. `leave_key` and `join_key` decide
   what a write does at the key its row leaves and at the one it joins. The
   proof shows that a well-formed key stays well formed, and that its rows
