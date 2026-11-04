@@ -17,6 +17,9 @@ and 20,000. The inclusive iteration bound is 1–1,000,000. Available profiles:
 | `incremental-gc` | Runtime default, required on | Explicit `step(1)` after invalidation | One engine |
 | `construction-warm` | Runtime default, required on | Runtime default | Batches of up to 64 engines |
 | `construction-warm-incremental-gc` | Runtime default, required on | Explicit `step(1)` after invalidation | Batches of up to 64 engines |
+| `retained-construction-warm` | Runtime default, required on | Runtime default | One retained batch of up to 64 engines |
+| `retained-construction-warm-incremental-gc` | Runtime default, required on | Explicit `step(1)` after invalidation | One retained batch of up to 64 engines |
+| `retained-construction-warm-incremental-gc-jit-off` | Explicitly off | Explicit `step(1)` after invalidation | One retained batch of up to 64 engines |
 
 The runner must supply `TARN_GC_SOURCE_IDENTITIES_JSON`, a nonempty JSON object
 containing its independently verified source/runtime identities. The fixture
@@ -43,6 +46,16 @@ engines. They do not establish that a particular trace was compiled or that
 the open-to-closed transition occurred on a trace. Incremental-GC profiles
 are explicitly perturbed diagnostics. Neither replaces the ordinary baseline.
 
+The retained variants construct one batch of `min(64, ITERATIONS)` real engines
+and round-robin exercise those same instances for all requested iterations.
+Their closed upvalues stay live across repeated invalidations and, in the
+incremental-GC variant, repeated GC steps. The older construction profiles
+instead create a fresh batch after exercising each previous instance once.
+All receipts include the boolean `config.retained_engines`. Constructor counts
+are `min(64, ITERATIONS)` for retained variants, `ITERATIONS` for the older
+construction profiles, and one for single-engine profiles. Mark counts remain
+constructors plus iterations, with three cut checks per iteration.
+
 Stdout contains one JSON object. Exit 0 requires `complete=true`, `passed=true`,
 exact iteration/callback counts, and all content invariants. Caught failures
 exit 1 with both flags false, partial counts, position, failure kind and error. Process
@@ -56,7 +69,7 @@ upstream LuaJIT `07b3cd3c` versus pinned `8af934d9` remains a hypothesis.
 
 The existing `Native GC failover investigation` workflow accepts the manual
 `mode=upvalue` input. It builds separate pinned baseline/candidate runtimes and
-runs all five profiles in fresh processes. Defaults are three trials per
+runs the configured profiles in fresh processes. Defaults are three trials per
 profile and 20,000 iterations per trial; the collector rejects unbounded inputs.
 The normal failover workflow mode is unchanged. The actual runtime experiment
 is manual, while pull requests run the offline evidence controls.

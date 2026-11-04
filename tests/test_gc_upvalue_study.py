@@ -15,15 +15,17 @@ SPEC.loader.exec_module(STUDY)
 
 
 def passing(profile="ordinary", n=7):
-    construction = profile.startswith("construction-warm")
+    construction = "construction-warm" in profile
+    retained = profile.startswith("retained-")
     incremental = "incremental-gc" in profile
-    constructors = n if construction else 1
+    constructors = min(64, n) if retained else n if construction else 1
     return {"schema_version": 1, "profile": profile, "source_identities": {"test": "fixture"},
             "complete": True, "passed": True,
             "runtime": {"os": "Linux", "arch": "x64", "gc64": False,
-                        "effective_jit": {"enabled": profile != "jit-off"}},
+                        "effective_jit": {"enabled": not profile.endswith("jit-off")}},
             "config": {"iterations": n, "max_iterations": 1000000, "batch_size": 64 if construction else 1,
-                       "constructor_warming": construction, "native": False, "sync": False,
+                       "constructor_warming": construction, "retained_engines": retained,
+                       "native": False, "sync": False,
                        "transactions": False, "wal_mode": "none", "cut_sequence": "false then true",
                        "gc": "explicit incremental step(1) each iteration" if incremental else "default"},
             "counts": {"iterations": n, "constructors": constructors, "marks": constructors + n,
@@ -45,6 +47,14 @@ class ReceiptControls(unittest.TestCase):
         record["complete"] = False
         with self.assertRaisesRegex(ValueError, "incomplete"):
             self.validate(record)
+
+    def test_retained_profile_must_reuse_the_same_bounded_instances(self):
+        profile = "retained-construction-warm-incremental-gc"
+        record = passing(profile, 137)
+        self.assertEqual(STUDY.validate_receipt(record, profile, 137, {"test": "fixture"}), "pass")
+        record["counts"].update(constructors=137, marks=274)
+        with self.assertRaisesRegex(ValueError, "counts"):
+            STUDY.validate_receipt(record, profile, 137, {"test": "fixture"})
 
     def test_omitted_iterations_and_cuts_fail(self):
         for key in ("iterations", "constructors", "marks", "cuts", "invalidations", "rebuilds", "blocked_rebuilds"):

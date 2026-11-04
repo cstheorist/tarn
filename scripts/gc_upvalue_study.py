@@ -18,6 +18,8 @@ LUAJIT = "8af934d93cf26fb1e9b08b28a8b51833d55fc8e8"
 PROFILES = (
     "ordinary", "jit-off", "incremental-gc", "construction-warm",
     "construction-warm-incremental-gc",
+    "retained-construction-warm", "retained-construction-warm-incremental-gc",
+    "retained-construction-warm-incremental-gc-jit-off",
 )
 
 
@@ -73,12 +75,13 @@ def validate_receipt(record, profile, iterations, identities):
     runtime = record.get("runtime", {})
     if runtime.get("os") != "Linux" or runtime.get("arch") != "x64" or runtime.get("gc64") is not False:
         raise ValueError("unqualified runtime architecture")
-    if runtime.get("effective_jit", {}).get("enabled") is not (profile != "jit-off"):
+    if runtime.get("effective_jit", {}).get("enabled") is not (not profile.endswith("jit-off")):
         raise ValueError("fixture JIT configuration mismatch")
     config = record.get("config", {})
+    warming, retained = "construction-warm" in profile, profile.startswith("retained-")
     expected_config = {"iterations": iterations, "max_iterations": 1_000_000,
-                       "batch_size": 64 if profile.startswith("construction-warm") else 1,
-                       "constructor_warming": profile.startswith("construction-warm"),
+                       "batch_size": 64 if warming else 1,
+                       "constructor_warming": warming, "retained_engines": retained,
                        "gc": "explicit incremental step(1) each iteration" if "incremental-gc" in profile else "default",
                        "native": False, "sync": False, "transactions": False, "wal_mode": "none",
                        "cut_sequence": "false then true"}
@@ -91,7 +94,7 @@ def validate_receipt(record, profile, iterations, identities):
     if record.get("complete") is not True:
         raise ValueError("incomplete receipt claims a pass")
     counts = record.get("counts", {})
-    constructors = iterations if profile.startswith("construction-warm") else 1
+    constructors = min(64, iterations) if retained else iterations if warming else 1
     expected = {"iterations": iterations, "constructors": constructors,
                 "marks": constructors + iterations, "cuts": 3 * iterations,
                 "invalidations": iterations, "rebuilds": iterations,

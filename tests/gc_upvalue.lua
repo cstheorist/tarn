@@ -11,6 +11,13 @@ local profiles = {
     ['incremental-gc'] = {batch = 1, gc_step = true},
     ['construction-warm'] = {batch = 64, construct = true},
     ['construction-warm-incremental-gc'] = {batch = 64, construct = true, gc_step = true},
+    ['retained-construction-warm'] = {batch = 64, construct = true, retained = true},
+    ['retained-construction-warm-incremental-gc'] = {
+        batch = 64, construct = true, retained = true, gc_step = true,
+    },
+    ['retained-construction-warm-incremental-gc-jit-off'] = {
+        batch = 64, construct = true, retained = true, gc_step = true, jit_off = true,
+    },
 }
 local result = {
     schema_version = 1, fixture = 'tarn-engine-upvalue-functional', complete = false, passed = false,
@@ -46,6 +53,7 @@ local function run()
     result.config = {
         iterations = iterations, max_iterations = 1000000, batch_size = profile.batch,
         constructor_warming = profile.construct == true,
+        retained_engines = profile.retained == true,
         gc = profile.gc_step and 'explicit incremental step(1) each iteration' or 'default',
         native = false, sync = false, wal_mode = 'none',
         cut_sequence = 'false then true', transactions = false,
@@ -131,7 +139,14 @@ local function run()
         counts.iterations = counts.iterations + 1
     end
 
-    if profile.construct then
+    if profile.retained then
+        -- Keep the same closed upvalues live throughout repeated exercise.
+        -- Constructor warming remains an attempt, not proof of a trace.
+        result.position.phase = 'construction'
+        local batch, n = {}, math.min(profile.batch, iterations)
+        for j = 1, n do batch[j] = new_engine() end
+        for i = 1, iterations do exercise(batch[(i - 1) % n + 1], i) end
+    elseif profile.construct then
         -- Repeated real constructors can warm a shared prototype while their
         -- own mark upvalues are open. Exercise each instance only after return.
         -- This attempts that precondition; it does not certify a recorded trace.
@@ -152,7 +167,9 @@ local function run()
            'incomplete iteration accounting')
     assert(counts.marks == counts.constructors + iterations and counts.cuts == 3 * iterations,
            'mark/cut callback accounting mismatch')
-    assert(counts.constructors == (profile.construct and iterations or 1), 'constructor accounting mismatch')
+    local constructors = profile.retained and math.min(profile.batch, iterations)
+                         or (profile.construct and iterations or 1)
+    assert(counts.constructors == constructors, 'constructor accounting mismatch')
     result.position.phase = 'finished'
     result.complete, result.passed = true, true
     result.interpretation = 'bounded functional pass; no GC cause or fix established'
