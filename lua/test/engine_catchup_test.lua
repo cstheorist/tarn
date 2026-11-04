@@ -69,7 +69,11 @@ local function write(t, writes)
     local deadline = fiber.clock() + 30
     repeat
         local r = tarn_autocommit(writes, {fence = {t.old_id, 0}})
-        if type(r) ~= 'table' or r[1] ~= 'throttled' or fiber.clock() > deadline then return r end
+        -- (and one the lazy capture registry refused because a schema change made
+        -- it stale while the write yielded: SQL servers retry it, 1412)
+        local stale = type(r) == 'table' and r[1] == 'error' and r[2] == 1412
+            and tostring(r[3]):find('registry is stale', 1, true) ~= nil
+        if type(r) ~= 'table' or (r[1] ~= 'throttled' and not stale) or fiber.clock() > deadline then return r end
         fiber.sleep(math.max(tonumber(r[4]) or 50, 10) / 1000)
     until false
 end
