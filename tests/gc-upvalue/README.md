@@ -90,3 +90,50 @@ receipts across the separate runners before attributing a functional difference
 to the candidate patch. There is no throughput, RF3/fsync or durability claim
 from this standalone, WAL-disabled fixture.
 
+## Bounded trace observation with archived runtimes
+
+The separate `scripts/gc_trace_coverage.py` observer accepts only the audited
+baseline/candidate binaries and exact runtime receipts from workflow run
+`41764862465`. It verifies their hardcoded SHA-256 identities, the existing
+runtime receipt contract, and every receipt evidence hash before execution and
+again afterward. A self-consistent rebuilt runtime does not qualify for reuse.
+
+```sh
+python3 scripts/gc_trace_coverage.py --source "$PWD" \
+  --runtime /absolute/extracted/upvalue-runtime --arm baseline \
+  --output /absolute/fresh-observation-directory
+```
+
+Use a clean source checkout. The source identity includes the collector,
+wrapper, offline controls and this README. Each arm runs exactly one fresh
+process for each of `ordinary`, `construction-warm`, and
+`retained-construction-warm`, with 20,000 iterations, 30 seconds per child,
+zero core bytes, and an 8 MiB per-file `RLIMIT_FSIZE`. Timeout handling sends
+TERM and, after five seconds if needed, KILL only to the owned unreaped child.
+There are no iteration/profile/timeout overrides or automatic retries.
+
+`tests/gc-upvalue/observe.lua` loads the unchanged functional fixture with its
+original arguments and emits the shipped `jit.dump` module's `tbiT` text to
+`trace.dump`: trace lifecycle, recorded bytecode and IR. Stdout remains the
+original JSON receipt. This row adds diagnostic allocation and file I/O; it
+does not replace the unobserved functional study. It performs no machine-code
+disassembly, register dumps, core parsing or upstream reproducer workload.
+
+`coverage.json` retains each invocation/result and their hashes; per-trial
+records retain stdout/stderr/dump sizes and hashes, exit/signal, limits and
+independently validated functional receipts. A timeout or SIGXFSZ/file-cap
+result is an incomplete observer, never a runtime cause finding. Missing or
+empty dumps cannot complete collection. Functional outcome and observer
+completion are separate fields, and target coverage always remains
+`unassessed` pending source/prototype/IR review.
+
+For that review, bind recorded `invalidate_tickets` bytecode to its precise
+engine source/prototype and the mark USETV operand, including inlined call
+context. A trace starting elsewhere can contain the setter. Constructor
+versus public invalidation context matters: constructor recording can alias
+the still-open mark to a trace SSA slot. Identify UREFO/UREFC, USTORE, OBAR
+and guards with their operands; a UREFO count alone does not establish the
+open, non-SSA condition in upstream #1085. Record unknown phase/state when
+the dump cannot distinguish them. A successful trace compilation proves
+neither execution of that store after closing the upvalue nor crash causality.
+
