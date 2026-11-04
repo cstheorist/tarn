@@ -63,7 +63,13 @@ def main():
             print(json.dumps(event, sort_keys=True), flush=True)
 
     def handle(client):
-        backend = socket.create_connection(('127.0.0.1', args.upstream), timeout=5)
+        try:
+            backend = socket.create_connection(('127.0.0.1', args.upstream), timeout=5)
+        except OSError:
+            # A stopped backend must not kill the listener or held responses
+            # on existing sessions. This new client has sent no backend call.
+            client.close()
+            return
         backend.settimeout(None)
         pending, pending_lock = {}, threading.Lock()
 

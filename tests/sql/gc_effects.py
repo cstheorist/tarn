@@ -59,12 +59,37 @@ def expected_raw(keys):
     return [row + [bucket(row[0])] for row in expected_rows(keys)]
 
 
-def check_runtime(info, pid, native):
+def check_runtime(info, pid, native, native_path=None):
     assert info['pid'] == pid and info['wal_mode'] == 'fsync', info
     assert info['configured_replicas'] == info['observed_replicas'] == 3 and info['quorum'] == 2 and info['sync'] is True, info
-    assert isinstance(info['native'], dict) if native == 'native' else info['native'] is False
+    assert type(info['ro']) is bool, info
+    assert 'configured_native' in info, info
+    if native == 'native':
+        # cfg.native is a module path; BK.ns is initialized on writable nodes.
+        # A follower may never have loaded it, or retain state after demotion.
+        selected = info['configured_native']
+        assert isinstance(native_path, str) and native_path, 'selected native path missing'
+        assert selected == native_path, info
+        assert info['native'] is False or isinstance(info['native'], dict), info
+        if not info['ro']:
+            assert isinstance(info['native'], dict) and info['native'].get('ready') == 1, info
+    else:
+        assert native == 'off' and info['native'] is False, info
+        assert info['configured_native'] is False, info
     assert info['system_spaces'] == {name: {'is_sync': True, 'state_is_sync': True}
                                       for name in ('_tarn_txn', '_tarn_part')}, info
+
+
+def collect_runtime(owned_nodes, observe, expected_pid, native, samples, checkpoint,
+                    native_path=None, exclude=None):
+    """Retain every completed observation, even if a later read/check fails."""
+    for name, owned in owned_nodes.items():
+        if name == exclude:
+            continue
+        samples[name] = observe(owned['endpoint'])
+        checkpoint()
+    for name, info in samples.items():
+        check_runtime(info, expected_pid(name), native, native_path)
 
 
 def reconcile(journal, evidence):
@@ -76,7 +101,7 @@ def reconcile(journal, evidence):
     assert set(cfg['owned_nodes']) == owned_names, 'exact RF3 two-shard ownership required'
     assert set(evidence['storage_runtime']) == owned_names, 'all six runtime observations required'
     for name, info in evidence['storage_runtime'].items():
-        check_runtime(info, cfg['owned_nodes'][name]['pid'], cfg['native'])
+        check_runtime(info, cfg['owned_nodes'][name]['pid'], cfg['native'], cfg.get('native_path'))
     keys = cfg['keys']
     assert len(keys) == 6 and len(set(keys)) == 6, 'unique per-operation target keys required'
     manifest = operations(keys, cfg['database'], cfg['engine'])
@@ -113,7 +138,7 @@ def reconcile(journal, evidence):
         assert set(actual_runtime) == names
         for name, info in actual_runtime.items():
             pid = evidence['restarted']['restart_pid'] if name == killed else cfg['owned_nodes'][name]['pid']
-            check_runtime(info, pid, cfg['native'])
+            check_runtime(info, pid, cfg['native'], cfg.get('native_path'))
     expected, raw_expected = expected_rows(keys), expected_raw(keys)
     for phase in ('survivor', 'restarted'):
         sample = evidence[phase]
@@ -156,6 +181,8 @@ def run(args):
 
     work = args.work
     cfg = json.loads((work / 'fixture.json').read_text())
+    source = json.loads((work / 'source.json').read_text())
+    cfg['native_path'] = source.get('environment', {}).get('TARN_NATIVE', source['native']) if cfg['native'] == 'native' else None
     nodes = cfg['replicas']
     count = 32
     first = [[i for i in range(1, 10000) if (bucket_of(i, count)-1)*2//count == shard]
@@ -172,7 +199,7 @@ def run(args):
             stream.write('\n'); stream.flush(); os.fsync(stream.fileno())
         tmp.replace(work / 'effects.json')
     # Journal precedes the first connection/DDL, including constructor failure.
-    journal = Journal(work / 'effects.jsonl', source=json.loads((work / 'source.json').read_text()), config=cfg)
+    journal = Journal(work / 'effects.jsonl', source=source, config=cfg)
     try:
         runtime_script = '''
 local n=0; for _ in pairs(box.info.replication) do n=n+1 end
@@ -181,23 +208,19 @@ for _,name in ipairs({'_tarn_txn','_tarn_part'}) do
  local s=box.space[name]; spaces[name]={is_sync=s.is_sync,state_is_sync=s.state.is_sync}
 end
 return {pid=box.info.pid,uuid=tostring(box.info.uuid),version=box.info.version,
- ro=box.info.ro,native=tarn_info().native,wal_mode=box.cfg.wal_mode,
+ ro=box.info.ro,native=tarn_info().native,configured_native=tarn.cfg.native,wal_mode=box.cfg.wal_mode,
  configured_replicas=#box.cfg.replication,observed_replicas=n,
  quorum=box.info.synchro.quorum,configured_quorum=box.cfg.replication_synchro_quorum,
  sync=tarn.cfg.sync,system_spaces=spaces}
 '''
         clock_script = 'local out={}; for k,v in pairs(box.info.vclock) do out[tostring(k)]=v end; return out'
-        def runtime(exclude=None):
-            samples = {}
-            for name, owned in cfg['owned_nodes'].items():
-                if name == exclude:
-                    continue
-                info = ev(owned['endpoint'], runtime_script)
-                samples[name] = info
-                check_runtime(info, int((work / (name + '.pid')).read_text()), cfg['native'])
-            return samples
+        def runtime(target, exclude=None):
+            target['storage_runtime'] = {}
+            collect_runtime(cfg['owned_nodes'], lambda endpoint: ev(endpoint, runtime_script),
+                            lambda name: int((work / (name + '.pid')).read_text()), cfg['native'],
+                            target['storage_runtime'], checkpoint, cfg['native_path'], exclude)
 
-        evidence['storage_runtime'] = runtime()
+        runtime(evidence)
         for name, info in evidence['storage_runtime'].items():
             assert info['pid'] == cfg['owned_nodes'][name]['pid']
 
@@ -304,7 +327,7 @@ return {pid=box.info.pid,uuid=tostring(box.info.uuid),version=box.info.version,
             return {'sql': sql, 'raw': raw, 'table_runtime': tables}
 
         evidence['survivor'] = snapshot()
-        evidence['survivor']['storage_runtime'] = runtime(exclude=evidence['killed']['node'])
+        runtime(evidence['survivor'], exclude=evidence['killed']['node'])
         checkpoint()
         assert evidence['survivor']['sql'] == expected_rows(cfg['keys']), evidence
         killed = evidence['killed']['node']
@@ -327,7 +350,8 @@ return {pid=box.info.pid,uuid=tostring(box.info.uuid),version=box.info.version,
         evidence['restarted'] = snapshot()
         evidence['restarted'].update(restarted_raw=sorted(ev(endpoint, raw_script, [cfg['database'] + '.t'])),
                                      caught_up=True, catchup_target=clock, catchup_actual=ev(endpoint, clock_script),
-                                     storage_runtime=runtime(), restart_pid=int((work / (killed + '.pid')).read_text()))
+                                     restart_pid=int((work / (killed + '.pid')).read_text()))
+        runtime(evidence['restarted'])
         report = reconcile(read(work / 'effects.jsonl'), evidence)
         (work / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     finally:

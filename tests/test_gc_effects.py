@@ -1,10 +1,13 @@
 """Offline falsification controls for the fixed effect oracle (no services)."""
 import copy
+import json
 import importlib.util
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
+from types import SimpleNamespace
 
 SQL = Path(__file__).parent / 'sql'
 sys.path.insert(0, str(SQL))
@@ -23,7 +26,7 @@ class EffectOracle(unittest.TestCase):
         owned = {f's{s}.{r}': {'pid': 123 + (s-1)*3 + r-1, 'endpoint': f'127.0.0.1:{7200+s*10+r}'}
                  for s in (1, 2) for r in (1, 2, 3)}
         config = {'keys': keys, 'database': 'gc_effects', 'engine': 'memtx', 'native': 'native',
-                  'owned_nodes': owned}
+                  'owned_nodes': owned, 'replicas': [[], []], 'native_path': '/selected/libtarn_storage.so'}
         with_journal = Journal(self.path, source={'fixture': 'offline'}, config=config)
         for op in fixture.operations(keys, 'gc_effects', 'memtx'):
             with_journal.intent(**op)
@@ -44,6 +47,7 @@ class EffectOracle(unittest.TestCase):
                   'table_runtime': [{'engine': 'memtx', 'is_sync': True, 'state_is_sync': True} for _ in range(2)]}
         runtime = {name: {'pid': node['pid'], 'wal_mode': 'fsync', 'configured_replicas': 3,
                           'observed_replicas': 3, 'quorum': 2, 'sync': True, 'native': {'ready': 1},
+                          'ro': name[-1] != '1', 'configured_native': '/selected/libtarn_storage.so',
                           'system_spaces': {n: {'is_sync': True, 'state_is_sync': True}
                                             for n in ('_tarn_txn', '_tarn_part')}}
                    for name, node in owned.items()}
@@ -142,9 +146,84 @@ class EffectOracle(unittest.TestCase):
         self.evidence['storage_runtime']['s2.3']['quorum'] = 1
         with self.assertRaises(AssertionError): self.check()
 
-    def test_native_selection_checked_against_runtime(self):
+    def test_unloaded_readonly_native_follower_is_legitimate(self):
         self.evidence['storage_runtime']['s2.3']['native'] = False
+        self.check()
+
+    def test_loaded_unready_readonly_native_follower_is_legitimate(self):
+        self.evidence['storage_runtime']['s2.3']['native'] = {'ready': 0}
+        self.check()
+
+    def test_writable_native_leader_must_be_loaded_and_ready(self):
+        for native in (False, {'ready': 0}, {}):
+            with self.subTest(native=native):
+                self.evidence['storage_runtime']['s2.1']['native'] = native
+                with self.assertRaises(AssertionError): self.check()
+
+    def test_promoted_native_leader_must_be_loaded_and_ready(self):
+        for phase in ('survivor', 'restarted'):
+            for native in (False, {'ready': 0}):
+                with self.subTest(phase=phase, native=native):
+                    info = self.evidence[phase]['storage_runtime']['s1.2']
+                    info.update(ro=False, native=native)
+                    with self.assertRaises(AssertionError): self.check()
+                    info.update(ro=True, native={'ready': 1})
+
+    def test_native_mode_and_selected_module_must_match(self):
+        for selected in (False, '/wrong/libtarn_storage.so'):
+            with self.subTest(selected=selected):
+                self.evidence['storage_runtime']['s2.3']['configured_native'] = selected
+                with self.assertRaises(AssertionError): self.check()
+
+    def test_missing_configured_native_observation_is_rejected(self):
+        for sample in (self.evidence, self.evidence['survivor'], self.evidence['restarted']):
+            info = sample['storage_runtime']['s2.3']
+            selected = info.pop('configured_native')
+            with self.assertRaises(AssertionError): self.check()
+            info['configured_native'] = selected
+
+    def test_missing_selected_native_path_is_rejected(self):
+        self.journal['records'][0]['config'].pop('native_path')
         with self.assertRaises(AssertionError): self.check()
+
+    def test_native_off_requires_false_on_every_role(self):
+        for ro in (False, True):
+            info = copy.deepcopy(self.evidence['storage_runtime']['s2.1'])
+            info.update(ro=ro, native=False, configured_native=False)
+            fixture.check_runtime(info, info['pid'], 'off')
+            for field, value in [('native', {'ready': 1}),
+                                 ('configured_native', '/selected/libtarn_storage.so')]:
+                wrong = dict(info, **{field: value})
+                with self.assertRaises(AssertionError): fixture.check_runtime(wrong, info['pid'], 'off')
+
+    def test_runtime_failure_retains_collected_samples(self):
+        for partial in (False, True):
+            with self.subTest(partial=partial):
+                work = Path(self.temp.name) / ('partial' if partial else 'invalid')
+                work.mkdir()
+                cfg = copy.deepcopy(self.journal['records'][0]['config'])
+                (work / 'fixture.json').write_text(json.dumps(cfg))
+                (work / 'source.json').write_text(json.dumps({'native': cfg['native_path']}))
+                for name, owned in cfg['owned_nodes'].items():
+                    (work / (name + '.pid')).write_text(str(owned['pid']))
+                samples = copy.deepcopy(self.evidence['storage_runtime'])
+                samples['s2.1']['native'] = False
+                replies = list(samples.values())
+                if partial:
+                    replies = replies[:2] + [RuntimeError('observation failed')]
+                modules = {name: mock.Mock() for name in
+                           ('outcome_client', 'pymysql', 'lazytest', 'movetest')}
+                modules['lazytest'].ev.side_effect = replies
+                modules['movetest'].bucket_of.side_effect = lambda key, count: fixture.bucket(key) if key < 128 else 1
+                args = SimpleNamespace(work=work, root=work, tarn='unused', recovery='unused')
+                with mock.patch.dict(sys.modules, modules):
+                    with self.assertRaises(RuntimeError if partial else AssertionError) as raised:
+                        fixture.run(args)
+                observed = json.loads((work / 'effects.json').read_text())['storage_runtime']
+                wanted = dict(list(samples.items())[:2]) if partial else samples
+                self.assertEqual(observed, wanted)
+                if not partial:
+                    self.assertIn("'native': False", str(raised.exception))
 
     def test_restarted_quorum_rechecked(self):
         self.evidence['restarted']['storage_runtime']['s1.1']['quorum'] = 1

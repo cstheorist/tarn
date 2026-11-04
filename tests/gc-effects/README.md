@@ -75,10 +75,16 @@ kill receipt is saved immediately after it.
 Survivor and restarted phases repeat runtime checks on every live node, and
 record the user table's actual engine and synchronous space state on both
 leaders alongside the full raw tuples.
-`native` means the selected module is actually loaded (`tarn_info().native`
-is an object); `off` requires that runtime field to be false. It does not
-assert that every operation was served in C, or that a follower's native
-state is ready. Actual `_tarn_txn`/`_tarn_part` synchronous space flags are
+`native` checks the configured module path (`tarn.cfg.native`) against the
+selected source receipt on every observed node. Writable native leaders,
+including promoted followers, must expose a loaded `tarn_info().native` object
+with `ready=1`. A read-only follower may legitimately report false before its
+first writable role, or retain a loaded object after demotion; its readiness
+is not required. `off` requires both configured and loaded native state to
+be false on every node. These observations do not assert that every operation
+was served in C. Runtime samples are checkpointed into `effects.json` before
+validation; an observation failure retains the samples already collected, and
+an assertion includes the offending observed info. Actual `_tarn_txn`/`_tarn_part` synchronous space flags are
 also required on every live node at each phase.
 
 Offline controls exercise the effect oracle and journal structure only. Live
