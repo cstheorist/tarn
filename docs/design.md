@@ -2505,7 +2505,7 @@ a stream of moves would keep it waiting.
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **140 verified, 0 errors**) and compiled into the server and the
+src/lib.rs`: **144 verified, 0 errors**) and compiled into the server and the
 native module as plain Rust. What is proven:
 
 * **Native clock arithmetic** (`clock.rs`). The shared executable
@@ -2591,7 +2591,13 @@ native module as plain Rust. What is proven:
   alone and holds its new entry instead (none when the row is deleted or its
   key has a NULL part), and that a write that keeps the key writes no entry.
   That the new entry's key is free is the commit protocol's job, which TLC
-  checks (`Uniq*`, §2.2).
+  checks (`Uniq*`, §2.2). For an index being built while writes go on
+  (issue #292, a design that `tla/GlobalUniqueBuild.tla` models and the
+  server does not implement yet), a key's rows are its entry's holder and
+  the rows recorded as conflicts there. `leave_key` and `join_key` decide
+  what a write does at the key its row leaves and at the one it joins. It
+  is proven that a well-formed key stays well formed, and that its rows
+  lose the leaving row, or gain the joining one, and no other row.
 
 Not covered by the proofs: how SQL values are turned into the bytes that
 are hashed for routing (`tarn-sql/src/route.rs`, tested against Tarantool's
@@ -2784,6 +2790,14 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_GatewayEvictPinned | violates EvictionSafe | 73 | 146 | 5 | 00s | 5 |
 | Bug_GatewayReserve | violates CompletionReserve | 9 | 12 | 3 | 00s | 3 |
 | Bug_GatewayResponseRelease | violates ResponseOwned | 69 | 132 | 4 | 00s | 4 |
+| Bug_GlobalUniqueBuildBackfillUnvalidated | violates NoStale | 15660 | 73573 | 10 | 02s | 10 |
+| Bug_GlobalUniqueBuildEarlyPublish | violates Enforced | 45857 | 206055 | 11 | 04s | 11 |
+| Bug_GlobalUniqueBuildNoDrainToBuilding | violates NoStale | 42213 | 149485 | 10 | 04s | 10 |
+| Bug_GlobalUniqueBuildNoDrainToEnforcing | violates Enforced | 625795 | 5582827 | 19 | 41s | 19 |
+| Bug_GlobalUniqueBuildNoPromote | violates WellFormed | 28730 | 141180 | 11 | 03s | 11 |
+| Bug_GlobalUniqueBuildPublishConflicts | violates Enforced | 553592 | 4489425 | 17 | 34s | 17 |
+| Bug_GlobalUniqueBuildSkipConflict | violates Enforced | 545959 | 4196255 | 17 | 31s | 17 |
+| Bug_GlobalUniqueBuildStaleWrite | violates NoStale | 13855 | 96842 | 9 | 02s | 9 |
 | Bug_GroupedDDLIgnoreGeneration | violates NoHeldSnapshot | 36 | 46 | 5 | 00s | 5 |
 | Bug_GroupedDDLIgnoreStale | violates NoHeldSnapshot | 37 | 47 | 5 | 00s | 5 |
 | Bug_GroupedReadSeparateSnapshots | violates CoherentSnapshot | 18 | 18 | 6 | 00s | 6 |
@@ -2978,6 +2992,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 04min 10s |  |
 | Frac_ROValidate | no errors | 95786 | 555473 | 19 | 17s |  |
 | GatewayResources | no errors | 24388 | 130038 | 24 | 00s |  |
+| GlobalUniqueBuild | no errors | 623822 | 5698162 | 18 | 42s |  |
 | GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
 | GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |

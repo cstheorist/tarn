@@ -120,6 +120,9 @@ DEFAULT="$DEFAULT ReplicatedBuildFence Bug_BuildFenceNoQuorumWait Bug_BuildFence
 DEFAULT="$DEFAULT ShadowUnique Bug_ShadowUniqueFailOnDirtyHolder Bug_ShadowUniqueEvictClean Bug_ShadowUniqueTailInPlace"
 DEFAULT="$DEFAULT Bug_ShadowUniquePassHolderOldSet Bug_ShadowUniquePassInPlace"
 DEFAULT="$DEFAULT PlanGuardScalar PlanGuardBatch Bug_PlanGuardSkipSpace Bug_PlanGuardYield"
+DEFAULT="$DEFAULT GlobalUniqueBuild Bug_GlobalUniqueBuildBackfillUnvalidated Bug_GlobalUniqueBuildSkipConflict
+Bug_GlobalUniqueBuildNoPromote Bug_GlobalUniqueBuildPublishConflicts Bug_GlobalUniqueBuildEarlyPublish
+Bug_GlobalUniqueBuildNoDrainToBuilding Bug_GlobalUniqueBuildNoDrainToEnforcing Bug_GlobalUniqueBuildStaleWrite"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do
