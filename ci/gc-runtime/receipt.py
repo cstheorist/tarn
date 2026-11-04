@@ -27,6 +27,8 @@ receipt = {
     'arm': arm,
     'tarantool_commit': (out / 'inputs/tarantool-commit.txt').read_text().strip(),
     'luajit_commit': (out / 'inputs/luajit-commit.txt').read_text().strip(),
+    'luajit_describe': (out / 'inputs/luajit-describe.txt').read_text().strip(),
+    'luajit_shallow': (out / 'inputs/luajit-shallow-after.txt').read_text().strip() == 'true',
     'upstream_fix_commit': '07b3cd3cf9b57a3801a1ebc48144767e31671f21' if arm == 'candidate' else None,
     'patch_sha256': sha(out / 'inputs/urefo-x86.patch') if arm == 'candidate' else None,
     'upstream_patch_sha256': sha(out / 'inputs/upstream-07b3cd3c.patch'),

@@ -19,6 +19,11 @@ Both arms build Tarantool 3.9.0 at
 `8b9a0f59a95bb6c4a491e716966d9df9d5a4f6bc` and its exact LuaJIT submodule
 `8af934d93cf26fb1e9b08b28a8b51833d55fc8e8`. A moved release tag or submodule
 mismatch fails. Recursive submodules use the pinned superproject gitlinks.
+LuaJIT alone is then fetched with full history and tags because its
+`SetVersion.cmake` requires plain `git describe`. The fetch never changes
+the pinned HEAD or worktree; the builder checks the pin again and validates
+the describe string before configuration. Both describe output and shallow
+status before/after the fetch are retained as inputs.
 The baseline must start pristine; the candidate's complete LuaJIT dirty diff
 must match the reviewed patch hash. Each arm uses fresh source and build
 folders. Existing outputs are never reused. OUTDIR must be nonexistent or an
@@ -70,7 +75,8 @@ not only a runtime openness guard.
 On success, `OUTDIR/runtime-receipt.json` has `schema_version: 1` and stable
 keys `arm`, `tarantool_commit`, `luajit_commit`, `patch_sha256` (null for
 baseline), `binary_sha256`, `build_type`, `source_dirty_diff_sha256`,
-`architecture`, `os`, `gc64`, `compiler`, `config`, and `submodules`.
+`architecture`, `os`, `gc64`, `compiler`, `config`, `submodules`,
+`luajit_describe`, and `luajit_shallow`.
 `source_dirty_diff_sha256` hashes `inputs/source-dirty.diff`, including the
 empty baseline diff. `patch_sha256` hashes `inputs/urefo-x86.patch` for the
 candidate. The receipt records toolchain/config inputs, recursive submodule

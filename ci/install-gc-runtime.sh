@@ -63,6 +63,21 @@ run clone git clone --quiet --depth 1 --branch 3.9.0 --no-recurse-submodules \
 run submodules git -C "$SRC" submodule update --init --recursive --depth 1 --jobs "$JOBS"
 LJ=$SRC/third_party/luajit
 [[ $(git -C "$LJ" rev-parse HEAD) == "$LJ_COMMIT" ]] || { echo 'LuaJIT pin mismatch' >&2; exit 1; }
+# LuaJIT's SetVersion.cmake calls plain git describe, which needs annotated
+# tags and their ancestry. Fetch metadata/history only; never move pinned HEAD.
+git -C "$LJ" rev-parse --is-shallow-repository > "$OUT/inputs/luajit-shallow-before.txt"
+if [[ $(cat "$OUT/inputs/luajit-shallow-before.txt") == true ]]; then
+  run luajit-history git -C "$LJ" fetch --unshallow --tags origin
+else
+  run luajit-history git -C "$LJ" fetch --tags origin
+fi
+[[ $(git -C "$LJ" rev-parse HEAD) == "$LJ_COMMIT" ]] || { echo 'LuaJIT pin moved during history fetch' >&2; exit 1; }
+git -C "$LJ" rev-parse --is-shallow-repository > "$OUT/inputs/luajit-shallow-after.txt"
+run luajit-describe git -C "$LJ" describe
+cp "$OUT/logs/luajit-describe.log" "$OUT/inputs/luajit-describe.txt"
+if ! grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta)[0-9]+)?-[0-9]+-g[0-9a-z]+$' "$OUT/inputs/luajit-describe.txt"; then
+  echo 'LuaJIT git describe is not compatible with SetVersion.cmake' >&2; exit 1
+fi
 git -C "$SRC" submodule status --recursive > "$OUT/inputs/submodules.txt"
 if grep -Eq '^[-+U]' "$OUT/inputs/submodules.txt"; then
   echo 'uninitialized or mismatched submodule' >&2; exit 1
