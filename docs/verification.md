@@ -3445,6 +3445,14 @@ instrumented bytes/RPCs and quantized process CPU retain the narrow-payload
 regressions. This shared-CI run establishes neither capacity nor an
 independently reproduced build, and makes no policy/default change.
 
+The [expanded qualification on `086d4ba`](https://github.com/cstheorist/tarn/issues/135#issuecomment-6620682998)
+adds the grouped descriptor cases: 172 off/on cases and 1,200 checks across
+four lanes, with 40 of 43 MariaDB and 32 of 43 MySQL reference-wire matches
+per lane. Explicit reference authority and diagnostic differences still
+apply. Its five paired runs retain wide-row gains and small-row regressions.
+The approved release policy is workload-qualified opt-in with the default
+remaining off; these measurements do not justify enabling every workload.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request:
