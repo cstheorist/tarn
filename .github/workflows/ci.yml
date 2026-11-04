@@ -565,9 +565,13 @@ jobs:
 
   tla:
     if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification && !inputs.topology_only)
-    name: TLA+ model checking
+    name: TLA+ model checking (${{ matrix.shard }}/3)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -577,7 +581,7 @@ jobs:
       - name: Download the TLA+ tools
         run: curl -fsSL -o tla/tla2tools.jar "$TLA_TOOLS_URL"
       - name: Check the fast configurations
-        run: WORKERS=auto tla/check.sh
+        run: WORKERS=auto SHARD=${{ matrix.shard }}/3 tla/check.sh
 
   verus:
     if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification && !inputs.topology_only)

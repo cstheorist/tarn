@@ -1,8 +1,9 @@
 #!/bin/bash
 # Model-check the configurations that finish within minutes and check their
 # outcomes: every Bug_* and Tradeoff_* configuration must violate an
-# invariant, every other one must pass. CI runs this; see
-# docs/verification.md. Arguments override the list of configurations.
+# invariant, every other one must pass. CI runs this in three jobs (SHARD,
+# below); see docs/verification.md. Arguments override the list of
+# configurations.
 set -u
 cd "$(dirname "$0")"
 DEFAULT="ClockBootstrap Bug_ClockBootstrapMarker Bug_ClockBootstrapJoin GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned Bug_GatewayReserve Bug_GatewayResponseRelease Bug_NoReadLocks Bug_LocalIgnoresRLocks Bug_NoWLockCheckOnRead Bug_NoTombstone
@@ -121,6 +122,21 @@ DEFAULT="$DEFAULT ShadowUnique Bug_ShadowUniqueFailOnDirtyHolder Bug_ShadowUniqu
 DEFAULT="$DEFAULT Bug_ShadowUniquePassHolderOldSet Bug_ShadowUniquePassInPlace"
 DEFAULT="$DEFAULT PlanGuardScalar PlanGuardBatch Bug_PlanGuardSkipSpace Bug_PlanGuardYield"
 CONFIGS=${*:-$DEFAULT}
+# SHARD=k/n checks every n-th configuration, from the k-th on: CI checks the
+# list in n jobs.
+if [ -n "${SHARD:-}" ]; then
+  if ! [[ $SHARD =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || [ "${BASH_REMATCH[1]}" -gt "${BASH_REMATCH[2]}" ]; then
+    echo "SHARD must be k/n, with 1 <= k <= n" >&2; exit 2
+  fi
+  k=${BASH_REMATCH[1]} n=${BASH_REMATCH[2]}
+  i=0 picked=
+  for cfg in $CONFIGS; do
+    [ $((i % n)) = $((k - 1)) ] && picked="$picked $cfg"
+    i=$((i + 1))
+  done
+  CONFIGS=$picked
+  echo "shard $k/$n:$CONFIGS"
+fi
 fail=0
 for cfg in $CONFIGS; do
   ./run_all.sh "$cfg" || { echo "run_all.sh failed for $cfg"; fail=1; continue; }

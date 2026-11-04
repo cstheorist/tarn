@@ -130,6 +130,7 @@ You need Java 11+ and `tla2tools.jar`:
 curl -fsSL -o tla/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
 
 tla/check.sh                                    # the fast configurations, outcomes checked (as in CI)
+SHARD=2/3 tla/check.sh                          # every third one, from the second: CI runs 1/3, 2/3 and 3/3
 WORKERS=4 tla/run_all.sh Recov_GC Bug_NoTombstone   # any configurations; logs in tla/out/
 python3 tla/summarize.py                        # table of every result in tla/out/
 ```
