@@ -3394,6 +3394,65 @@ retain ordinary reads without new validation; their reduction counter must
 stay unchanged. The ordinary differential suite adds 30
 cases. Bucket tests reject both new procedures on the wrong owner.
 
+`tests/sql/pushdown_contracts.py` compares gateways over the same shards
+with typed reads disabled and enabled. It retains full wire descriptors,
+typed values, affected rows, SQLSTATE/errno and diagnostics. Its reference
+comparison keeps semantic flags, including nullability and unsignedness,
+while excluding origin/index hints and diagnostic prose; the raw fields
+and text remain in the artifact. MariaDB 10.11 is authoritative for ordinary
+SQL and the pinned MySQL reference for the explicit MYSQL key profile.
+Empty/all-NULL inputs, integer widths, unsupported-expression fallback,
+failing predicates and rolled-back own writes are covered. A bounded
+COM_STMT_PREPARE/EXECUTE subset records both preparation and execution
+metadata; parameter binding and prepared-statement reuse are outside this
+probe. Offline negative controls reject altered types, descriptors,
+errors, diagnostics and path counters. Observation-only runs retain
+discrepancies and cannot establish a release pass.
+
+The [reference receipt](../tests/contracts/typed-read-oracles/41727780239/receipt.json)
+and compressed raw capture retain 33 cases on MariaDB 10.11.19 and MySQL
+8.4.13. This reference-only run qualifies the fixture and binary decoder;
+it does not establish Tarn correctness or pushdown performance. The
+references agree on the captured integer aggregate descriptors, including
+smaller-integer extrema widths, and differ on DOUBLE extrema display
+length (MariaDB 23, MySQL 22).
+
+The [grouping reference capture](../tests/contracts/typed-read-oracles/41747407553/README.md)
+retains 18 query shapes and separate text, prepared and executed descriptors.
+The grouped release cases cover indexed/nonindexed grouping, aggregate
+sorting and empty input, including numeric NULL/default flags and DOUBLE
+widths. The phase distinction is limited to one ordinary table with distinct
+direct integer grouping keys and no filter or a literal integer range filter.
+Parameterized prepared ranges and other shapes retain their prior metadata;
+binding and handle reuse are outside this probe. This does not establish every
+cost-dependent MariaDB grouping plan, join-buffering or constant-key choice.
+
+The performance matrix starts fresh storage processes after the correctness
+fixture exits. It checks effective test flags on every replica before and
+after measurement, along with RF3 membership, synchronous user spaces and
+fsync. Its source and binary receipts, alternating pairs, actual transfer
+and CPU measurements remain required; correctness runs with diagnostic
+checks enabled do not qualify production performance.
+
+The [retained run 41729770781](../tests/evidence/typed-read/41729770781/README.md)
+contains all six raw measurement files, four wire captures, source/artifact
+receipts and a standard-library verifier. All 132 off/on wire cases pass;
+reference equality remains 30/33 MariaDB and 29/33 MySQL per lane, with
+explicit diagnostic/fallback differences. Native-enabled direct timings
+have 20 consistently faster, seven consistently slower and 21 mixed cells;
+all ten eligible 64 KiB cells improve in every pair. The full ratios,
+instrumented bytes/RPCs and quantized process CPU retain the narrow-payload
+regressions. This shared-CI run establishes neither capacity nor an
+independently reproduced build, and makes no policy/default change.
+
+The [expanded qualification on `086d4ba`](https://github.com/cstheorist/tarn/issues/135#issuecomment-6620682998)
+adds the grouped descriptor cases: 172 off/on cases and 1,200 checks across
+four lanes, with 40 of 43 MariaDB and 32 of 43 MySQL reference-wire matches
+per lane. Explicit reference authority and diagnostic differences still
+apply. Its five paired runs retain wide-row gains and small-row regressions.
+The approved release policy is workload-qualified opt-in with the default
+remaining off; these measurements do not justify enabling every workload.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request:

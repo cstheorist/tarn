@@ -510,7 +510,7 @@ def case_diagnostic_select_protocol(s):
                 messages = [row[:2] for row in q(c, "SHOW WARNINGS")]
                 code = 1295 if s.prepared and s.kind == "mysql" else 1235 if s.prepared and s.kind == "tarn" and statement.endswith("+0") else None
                 assert result == ({"error": [code, "HY000" if code == 1295 else "42000"]} if code else {"value": [[count]]}), result
-                expected = [["Error", 1295]] if code == 1295 else [["Warning", 1062]] * min(count, 64) if code or s.kind == "mariadb" else []
+                expected = [["Error", code]] if code else [["Warning", 1062]] * min(count, 64) if s.kind == "mariadb" else []
                 assert messages == expected, (statement, count, messages)
                 handles.append(diagnostic_handle(cursor, s.prepared))
                 outcomes.append(dict(statement=statement, prior_count=count, result=result, messages=messages))

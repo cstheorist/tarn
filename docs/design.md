@@ -168,6 +168,16 @@ The [matched RF3 study](../bench/PUSHDOWN.md#expanded-release-results)
 finds wide-row gains and narrow-row regressions, so measure the actual
 workload before enabling them.
 
+Result metadata is derived from the SQL expression in both paths. Extrema
+can return NULL even when the source column cannot; an exact SUM widens
+the argument's decimal precision by 22 digits, up to 65, and returns a
+signed decimal. COUNT returns a nonnullable integer. The qualified grouped
+shapes distinguish aggregate-item descriptors at preparation from temporary
+field descriptors at execution, including empty results. The wire contract
+suite retains typed values, descriptor fields, errors and diagnostics;
+ordinary SQL uses MariaDB 10.11 as its reference, while the explicit MYSQL
+key profile uses its pinned MySQL reference.
+
 **Autocommit single-shard DML** (`UPDATE ... WHERE pk = ?`, single-shard
 `INSERT`, `DELETE ... WHERE pk = ?`): one call to `tarn_autocommit`, which runs
 one local Tarantool transaction (lock check + apply + commit). On a memtx

@@ -182,7 +182,8 @@ def seed():
     return s
 
 
-# (sql, kind): 'q', 'rows', 'plan' (engine-specific JSON), 'dml' (table dumps), or 'err'.
+# (sql, kind): 'q', 'rows', 'metadata' (exact aggregate wire fields),
+# 'plan' (engine-specific JSON), 'dml' (table dumps), or 'err'.
 CASES = [
     # Explicit optional optimizer statistics and reordered integer joins;
     # status rows and logical SELECT * column order match MariaDB.
@@ -255,6 +256,17 @@ CASES = [
     ("SELECT COUNT(a), COUNT(b), COUNT(DISTINCT a) FROM t1", "q"),
     ("SELECT SUM(a), MIN(a), MAX(a), AVG(a) FROM t1", "q"),
     ("SELECT SUM(c), MIN(c), MAX(c) FROM t1", "q"),
+    # Aggregate metadata has result-item flags and widths, independent of
+    # direct-column flags. Check it even when the result is empty or NULL.
+    ("SELECT SUM(n) AS total,SUM(u) AS utotal,MIN(n) AS lo,MAX(u) AS hi,COUNT(n) AS present,COUNT(*) AS nrows FROM sgn", "metadata"),
+    ("SELECT SUM(n) AS total,SUM(u) AS utotal,MIN(n) AS lo,MAX(u) AS hi,COUNT(n) AS present FROM sgn WHERE id < 0", "metadata"),
+    ("SELECT SUM(n) AS total,MIN(u) AS lo,MAX(n) AS hi,COUNT(*) AS nrows FROM sgn GROUP BY id ORDER BY total", "metadata"),
+    ("SELECT SUM(n) AS total,MIN(u) AS lo,MAX(n) AS hi,COUNT(*) AS nrows FROM sgn GROUP BY id ORDER BY id", "metadata"),
+    ("SELECT SUM(n) AS total,MIN(u) AS lo,MAX(n) AS hi,COUNT(*) AS nrows,MAX(ui) AS supplied_default FROM sgn GROUP BY id ORDER BY total DESC", "metadata"),
+    ("SELECT SUM(n+0) AS total,SUM(u+0) AS utotal FROM sgn", "metadata"),
+    ("SELECT SUM(c) AS total,MIN(c) AS lo,MAX(c) AS hi,COUNT(c) AS present FROM t1", "metadata"),
+    ("SELECT SUM(c) AS total,MIN(c) AS lo,MAX(c) AS hi,COUNT(c) AS present FROM t1 WHERE c IS NULL", "metadata"),
+    ("SELECT SUM(d) AS total,MIN(d) AS lo,MAX(d) AS hi FROM t1", "metadata"),
     ("SELECT a, COUNT(*) FROM t1 GROUP BY a", "q"),
     ("SELECT a, COUNT(*) AS n, SUM(id) FROM t1 GROUP BY a HAVING n > 7", "q"),
     ("SELECT b, MAX(id) FROM t1 WHERE a IS NOT NULL GROUP BY b ORDER BY b", "q"),
@@ -336,9 +348,11 @@ CASES = [
     ("SELECT id FROM t1 WHERE id = (SELECT id FROM t2)", "err"),
     # errors
     ("SELECT nope FROM t1", "err"),
+    ("SELECT @@warning_count, @@error_count", "rows"),
     ("SELECT * FROM missing_table", "err"),
     ("SELEC 1", "err"),
     ("INSERT INTO t1 (id, a) VALUES (1, 1)", "err"),
+    ("SELECT @@warning_count, @@error_count", "rows"),
     ("INSERT INTO t2 (id, qty) VALUES (500, NULL)", "err"),
     # DML
     ("INSERT INTO t1 (id, a, b) VALUES (100, 1, 'new'), (101, NULL, 'newer')", "dml:t1"),
@@ -1618,7 +1632,7 @@ def rows_equal(a, b, ordered):
     return True
 
 
-def run(conn, sql):
+def run(conn, sql, metadata=False):
     cur = conn.cursor()
     try:
         cur.execute(sql)
@@ -1626,6 +1640,10 @@ def run(conn, sql):
             return ("ok", cur.rowcount, None)
         cols = [d[0] for d in cur.description]
         rows = [tuple(norm(v) for v in r) for r in cur.fetchall()]
+        if metadata:
+            fields = [(f.name, f.type_code, f.flags, f.charsetnr, f.length, f.scale)
+                      for f in cur._result.fields]
+            return ("rows", rows, cols, fields)
         return ("rows", rows, cols)
     except pymysql.MySQLError as e:
         return ("err", e.args[0] if e.args else None, str(e))
@@ -1662,7 +1680,7 @@ def main():
     fa, fb = (connect(hp, args.db, CLIENT.FOUND_ROWS) for hp in (args.tarn, args.ref))
     for (a, b), (sql, kind) in [((a, b), c) for c in CASES] + [((fa, fb), c) for c in FOUND_ROWS_CASES]:
         sql = sql.replace("{db}", args.db)  # the database the cases run in (--db)
-        ra, rb = run(a, sql), run(b, sql)
+        ra, rb = run(a, sql, kind == "metadata"), run(b, sql, kind == "metadata")
         ok = True
         msg = ""
         if kind == "admin_names":
@@ -1680,6 +1698,10 @@ def main():
         elif kind == "err":
             # both must fail, with the same MySQL error code
             ok = ra[0] == "err" and rb[0] == "err" and ra[1] == rb[1]
+        elif kind == "metadata":
+            ordered = bool(re.search(r"\bORDER\s+BY\b", sql, re.I))
+            ok = (ra[0] == rb[0] == "rows" and ra[2:] == rb[2:]
+                  and rows_equal(ra[1], rb[1], ordered))
         elif kind == "rows" and (ra[0] != "rows" or rb[0] != "rows"):
             ok = False
         elif ra[0] != rb[0]:

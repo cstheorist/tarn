@@ -129,6 +129,35 @@ impl SqlType {
     pub fn is_numeric(&self) -> bool {
         self.is_integer() || matches!(self.base, BaseType::Float | BaseType::Double | BaseType::Decimal)
     }
+    /// Declared exact-numeric display width used by MariaDB result items.
+    /// Keep this separate from direct-column metadata and storage semantics.
+    pub fn exact_numeric_length(&self) -> Option<u32> {
+        use BaseType::*;
+        let signed = u32::from(!self.unsigned);
+        Some(match self.base {
+            TinyInt => self.len.unwrap_or(3 + signed),
+            SmallInt => self.len.unwrap_or(5 + signed),
+            MediumInt => self.len.unwrap_or(8 + signed),
+            Int => self.len.unwrap_or(10 + signed),
+            BigInt => self.len.unwrap_or(20),
+            Bool => self.len.unwrap_or(1),
+            Year => self.len.unwrap_or(4),
+            Decimal => self.len.unwrap_or(10) + signed + u32::from(self.scale.unwrap_or(0) > 0),
+            _ => return None,
+        })
+    }
+    /// Precision follows MariaDB Type_handler_int_result::Item_decimal_precision:
+    /// the display width less sign/point, rather than the integer's value bound.
+    pub fn exact_numeric_precision(&self) -> Option<u32> {
+        if self.base == BaseType::Decimal {
+            return Some(self.len.unwrap_or(10).min(65));
+        }
+        self.exact_numeric_length().map(|length| {
+            length
+                .saturating_sub(u32::from(!self.unsigned && self.base != BaseType::Year))
+                .min(65)
+        })
+    }
     pub fn is_binary(&self) -> bool {
         matches!(self.base, BaseType::Binary | BaseType::VarBinary | BaseType::Blob)
     }

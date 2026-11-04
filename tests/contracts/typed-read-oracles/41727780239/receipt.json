@@ -1,0 +1,23 @@
+{
+  "conclusion": "success",
+  "created_at": "2026-11-03T22:06:14Z",
+  "event": "workflow_dispatch",
+  "head_sha": "217b926e655b71ef1f8d168e0985daf50183e6ea",
+  "html_url": "https://github.com/cstheorist/tarn/actions/runs/41727780239",
+  "id": 41727780239,
+  "run_attempt": 1,
+  "updated_at": "2026-11-03T22:08:38Z",
+  "artifacts": [
+    {
+      "digest": "sha256:c58635c0e802372bc90c56f3b99259cec389355da22054508267ecaeebd90e69",
+      "expired": false,
+      "id": 13275930699,
+      "name": "pushdown-oracles-41727780239",
+      "size_in_bytes": 6950
+    }
+  ],
+  "json_sha256": "54986abd3cce5dac8ca87849d1e48aa82204454bc6ba0f2b637b8fa2b6c5d916",
+  "gzip_sha256": "5faa5ed87f4d98c9fde35ff319ef3274c4fa04bad8bc5729d659892b78e5143e",
+  "probe_sha256": "144086bc420e75294d44289deb9435ac981fa70dbca0e8b75bba658b26be44d7",
+  "boundary": "Reference-only fixture and parser qualification; no Tarn, off/on, or path checks. Raw observations are not a complete SQL conformance certificate."
+}

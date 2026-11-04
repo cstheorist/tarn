@@ -1,0 +1,42 @@
+name: Grouped aggregate metadata reference
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: grouped-metadata-reference-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      mariadb:
+        image: mariadb:10.11.19
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: '1'
+        ports: ['3407:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2
+      - name: Capture grouped reference metadata
+        run: |
+          mkdir -p /tmp/grouped-reference
+          git rev-parse HEAD > /tmp/grouped-reference/source.txt
+          git status --porcelain > /tmp/grouped-reference/source-status.txt
+          sha256sum tests/sql/grouped_metadata_reference.py tests/sql/pushdown_contracts.py .github/workflows/typed-read-study.yml > /tmp/grouped-reference/inputs.sha256
+          docker inspect '${{ job.services.mariadb.id }}' --format '{{json .Image}}' > /tmp/grouped-reference/image-id.json
+          docker image inspect mariadb:10.11.19 --format '{{json .RepoDigests}}' > /tmp/grouped-reference/image-digests.json
+          python3 tests/sql/grouped_metadata_reference.py > /tmp/grouped-reference/results.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: grouped-reference-${{ github.run_id }}
+          path: /tmp/grouped-reference
+          retention-days: 30

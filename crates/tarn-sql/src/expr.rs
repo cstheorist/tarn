@@ -971,6 +971,19 @@ pub struct ExprType {
     pub sql: Option<SqlType>,
     pub nullable: bool,
     pub decimals: u8,
+    /// Known exact decimal precision, independent of the runtime value type.
+    /// None means the expression's precision has not been established.
+    pub precision: Option<u32>,
+    /// Result-item wire properties which differ from the declared SQL type
+    /// (notably aggregate flags and widened exact SUM display lengths).
+    pub metadata: Option<ExprMetadata>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExprMetadata {
+    /// Nullability is carried separately by ExprType::nullable.
+    pub flags: u16,
+    pub length: u32,
 }
 
 impl ExprType {
@@ -979,6 +992,8 @@ impl ExprType {
             ty,
             sql: None,
             nullable: true,
+            metadata: None,
+            precision: None,
             decimals: match ty {
                 ColumnType::Double | ColumnType::Float => 31,
                 _ => 0,
@@ -1021,6 +1036,15 @@ pub fn infer(e: &Expr, input: &[ExprType], params: &[Value]) -> ExprType {
                 t
             } else if int(&x) && int(&y) {
                 let mut t = ExprType::of(C::LongLong);
+                // MariaDB Item_num_op computes result precision before it
+                // selects LONG/LONGLONG. Preserve that precision separately;
+                // setting a declared SqlType here would change inference of
+                // unsigned arithmetic and other expression semantics.
+                t.precision = x.precision.zip(y.precision).and_then(|(a, b)| match op.base() {
+                    Arith::Add | Arith::Sub => Some(a.max(b).saturating_add(1).min(65)),
+                    Arith::Mul => Some(a.saturating_add(b).min(65)),
+                    _ => None,
+                });
                 if op.is_unsigned() {
                     let mut ty = crate::types::SqlType::new(crate::types::BaseType::BigInt);
                     ty.unsigned = true;
@@ -1042,11 +1066,18 @@ pub fn infer(e: &Expr, input: &[ExprType], params: &[Value]) -> ExprType {
             CastTo::Decimal(_) => C::NewDecimal,
             _ => C::VarString,
         }),
-        Expr::Case(_, w, e, _) => w
-            .first()
-            .map(|(_, r)| infer(r, input, params))
-            .or_else(|| e.as_ref().map(|x| infer(x, input, params)))
-            .unwrap_or_else(|| ExprType::of(C::VarString)),
+        Expr::Case(_, w, e, _) => {
+            let mut t = w
+                .first()
+                .map(|(_, r)| infer(r, input, params))
+                .or_else(|| e.as_ref().map(|x| infer(x, input, params)))
+                .unwrap_or_else(|| ExprType::of(C::VarString));
+            // Choosing the first branch's value type does not establish the
+            // combined expression's precision or result-item wire properties.
+            t.precision = None;
+            t.metadata = None;
+            t
+        }
         Expr::Func(f, args) => {
             use Func::*;
             match f {
@@ -1058,14 +1089,16 @@ pub fn infer(e: &Expr, input: &[ExprType], params: &[Value]) -> ExprType {
                     t.sql = Some(SqlType::new(BaseType::VarBinary));
                     t
                 }
-                Abs | Round | Mod | Greatest(_) | Least(_) | Coalesce | IfNull | NullIf(_) => args
-                    .first()
-                    .map(|a| infer(a, input, params))
-                    .unwrap_or_else(|| ExprType::of(C::VarString)),
-                If => args
-                    .get(1)
-                    .map(|a| infer(a, input, params))
-                    .unwrap_or_else(|| ExprType::of(C::VarString)),
+                Abs | Round | Mod | Greatest(_) | Least(_) | Coalesce | IfNull | NullIf(_) | If => {
+                    let argument = if matches!(f, If) { 1 } else { 0 };
+                    let mut t = args
+                        .get(argument)
+                        .map(|a| infer(a, input, params))
+                        .unwrap_or_else(|| ExprType::of(C::VarString));
+                    t.precision = None;
+                    t.metadata = None;
+                    t
+                }
                 Rand | Sqrt | Pow => ExprType::of(C::Double),
                 Now => ExprType::of(C::DateTime),
                 CurDate => ExprType::of(C::Date),
@@ -1083,24 +1116,32 @@ pub fn value_type(v: &Value) -> ExprType {
             ty: C::LongLong,
             sql: None,
             nullable: false,
+            metadata: None,
+            precision: Some(v.to_string().trim_start_matches('-').len() as u32),
             decimals: 0,
         },
         Value::Float(_) => ExprType {
             ty: C::Double,
             sql: None,
             nullable: false,
+            metadata: None,
+            precision: None,
             decimals: 31,
         },
         Value::Decimal(d) => ExprType {
             ty: C::NewDecimal,
             sql: None,
             nullable: false,
+            metadata: None,
+            precision: None,
             decimals: d.split_once('.').map(|(_, f)| f.len() as u8).unwrap_or(0),
         },
         Value::Str(_) => ExprType {
             ty: C::VarString,
             sql: None,
             nullable: false,
+            metadata: None,
+            precision: None,
             decimals: 0,
         },
         // a binary string (X'41', 0x41): of the binary character set, as
@@ -1109,6 +1150,8 @@ pub fn value_type(v: &Value) -> ExprType {
             ty: C::VarString,
             sql: Some(SqlType::new(BaseType::VarBinary)),
             nullable: false,
+            metadata: None,
+            precision: None,
             decimals: 0,
         },
     }
@@ -1119,6 +1162,8 @@ pub fn column_expr_type(t: &SqlType, nullable: bool) -> ExprType {
         ty: t.column_type(),
         sql: Some(t.clone()),
         nullable,
+        metadata: None,
+        precision: t.exact_numeric_precision(),
         decimals: match t.base {
             BaseType::Decimal => t.scale.unwrap_or(0) as u8,
             BaseType::Double | BaseType::Float => 31,
@@ -1130,6 +1175,25 @@ pub fn column_expr_type(t: &SqlType, nullable: bool) -> ExprType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_integer_precision_is_separate_from_value_type() {
+        let input = [column_expr_type(&SqlType::parse("BIGINT").unwrap(), true)];
+        let e = Expr::Arith(Box::new(Expr::Col(0)), Arith::Add, Box::new(Expr::Lit(Value::Int(0))));
+        let t = infer(&e, &input, &[]);
+        assert_eq!(t.ty, ColumnType::LongLong);
+        assert!(t.sql.is_none());
+        assert_eq!(t.precision, Some(20));
+        assert!(t.metadata.is_none());
+        // A comparison has no established precision; adding it must not
+        // manufacture the precision of the BIGINT runtime result type.
+        let unknown = Expr::Arith(
+            Box::new(Expr::Col(0)),
+            Arith::Add,
+            Box::new(Expr::IsNull(Box::new(Expr::Col(0)), false)),
+        );
+        assert_eq!(infer(&unknown, &input, &[]).precision, None);
+    }
 
     fn cx<'a>(p: &'a [Value]) -> EvalCtx<'a> {
         EvalCtx {

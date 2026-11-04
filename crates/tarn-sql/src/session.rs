@@ -117,9 +117,10 @@ pub struct Session {
     /// asked for in its handshake, until SET NAMES / SET collation_connection.
     collation_connection: String,
     client_collation: String,
-    /// Warnings and notes of the last statement (SHOW WARNINGS).
+    /// Errors, warnings and notes of the last statement (SHOW WARNINGS).
     warnings: Vec<Warning>,
     omitted_warnings: usize,
+    error_count: usize,
     warning_bytes: u64,
     lazy_history: crate::lazy::History,
     lazy_read_your_writes: bool,
@@ -127,7 +128,7 @@ pub struct Session {
     lazy_wait_timeout: u64,
 }
 
-/// A warning or note of a statement, as SHOW WARNINGS lists it.
+/// An error, warning or note of a statement, as SHOW WARNINGS lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Warning {
     pub level: &'static str,
@@ -474,6 +475,7 @@ impl Session {
             client_collation: cluster.cfg.default_collation.clone(),
             warnings: Vec::new(),
             omitted_warnings: 0,
+            error_count: 0,
             warning_bytes: 0,
             lazy_history: crate::lazy::History::default(),
             lazy_read_your_writes: false,
@@ -483,7 +485,7 @@ impl Session {
         }
     }
 
-    /// Number of warnings and notes of the last statement (the count OK and
+    /// Number of errors, warnings and notes of the last statement (the count OK and
     /// EOF packets carry).
     pub fn warning_count(&self) -> u16 {
         (self.warnings.len() + self.omitted_warnings).min(u16::MAX as usize) as u16
@@ -528,6 +530,7 @@ impl Session {
             collation_connection: &self.collation_connection,
             collation_server: &self.cluster.cfg.default_collation,
             warning_count: self.warnings.len() + self.omitted_warnings,
+            error_count: self.error_count,
         }
     }
 
@@ -588,7 +591,7 @@ impl Session {
             }));
         }
         // Anything else is evaluated as a SELECT expression.
-        let out = Box::pin(self.query(&format!("SELECT {}", t))).await?;
+        let out = Box::pin(self.query_nested(&format!("SELECT {}", t))).await?;
         Ok(Some(match out {
             Output::Rows { rows, .. } => rows
                 .into_iter()
@@ -921,12 +924,23 @@ impl Session {
     // ---- entry points -------------------------------------------------------
 
     pub async fn query(&mut self, sql: &str) -> SqlResult<Output> {
+        let result = self.query_nested(sql).await;
+        self.finish_diagnostics(result)
+    }
+
+    /// Nested SQL keeps the same budgeting, observation and rollback path,
+    /// but only the client statement publishes its terminal error.
+    pub(crate) async fn query_nested(&mut self, sql: &str) -> SqlResult<Output> {
         let cluster = self.cluster.clone();
         let query = crate::budget::current().unwrap_or_else(|| self.cluster.resources.query());
         crate::budget::scope(query.clone(), async {
             let result = crate::observe::track(&cluster.stats.query_digests, async {
-                crate::budget::charge((sql.len() as u64).saturating_mul(128).saturating_add(4096))?;
-                crate::budget::work(sql.len() as u64)?;
+                if let Err(error) = crate::budget::charge((sql.len() as u64).saturating_mul(128).saturating_add(4096))
+                    .and_then(|()| crate::budget::work(sql.len() as u64))
+                {
+                    self.clear_warnings();
+                    return Err(error);
+                }
                 Box::pin(self.query_budgeted(sql)).await
             })
             .await;
@@ -951,6 +965,13 @@ impl Session {
         result
     }
 
+    fn finish_diagnostics<T>(&mut self, result: SqlResult<T>) -> SqlResult<T> {
+        if let Err(error) = &result {
+            self.note_terminal_error(error);
+        }
+        result
+    }
+
     async fn query_budgeted(&mut self, sql: &str) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         let sql = crate::prep::expand_comments(sql);
@@ -960,7 +981,7 @@ impl Session {
         } else {
             // Release old message ownership before this statement can admit
             // new diagnostics. The captured scalars survive stale-plan retries.
-            captured = admin::capture_diagnostics(&sql, self.warnings.len() + self.omitted_warnings);
+            captured = admin::capture_diagnostics(&sql, self.warnings.len() + self.omitted_warnings, self.error_count);
             self.clear_warnings();
             captured.as_deref().unwrap_or(&sql)
         };
@@ -1062,7 +1083,7 @@ impl Session {
     /// `SELECT ... INTO @a, ...`: at most one row, whose values the
     /// variables take; with no row they keep their values (MySQL warns 1329).
     async fn select_into(&mut self, select: &str, vars: &[String]) -> SqlResult<Output> {
-        let rows = match Box::pin(self.query(select)).await? {
+        let rows = match Box::pin(self.query_nested(select)).await? {
             Output::Rows { rows, .. } => rows,
             Output::Ok { .. } => return Err(SqlError::internal("SELECT ... INTO without rows")),
         };
@@ -1087,7 +1108,7 @@ impl Session {
 
     pub fn prepare(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
         let query = self.cluster.resources.query();
-        crate::budget::scope_sync(query, || {
+        let result = crate::budget::scope_sync(query, || {
             let old = self.retained.used();
             self.retained.resize(
                 old.saturating_add((sql.len() as u64).saturating_mul(128))
@@ -1098,7 +1119,11 @@ impl Session {
                 self.retained.resize(old)?;
             }
             result
-        })
+        });
+        if result.is_err() {
+            self.clear_warnings();
+        }
+        self.finish_diagnostics(result)
     }
 
     fn prepare_budgeted(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
@@ -1164,6 +1189,18 @@ impl Session {
         }
         let stmt = self.plan_cached(&n.template, &[])?;
         let columns = match &stmt {
+            Stmt::Select(p) if p.agg.as_ref().is_some_and(|a| !a.group.is_empty()) => {
+                let catalog = self.cluster.catalog();
+                let ctx = PlanCtx {
+                    statistics: None,
+                    catalog: &catalog,
+                    db: self.db.as_deref(),
+                    params: &[],
+                    conn_coll: &self.collation_connection,
+                    default_coll: &self.cluster.cfg.default_collation,
+                };
+                planner::prepare_select_columns(&n.template, &ctx)?
+            }
             Stmt::Select(p) => p.columns.clone(),
             Stmt::Explain { .. } => vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
             _ => Arc::from(Vec::new()),
@@ -1195,15 +1232,19 @@ impl Session {
     pub async fn execute(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         let cluster = self.cluster.clone();
         let query = crate::budget::current().unwrap_or_else(|| self.cluster.resources.query());
-        crate::budget::scope(query.clone(), async {
+        let result = crate::budget::scope(query.clone(), async {
             let result = crate::observe::track(&cluster.stats.query_digests, async {
-                crate::budget::charge(crate::budget::row_bytes(params).saturating_mul(4))?;
+                if let Err(error) = crate::budget::charge(crate::budget::row_bytes(params).saturating_mul(4)) {
+                    self.clear_warnings();
+                    return Err(error);
+                }
                 self.execute_budgeted(id, params).await
             })
             .await;
             self.finish_budgeted(result, &query)
         })
-        .await
+        .await;
+        self.finish_diagnostics(result)
     }
 
     async fn execute_budgeted(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
@@ -1217,7 +1258,13 @@ impl Session {
         // once per EXECUTE (not PREPARE or a stale-plan retry).
         let captured = self.prepared.get(&id).and_then(|p| {
             (p.admin.is_some() && !admin::reads_diagnostics(&p.template))
-                .then(|| admin::capture_diagnostics(&p.template, self.warnings.len() + self.omitted_warnings))
+                .then(|| {
+                    admin::capture_diagnostics(
+                        &p.template,
+                        self.warnings.len() + self.omitted_warnings,
+                        self.error_count,
+                    )
+                })
                 .flatten()
         });
         let captured_admin = captured.as_deref().map(admin::recognize).transpose()?.flatten();
@@ -1893,6 +1940,7 @@ impl Session {
     fn clear_warnings(&mut self) {
         self.warnings.clear();
         self.omitted_warnings = 0;
+        self.error_count = 0;
         let retained = self.retained.used() - self.warning_bytes;
         self.retained.resize(retained).expect("shrinking diagnostic ownership");
         self.warning_bytes = 0;
@@ -1908,11 +1956,35 @@ impl Session {
     }
 
     fn note_warning(&mut self, warning: Warning) {
+        if warning.level == "Error" {
+            self.error_count += 1;
+        }
         if self.warnings.len() < admin::MAX_ERROR_COUNT {
             self.warnings.push(warning);
         } else {
             self.omitted_warnings += 1;
         }
+    }
+
+    /// Only terminal public-entry-point failures reach here, after retries
+    /// and transaction cleanup. Diagnostics must never replace that failure.
+    fn note_terminal_error(&mut self, error: &SqlError) {
+        // Cover the cloned message, entry and amortized vector capacity with
+        // the same conservative 8x allowance as retained DML diagnostics.
+        // Admission precedes cloning; the session and gateway byte limits
+        // bound even a source error whose message is arbitrarily large.
+        let bytes = (256u64.saturating_add(error.message.len() as u64)).saturating_mul(8);
+        if self.warnings.len() == admin::MAX_ERROR_COUNT || self.retained.charge(bytes).is_err() {
+            self.omitted_warnings += 1;
+            self.error_count += 1;
+            return;
+        }
+        self.warning_bytes += bytes;
+        self.note_warning(Warning {
+            level: "Error",
+            code: error.code,
+            message: error.message.clone(),
+        });
     }
 
     /// Single-shard autocommit DML that needs no read round trip: one call to
@@ -3432,7 +3504,7 @@ impl Session {
                     .map(|v| crate::prep::literal(self.user_vars.get(v).unwrap_or(&Value::Null)))
                     .collect();
                 let sql = crate::prep::bind_markers(&text, &args);
-                Box::pin(self.query(&sql)).await
+                Box::pin(self.query_nested(&sql)).await
             }
             Admin::Deallocate(name) => match self.sql_prepared.remove(&name) {
                 Some(_) => Ok(Output::ok(0)),
@@ -3525,13 +3597,16 @@ impl Session {
                 let mut columns = Vec::new();
                 let mut row = Vec::new();
                 for (alias, var) in &vars {
-                    let v = admin::system_var(var, &self.session_vars()).ok_or_else(|| {
-                        SqlError::new(
+                    let Some(v) = admin::system_var(var, &self.session_vars()) else {
+                        // A failed diagnostic reader starts its own area just
+                        // as a successful one clears after reading the counts.
+                        self.clear_warnings();
+                        return Err(SqlError::new(
                             1193,
                             "HY000",
                             format!("Unknown system variable '{}'", admin::sysvar_name(var)),
-                        )
-                    })?;
+                        ));
+                    };
                     let ty = match &v {
                         Value::Int(_) | Value::UInt(_) => ColumnType::LongLong,
                         _ => ColumnType::VarString,
@@ -4502,6 +4577,260 @@ fn first_value(d: &[u8]) -> SqlResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn diagnostic_session() -> Session {
+        let cfg = serde_json::from_value(serde_json::json!({
+            "shards": [{"id": 1, "replicas": ["127.0.0.1:1"]}]
+        }))
+        .unwrap();
+        Session::new(Cluster::without_connections(cfg).unwrap(), 1)
+    }
+
+    async fn diagnostic_rows(session: &mut Session, sql: &str) -> Vec<Vec<Value>> {
+        match session.query(sql).await.unwrap() {
+            Output::Rows { rows, .. } => rows,
+            other => panic!("expected diagnostic rows: {other:?}"),
+        }
+    }
+
+    async fn assert_terminal_diagnostic(session: &mut Session, error: &SqlError) {
+        let expected = vec![vec![
+            Value::str("Error"),
+            Value::Int(error.code as i64),
+            Value::str(&error.message),
+        ]];
+        assert_eq!(diagnostic_rows(session, "SHOW WARNINGS").await, expected);
+        assert_eq!(diagnostic_rows(session, "SHOW ERRORS").await, expected);
+        assert_eq!(session.warning_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn terminal_query_prepare_execute_errors_are_diagnostics() {
+        let mut session = diagnostic_session();
+        // Neither malformed SQL nor an unknown prepared id opens a storage
+        // connection. These are the public text/binary backend entry points.
+        let error = session.query("SELECT (").await.unwrap_err();
+        assert_eq!((error.code, error.sqlstate), (1064, *b"42000"));
+        assert_terminal_diagnostic(&mut session, &error).await;
+
+        let error = session.prepare(1, "SELECT (").unwrap_err();
+        assert_eq!((error.code, error.sqlstate), (1064, *b"42000"));
+        assert_terminal_diagnostic(&mut session, &error).await;
+
+        let error = session.execute(999, &[]).await.unwrap_err();
+        assert_eq!((error.code, error.sqlstate), (1243, *b"HY000"));
+        assert_terminal_diagnostic(&mut session, &error).await;
+        assert_eq!(
+            diagnostic_rows(&mut session, "SELECT @@warning_count, @@error_count").await,
+            vec![vec![Value::Int(1), Value::Int(1)]]
+        );
+        assert!(diagnostic_rows(&mut session, "SHOW WARNINGS").await.is_empty());
+
+        session.prepare(2, "SELECT ?").unwrap();
+        let error = session.execute(2, &[]).await.unwrap_err();
+        assert_eq!((error.code, error.sqlstate), (1210, *b"HY000"));
+        assert_terminal_diagnostic(&mut session, &error).await;
+        // Preserve the pre-existing ordinary SELECT clearing policy.
+        session.query("SELECT 1").await.unwrap();
+        assert!(diagnostic_rows(&mut session, "SHOW WARNINGS").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn nested_sql_reports_one_terminal_error_per_client_statement() {
+        let mut session = diagnostic_session();
+        session.query("PREPARE p FROM 'SELECT ('").await.unwrap();
+        for sql in ["EXECUTE p", "SET @x = (1 + )", "SELECT (1 + ) INTO @x"] {
+            let error = session.query(sql).await.unwrap_err();
+            assert_eq!((error.code, error.sqlstate), (1064, *b"42000"));
+            assert_terminal_diagnostic(&mut session, &error).await;
+        }
+        session.prepare(3, "EXECUTE p").unwrap();
+        let error = session.execute(3, &[]).await.unwrap_err();
+        assert_terminal_diagnostic(&mut session, &error).await;
+    }
+
+    #[tokio::test]
+    async fn failed_variable_readers_and_complex_queries_replace_previous_errors() {
+        let mut session = diagnostic_session();
+        for sql in ["SELECT @@missing", "SELECT 1 UNION ALL SELECT @@missing"] {
+            for _ in 0..2 {
+                let error = Box::pin(session.query(sql)).await.unwrap_err();
+                assert_eq!((error.code, error.sqlstate), (1193, *b"HY000"));
+                assert_terminal_diagnostic(&mut session, &error).await;
+            }
+        }
+        for (id, sql, expected_code) in [
+            (1, "SELECT @@missing", 1193),
+            (2, "SELECT 1 UNION ALL SELECT no_such_function()", 1305),
+        ] {
+            session.prepare(id, sql).unwrap();
+            for _ in 0..2 {
+                let error = Box::pin(session.execute(id, &[])).await.unwrap_err();
+                assert_eq!(error.code, expected_code);
+                assert_terminal_diagnostic(&mut session, &error).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_admission_errors_replace_prior_diagnostics_and_preserve_counts() {
+        let mut session = diagnostic_session();
+        let pool = session.cluster.resources.clone();
+        session.note_terminal_error(&SqlError::parse("previous"));
+        let query = pool.query();
+        let error = crate::budget::scope(query, async {
+            crate::budget::charge(pool.limits.query_bytes).unwrap();
+            Box::pin(session.query("SELECT 1")).await.unwrap_err()
+        })
+        .await;
+        assert!(crate::budget::is_exhausted(&error));
+        assert_terminal_diagnostic(&mut session, &error).await;
+
+        let query = pool.query();
+        let error = crate::budget::scope(query, async {
+            crate::budget::charge(pool.limits.query_bytes).unwrap();
+            Box::pin(session.execute(999, &[Value::Int(1)])).await.unwrap_err()
+        })
+        .await;
+        assert!(crate::budget::is_exhausted(&error));
+        assert_terminal_diagnostic(&mut session, &error).await;
+
+        session.retained.resize(pool.limits.query_bytes).unwrap();
+        let error = session.prepare(1, "SELECT 1").unwrap_err();
+        assert!(crate::budget::is_exhausted(&error));
+        assert_eq!((session.warning_count(), session.error_count), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn terminal_error_counts_are_captured_before_text_and_prepared_set() {
+        let mut session = diagnostic_session();
+        session
+            .prepare(1, "SET @wc=@@warning_count, @ec=@@error_count")
+            .unwrap();
+        for prepared in [false, true] {
+            session.query("SELECT (").await.unwrap_err();
+            if prepared {
+                session.execute(1, &[]).await.unwrap();
+            } else {
+                session
+                    .query("SET @wc=@@warning_count, @ec=@@error_count")
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(session.error_count, 0);
+            assert_eq!(
+                diagnostic_rows(&mut session, "SELECT @wc, @ec").await,
+                vec![vec![Value::Int(1), Value::Int(1)]]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_binary_diagnostic_prepare_replaces_prior_duplicate_warnings() {
+        for count in [1, 70] {
+            let mut session = diagnostic_session();
+            let pool = session.cluster.resources.clone();
+            let query = pool.query();
+            let mut warnings = DmlWarnings::new(&pool, pool.limits.query_bytes);
+            crate::budget::scope_sync(query.clone(), || {
+                for _ in 0..count {
+                    warnings.duplicate(2048, || SqlError::dup_key("1", "PRIMARY")).unwrap();
+                }
+            });
+            session.note_dml_warnings(warnings);
+            drop(query);
+            assert_eq!(session.warning_count(), count as u16);
+            assert_eq!(session.warnings.len(), count.min(admin::MAX_ERROR_COUNT));
+            assert!(session.warnings.iter().all(|w| w.level == "Warning" && w.code == 1062));
+
+            let error = session.prepare(1, "SELECT @@warning_count+0").unwrap_err();
+            assert_eq!((error.code, error.sqlstate), (1235, *b"42000"));
+            assert_terminal_diagnostic(&mut session, &error).await;
+            assert_eq!(session.error_count, 1);
+            assert_eq!(session.warning_bytes, (256 + error.message.len() as u64) * 8);
+            assert_eq!(session.retained.used(), session.warning_bytes);
+        }
+    }
+
+    #[test]
+    fn terminal_diagnostics_keep_dml_messages_and_account_retained_copies() {
+        let mut session = diagnostic_session();
+        let pool = session.cluster.resources.clone();
+        let query = pool.query();
+        let mut warnings = DmlWarnings::new(&pool, pool.limits.query_bytes);
+        crate::budget::scope_sync(query.clone(), || {
+            warnings.duplicate(2048, || SqlError::dup_key("1", "PRIMARY")).unwrap();
+        });
+        session.note_dml_warnings(warnings);
+        let error = SqlError::new(1180, "40003", "outcome unknown");
+        let result = session.finish_diagnostics::<Output>(Err(error)).unwrap_err();
+        assert_eq!((result.code, result.sqlstate, result.moved), (1180, *b"40003", false));
+        assert_eq!(result.message, "outcome unknown");
+        assert_eq!(
+            session.warnings.iter().map(|w| w.level).collect::<Vec<_>>(),
+            ["Warning", "Error"]
+        );
+        let retained = 2048 + (256 + result.message.len() as u64) * 8;
+        assert_eq!(session.warning_bytes, retained);
+        assert_eq!(session.retained.used(), retained);
+        drop(query);
+        assert_eq!(pool.stats()[0], retained);
+        session.clear_warnings();
+        assert_eq!((session.retained.used(), pool.stats()[0]), (0, 0));
+        assert_eq!((session.warning_count(), session.error_count), (0, 0));
+    }
+
+    #[test]
+    fn terminal_diagnostics_refusal_preserves_original_error_and_counts() {
+        let mut session = diagnostic_session();
+        let pool = session.cluster.resources.clone();
+        let query = pool.query();
+        // A full diagnostic list never evicts earlier DML warnings to admit
+        // the error, and does not reserve or copy the error message.
+        let mut warnings = DmlWarnings::new(&pool, pool.limits.query_bytes);
+        for _ in 0..admin::MAX_ERROR_COUNT {
+            warnings.duplicate(2048, || SqlError::dup_key("1", "PRIMARY")).unwrap();
+        }
+        session.note_dml_warnings(warnings);
+        let before = pool.stats()[0];
+        let error = session
+            .finish_diagnostics::<Output>(Err(SqlError::conflict("terminal")))
+            .unwrap_err();
+        assert_eq!((error.code, error.sqlstate), (1213, *b"40001"));
+        assert_eq!(session.warnings.len(), admin::MAX_ERROR_COUNT);
+        assert!(session.warnings.iter().all(|w| w.level == "Warning"));
+        assert_eq!((session.warning_count(), session.error_count), (65, 1));
+        assert_eq!(pool.stats()[0], before);
+
+        session.clear_warnings();
+        // Exhaust retained ownership, then gateway ownership separately.
+        // Neither failure may turn a 40003 into the budget's 1041.
+        for full_session in [true, false] {
+            let mut blocker = pool.account(pool.limits.server_bytes);
+            if full_session {
+                session.retained.charge(pool.limits.query_bytes).unwrap();
+            } else {
+                blocker.charge(pool.limits.server_bytes).unwrap();
+            }
+            let before = pool.stats()[0];
+            let error = session
+                .finish_diagnostics::<Output>(Err(SqlError::new(1180, "40003", "original")))
+                .unwrap_err();
+            assert_eq!(
+                (error.code, error.sqlstate, error.message.as_str()),
+                (1180, *b"40003", "original")
+            );
+            assert!(session.warnings.is_empty());
+            assert_eq!((session.warning_count(), session.error_count), (1, 1));
+            assert_eq!(session.warning_bytes, 0);
+            assert_eq!(pool.stats()[0], before);
+            session.clear_warnings();
+            session.retained.resize(0).unwrap();
+        }
+        drop(query);
+        drop(session);
+        assert_eq!(pool.stats()[0], 0);
+    }
 
     #[test]
     fn duplicate_diagnostics_admit_before_formatting_and_keep_retained_ownership() {

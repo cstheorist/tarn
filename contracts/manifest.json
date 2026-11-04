@@ -174,7 +174,7 @@
     {
       "id": "diagnostic_select_protocol",
       "classification": "difference",
-      "description": "Text warning-count readers and arithmetic agree. Binary bare readers return the prior total on Tarn; MySQL rejects them with 1295/HY000. Binary arithmetic is refused with Tarn 1235/42000 versus MySQL 1295/HY000.",
+      "description": "Text warning-count readers and arithmetic agree. Binary bare readers return the prior total on Tarn; MySQL rejects them with 1295/HY000. Binary arithmetic is refused with Tarn 1235/42000 versus MySQL 1295/HY000; each refusal replaces prior duplicate warnings with one retained Error diagnostic carrying that refusal code.",
       "test": "tests/sql/contracts.py::case_diagnostic_select_protocol"
     }
   ],

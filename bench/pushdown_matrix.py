@@ -59,7 +59,7 @@ def summarize(samples):
     return result
 
 
-def runtime(config, engine, native):
+def runtime(config, engine, native, owned_pids=None):
     """Inspect actual leaders, durability and native mode, through fixture auth."""
     endpoints = [r for s in config['shards'] for r in s['replicas']]
     code = """
@@ -67,20 +67,49 @@ local json, net=require('json'),require('net.box')
 local out={}
 for _,address in ipairs(json.decode(os.getenv('TARN_PD_ENDPOINTS'))) do
   local c=net.connect('tarn:tarn@'..address,{wait_connected=5})
-  local r=c:eval([[return {info=tarn_info(),wal_mode=box.cfg.wal_mode,
-    quorum=box.cfg.replication_synchro_quorum,engine=box.space['bench135.p'].engine,
-    rows=box.space['bench135.p']:count()}]])
+  local r=c:eval([[local sp=box.space['bench135.p']; local replicas={}
+    for id,p in pairs(box.info.replication) do
+      replicas[#replicas+1]={id=id,uuid=tostring(p.uuid),
+        upstream=p.upstream and p.upstream.status or false}
+    end
+    return {info=tarn_info(),pid=box.info.pid,instance_id=box.info.id,
+    uuid=tostring(box.info.uuid),replicas=replicas,
+    wal_mode=box.cfg.wal_mode,quorum=box.info.synchro.quorum,
+    quorum_config=box.cfg.replication_synchro_quorum,
+    replication_count=#box.cfg.replication,sync=require('tarn').cfg.sync,
+    engine=sp.engine,is_sync=sp.is_sync,effective_sync=sp.state.is_sync,
+    rows=box.space['bench135.p']:count(),test_flags={
+      check_locks=require('tarn').cfg.check_locks,
+      check_yields=require('tarn').cfg.check_yields,
+      test_hooks=require('tarn').cfg.test_hooks}}]])
   r.address=address; out[#out+1]=r; c:close()
 end
 print(json.encode(out)); os.exit(0)
 """
     rows = json.loads(subprocess.check_output(['tarantool', '-e', code], text=True,
                                              env=dict(os.environ, TARN_PD_ENDPOINTS=json.dumps(endpoints))))
+    assert len(rows) == len(endpoints) == 6 and len(set(endpoints)) == 6, rows
+    assert {r['address'] for r in rows} == set(endpoints), rows
+    for r in rows:
+        flags = r.get('test_flags', {})
+        assert all(flags.get(name) is False for name in
+                   ('check_locks', 'check_yields', 'test_hooks')), r
+        assert r['engine'] == engine and r['wal_mode'] == 'fsync', r
+        assert r['quorum'] == 2 and r['replication_count'] == 3, r
+        assert r['sync'] is True and r['is_sync'] is True and r['effective_sync'] is True, r
+        if owned_pids is not None:
+            assert r['pid'] == owned_pids[r['address']], r
     for shard in config['shards']:
-        leaders = [r for r in rows if r['address'] in shard['replicas'] and not r['info']['ro']]
+        group = [r for r in rows if r['address'] in shard['replicas']]
+        assert len(group) == 3 and len({r['uuid'] for r in group}) == 3, group
+        expected = {r['uuid'] for r in group}
+        for r in group:
+            peers = r['replicas']
+            assert len(peers) == 3 and {p['uuid'] for p in peers} == expected, r
+            assert all(p['id'] == r['instance_id'] or p['upstream'] == 'follow' for p in peers), r
+        leaders = [r for r in group if not r['info']['ro']]
         assert len(leaders) == 1, leaders
         for r in leaders:
-            assert r['engine'] == engine and r['wal_mode'] == 'fsync', r
             assert r['rows'] > 0, r
             if native == 'enabled':
                 assert isinstance(r['info']['native'], dict) and r['info']['native']['ready'] == 1, r
@@ -112,6 +141,8 @@ def main():
     assert len(config['shards']) == 2 and all(len(s['replicas']) == 3 for s in config['shards'])
     storage = [int(p.read_text()) for p in sorted(cluster.glob('s*.pid'))]
     assert len(storage) == 6
+    owned_pids = {address: int((cluster / f"s{shard['id']}.{j+1}.pid").read_text())
+                  for shard in config['shards'] for j, address in enumerate(shard['replicas'])}
     evidence = dict(schema=1, complete=False, samples=[], configurations={},
                     source=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
                     source_dirty=bool(subprocess.check_output(['git', 'status', '--porcelain'], text=True)),
@@ -183,7 +214,7 @@ def main():
                              9007199254740993 if i % 2 else 18446744073709551615,
                              int(i % 128 == 0), 'x' * args.wide_bytes)
                             for i in range(first, min(first+batch, args.rows+1))])
-                evidence['runtime_before'] = runtime(config, args.engine, args.native)
+                evidence['runtime_before'] = runtime(config, args.engine, args.native, owned_pids)
             queries = {}
             agg = 'SUM(n), MIN(n), MAX(n), SUM(u), COUNT(n)'
             for selectivity, pred in [('low', 'tag=1'), ('high', 'tag=0')]:
@@ -235,7 +266,7 @@ def main():
             for proxies in lanes.values():
                 for p in proxies:
                     p.socket.close()
-        evidence['runtime_after'] = runtime(config, args.engine, args.native)
+        evidence['runtime_after'] = runtime(config, args.engine, args.native, owned_pids)
         evidence['summary'] = summarize(evidence['samples'])
         evidence['complete'] = True
     except BaseException as e:
