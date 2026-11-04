@@ -1,0 +1,220 @@
+diff --git a/src/lj_asm_x86.h b/src/lj_asm_x86.h
+index 0e3a473c734c5e99fd325a551b73bec85f4b4980..b5a72b3e9639ab78f4b0f0abb5d05ffd7fbaf7eb 100644
+--- a/src/lj_asm_x86.h
++++ b/src/lj_asm_x86.h
+@@ -1353,24 +1353,31 @@ static void asm_hrefk(ASMState *as, IRIns *ir)
+ static void asm_uref(ASMState *as, IRIns *ir)
+ {
+   Reg dest = ra_dest(as, ir, RSET_GPR);
+-  if (irref_isk(ir->op1)) {
++  int guarded = (irt_t(ir->t) & (IRT_GUARD|IRT_TYPE)) == (IRT_GUARD|IRT_PGC);
++  if (irref_isk(ir->op1) && !guarded) {
+     GCfunc *fn = ir_kfunc(IR(ir->op1));
+     MRef *v = &gcref(fn->l.uvptr[(ir->op2 >> 8)])->uv.v;
+     emit_rma(as, XO_MOV, dest|REX_GC64, v);
+   } else {
+     Reg uv = ra_scratch(as, RSET_GPR);
+-    Reg func = ra_alloc1(as, ir->op1, RSET_GPR);
+-    if (ir->o == IR_UREFC) {
++    if (ir->o == IR_UREFC)
+       emit_rmro(as, XO_LEA, dest|REX_GC64, uv, offsetof(GCupval, tv));
+-      asm_guardcc(as, CC_NE);
+-      emit_i8(as, 1);
++    else
++      emit_rmro(as, XO_MOV, dest|REX_GC64, uv, offsetof(GCupval, v));
++    if (guarded) {
++      asm_guardcc(as, ir->o == IR_UREFC ? CC_E : CC_NE);
++      emit_i8(as, 0);
+       emit_rmro(as, XO_ARITHib, XOg_CMP, uv, offsetof(GCupval, closed));
++    }
++    if (irref_isk(ir->op1)) {
++      GCfunc *fn = ir_kfunc(IR(ir->op1));
++      GCobj *o = gcref(fn->l.uvptr[(ir->op2 >> 8)]);
++      emit_loada(as, uv, o);
+     } else {
+-      emit_rmro(as, XO_MOV, dest|REX_GC64, uv, offsetof(GCupval, v));
++      emit_rmro(as, XO_MOV, uv|REX_GC64, ra_alloc1(as, ir->op1, RSET_GPR),
++	        (int32_t)offsetof(GCfuncL, uvptr) +
++	        (int32_t)sizeof(MRef) * (int32_t)(ir->op2 >> 8));
+     }
+-    emit_rmro(as, XO_MOV, uv|REX_GC64, func,
+-	      (int32_t)offsetof(GCfuncL, uvptr) +
+-	      (int32_t)sizeof(MRef) * (int32_t)(ir->op2 >> 8));
+   }
+ }
+ 
+diff --git a/src/lj_opt_fold.c b/src/lj_opt_fold.c
+index 83105816bfdf0c836e8497f99cbb893e075a9d58..c905b6afd58468512d75b9e5ce5c6df0b6600fb0 100644
+--- a/src/lj_opt_fold.c
++++ b/src/lj_opt_fold.c
+@@ -2106,8 +2106,26 @@ LJFOLDX(lj_opt_fwd_uload)
+ LJFOLD(CALLL any IRCALL_lj_tab_len)
+ LJFOLDX(lj_opt_fwd_tab_len)
+ 
++/* Try to merge UREFO/UREFC into referenced instruction. */
++static TRef merge_uref(jit_State *J, IRRef ref, IRIns* ir)
++{
++  if (ir->o == IR_UREFO && irt_isguard(ir->t)) {
++    /* Might be pointing to some other coroutine's stack.
++    ** And GC might shrink said stack, thereby repointing the upvalue.
++    ** GC might even collect said coroutine, thereby closing the upvalue.
++    */
++    if (gcstep_barrier(J, ref))
++      return EMITFOLD;  /* So cannot merge. */
++    /* Current fins wants a check, but ir doesn't have one. */
++    if ((irt_t(fins->t) & (IRT_GUARD|IRT_TYPE)) == (IRT_GUARD|IRT_PGC) &&
++	irt_type(ir->t) == IRT_IGC)
++      ir->t.irt += IRT_PGC-IRT_IGC;  /* So install a check. */
++  }
++  return ref;  /* Not a TRef, but the caller doesn't care. */
++}
++
+ /* Upvalue refs are really loads, but there are no corresponding stores.
+-** So CSE is ok for them, except for UREFO across a GC step (see below).
++** So CSE is ok for them, except for guarded UREFO across a GC step.
+ ** If the referenced function is const, its upvalue addresses are const, too.
+ ** This can be used to improve CSE by looking for the same address,
+ ** even if the upvalues originate from a different function.
+@@ -2125,9 +2143,7 @@ LJFOLDF(cse_uref)
+       if (irref_isk(ir->op1)) {
+ 	GCfunc *fn2 = ir_kfunc(IR(ir->op1));
+ 	if (gco2uv(gcref(fn2->l.uvptr[(ir->op2 >> 8)])) == uv) {
+-	  if (fins->o == IR_UREFO && gcstep_barrier(J, ref))
+-	    break;
+-	  return ref;
++	  return merge_uref(J, ref, ir);
+ 	}
+       }
+       ref = ir->prev;
+@@ -2136,6 +2152,24 @@ LJFOLDF(cse_uref)
+   return EMITFOLD;
+ }
+ 
++/* Custom CSE for UREFO. */
++LJFOLD(UREFO any any)
++LJFOLDF(cse_urefo)
++{
++  if (LJ_LIKELY(J->flags & JIT_F_OPT_CSE)) {
++    IRRef ref = J->chain[IR_UREFO];
++    IRRef lim = fins->op1;
++    IRRef2 op12 = (IRRef2)fins->op1 + ((IRRef2)fins->op2 << 16);
++    while (ref > lim) {
++      IRIns *ir = IR(ref);
++      if (ir->op12 == op12)
++	return merge_uref(J, ref, ir);
++      ref = ir->prev;
++    }
++  }
++  return EMITFOLD;
++}
++
+ LJFOLD(HREFK any any)
+ LJFOLDX(lj_opt_fwd_hrefk)
+ 
+@@ -2335,14 +2369,9 @@ LJFOLDF(fold_base)
+ 
+ /* Write barriers are amenable to CSE, but not across any incremental
+ ** GC steps.
+-**
+-** The same logic applies to open upvalue references, because a stack
+-** may be resized during a GC step (not the current stack, but maybe that
+-** of a coroutine).
+ */
+ LJFOLD(TBAR any)
+ LJFOLD(OBAR any any)
+-LJFOLD(UREFO any any)
+ LJFOLDF(barrier_tab)
+ {
+   TRef tr = lj_opt_cse(J);
+diff --git a/src/lj_opt_mem.c b/src/lj_opt_mem.c
+index a6e9a072c9946081c0ea857598155081adfe77c6..268504964947cc6be794dfd5e0efff4ecb930252 100644
+--- a/src/lj_opt_mem.c
++++ b/src/lj_opt_mem.c
+@@ -398,18 +398,23 @@ doemit:
+ */
+ static AliasRet aa_uref(IRIns *refa, IRIns *refb)
+ {
+-  if (refa->o != refb->o)
+-    return ALIAS_NO;  /* Different UREFx type. */
+   if (refa->op1 == refb->op1) {  /* Same function. */
+     if (refa->op2 == refb->op2)
+       return ALIAS_MUST;  /* Same function, same upvalue idx. */
+     else
+       return ALIAS_NO;  /* Same function, different upvalue idx. */
+   } else {  /* Different functions, check disambiguation hash values. */
+-    if (((refa->op2 ^ refb->op2) & 0xff))
++    if (((refa->op2 ^ refb->op2) & 0xff)) {
+       return ALIAS_NO;  /* Upvalues with different hash values cannot alias. */
+-    else
+-      return ALIAS_MAY;  /* No conclusion can be drawn for same hash value. */
++    } else if (refa->o != refb->o) {
++      /* Different UREFx type, but need to confirm the UREFO really is open. */
++      if (irt_type(refa->t) == IRT_IGC) refa->t.irt += IRT_PGC-IRT_IGC;
++      else if (irt_type(refb->t) == IRT_IGC) refb->t.irt += IRT_PGC-IRT_IGC;
++      return ALIAS_NO;
++    } else {
++      /* No conclusion can be drawn for same hash value and same UREFx type. */
++      return ALIAS_MAY;
++    }
+   }
+ }
+ 
+diff --git a/src/lj_record.c b/src/lj_record.c
+index dbfc7f475a12efa9216596088963c58adf4f4d1e..a4392cb9612148cff69e657c166862827e44c0f7 100644
+--- a/src/lj_record.c
++++ b/src/lj_record.c
+@@ -1668,12 +1668,12 @@ noconstify:
+   /* Note: this effectively limits LJ_MAX_UPVAL to 127. */
+   uv = (uv << 8) | (hashrot(uvp->dhash, uvp->dhash + HASH_BIAS) & 0xff);
+   if (!uvp->closed) {
+-    uref = tref_ref(emitir(IRTG(IR_UREFO, IRT_PGC), fn, uv));
+     /* In current stack? */
+     if (uvval(uvp) >= tvref(J->L->stack) &&
+ 	uvval(uvp) < tvref(J->L->maxstack)) {
+       int32_t slot = (int32_t)(uvval(uvp) - (J->L->base - J->baseslot));
+       if (slot >= 0) {  /* Aliases an SSA slot? */
++	uref = tref_ref(emitir(IRT(IR_UREFO, IRT_PGC), fn, uv));
+ 	emitir(IRTG(IR_EQ, IRT_PGC),
+ 	       REF_BASE,
+ 	       emitir(IRT(IR_ADD, IRT_PGC), uref,
+@@ -1688,12 +1688,21 @@ noconstify:
+ 	}
+       }
+     }
++    /* IR_UREFO+IRT_IGC is not checked for open-ness at runtime.
++    ** Always marked as a guard, since it might get promoted to IRT_PGC later.
++    */
++    uref = emitir(IRTG(IR_UREFO, tref_isgcv(val) ? IRT_PGC : IRT_IGC), fn, uv);
++    uref = tref_ref(uref);
+     emitir(IRTG(IR_UGT, IRT_PGC),
+ 	   emitir(IRT(IR_SUB, IRT_PGC), uref, REF_BASE),
+ 	   lj_ir_kint(J, (J->baseslot + J->maxslot) * 8));
+   } else {
++    /* If fn is constant, then so is the GCupval*, and the upvalue cannot
++    ** transition back to open, so no guard is required in this case.
++    */
++    IRType t = (tref_isk(fn) ? 0 : IRT_GUARD) | IRT_PGC;
++    uref = tref_ref(emitir(IRT(IR_UREFC, t), fn, uv));
+     needbarrier = 1;
+-    uref = tref_ref(emitir(IRTG(IR_UREFC, IRT_PGC), fn, uv));
+   }
+   if (val == 0) {  /* Upvalue load */
+     IRType t = itype2irt(uvval(uvp));
+diff --git a/src/lj_state.c b/src/lj_state.c
+index ea0f24f8d3fc2414b7750de43a4859aab1a3f4b3..af052a326e283fb0736e924e6478f5b9465cceef 100644
+--- a/src/lj_state.c
++++ b/src/lj_state.c
+@@ -383,8 +383,11 @@ void LJ_FASTCALL lj_state_free(global_State *g, lua_State *L)
+   if (ctype_ctsG(g) && ctype_ctsG(g)->L == L)  /* Avoid dangling cts->L. */
+     ctype_ctsG(g)->L = mainthread(g);
+ #endif
+-  lj_func_closeuv(L, tvref(L->stack));
+-  lj_assertG(gcref(L->openupval) == NULL, "stale open upvalues");
++  if (gcref(L->openupval) != NULL) {
++    lj_func_closeuv(L, tvref(L->stack));
++    lj_trace_abort(g);  /* For aa_uref soundness. */
++    lj_assertG(gcref(L->openupval) == NULL, "stale open upvalues");
++  }
+   lj_mem_freevec(g, tvref(L->stack), L->stacksize, TValue);
+   lj_mem_freet(g, L);
+ }
