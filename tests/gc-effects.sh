@@ -96,7 +96,18 @@ config['rpc']={'timeout_secs':5.0}
 (work/'proxy-upstream').write_text(nodes[leaders[0]]['endpoint'].rsplit(':',1)[1])
 PY
 "$PYTHON" "$ROOT/tests/outcome_proxy.py" --listen "$PP" --upstream "$(cat "$W/proxy-upstream")" --plan "$W/plan.json" > "$W/proxy.jsonl" 2> "$W/proxy.err" &
-echo $! > "$W/proxy.pid"
+PROXY_PID=$!
+echo "$PROXY_PID" > "$W/proxy.pid"
+# Gateway construction immediately connects to storage. Its proxied shard
+# must already be listening, rather than racing Python's interpreter startup.
+ready=0
+for _ in $(seq 150); do
+  kill -0 "$PROXY_PID" 2>/dev/null || { cat "$W/proxy.err"; echo 'owned proxy exited before readiness'; exit 1; }
+  if (exec 3<>/dev/tcp/127.0.0.1/"$PP") 2>/dev/null; then ready=1; break; fi
+  sleep .1
+done
+[ "$ready" = 1 ] || { cat "$W/proxy.err"; echo 'owned proxy did not listen'; exit 1; }
+kill -0 "$PROXY_PID" 2>/dev/null || { cat "$W/proxy.err"; echo 'owned proxy exited at readiness'; exit 1; }
 "$TARN" --config "$W/proxy-gateway.json" --listen "127.0.0.1:$PORT" --allow-all --threads 2 --default-engine "$ENGINE" > "$W/gateway.log" 2>&1 &
 echo $! > "$W/gateway.pid"
 "$TARN" --config "$W/recovery.json" --listen "127.0.0.1:$RECOVERY_PORT" --allow-all --threads 2 --default-engine "$ENGINE" > "$W/recovery-gateway.log" 2>&1 &
