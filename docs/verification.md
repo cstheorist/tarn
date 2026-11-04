@@ -2170,7 +2170,8 @@ the job that runs the steps and the backfill and stores the cursors is
 its fence (`a.building` in `tarn_alter_prepare`), the second checks that no
 conflict is left behind it (`a.uix_check`), and `stale_definition` refuses
 writes without `txn::BUILDING_FENCE` while a building version is published.
-The issue #292 block of `lua/test/storage_test.lua` checks those steps.
+The issue #292 block of `lua/test/storage_test.lua` checks those steps on
+a memtx and on a vinyl table.
 `tests/uniquebuild.sh` runs the build through SQL on 2 shards, on memtx and
 on vinyl (CI runs both), with `alter_check_rows` far below the table's rows
 per shard: while sessions write to the table and keep models of it, the
