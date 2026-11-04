@@ -1833,10 +1833,23 @@ fn limit_exprs(q: &A::Query, b: &mut Binder) -> SqlResult<(Option<Expr>, Option<
     })
 }
 
+/// PREPARE describes aggregate items before execution creates temporary
+/// fields. Keep that phase separate from the cached executable plan.
+pub(crate) fn prepare_select_columns(sql: &str, ctx: &PlanCtx) -> SqlResult<Arc<[Column]>> {
+    let A::Statement::Query(q) = parse_one(sql)? else {
+        return Err(SqlError::unsupported("prepared SELECT metadata"));
+    };
+    Ok(plan_query_metadata(&q, ctx, true)?.columns)
+}
+
 pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
+    plan_query_metadata(q, ctx, false)
+}
+
+fn plan_query_metadata(q: &A::Query, ctx: &PlanCtx, preparing: bool) -> SqlResult<SelectPlan> {
     let sel = match q.body.as_ref() {
         A::SetExpr::Select(s) => s,
-        A::SetExpr::Query(inner) => return plan_query(inner, ctx),
+        A::SetExpr::Query(inner) => return plan_query_metadata(inner, ctx, preparing),
         A::SetExpr::SetOperation { .. } => return Err(SqlError::unsupported("UNION")),
         other => return Err(SqlError::unsupported(format!("query {}", other))),
     };
@@ -2013,8 +2026,38 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
     let types_in: Vec<ExprType> = if let Some(ap) = &agg_plan {
         let src = scope.types();
         let mut t: Vec<ExprType> = ap.group.iter().map(|g| infer(g, &src, ctx.params)).collect();
+        // For the qualified integer-column grouping shapes, an index
+        // prefix supplies grouping order; a different final order or an
+        // unindexed group uses temporary fields. Keep other shapes on their
+        // prior descriptors rather than emulate MariaDB's optimizer.
+        // Cost-based index selection remains outside this static contract.
+        let qualified = grouped_metadata_qualified(&scope, &ap.group, &conj, ctx.params);
+        let indexed_group = scope
+            .tables
+            .first()
+            .filter(|_| scope.tables.len() == 1)
+            .is_some_and(|t| {
+                t.table.indexes.iter().any(|index| {
+                    !index.invisible
+                        && index.cols.len() >= ap.group.len()
+                        && ap
+                            .group
+                            .iter()
+                            .zip(&index.cols)
+                            .all(|(g, c)| matches!(g, Expr::Col(i) if *i == *c))
+                })
+            });
+        let post_group_sort = order.len() > ap.group.len()
+            || order.iter().enumerate().any(|(i, (e, _))| {
+                let e = match e {
+                    Expr::Key(e, _) => e.as_ref(),
+                    e => e,
+                };
+                !matches!(e, Expr::Col(c) if *c == i)
+            });
+        let materialized = !preparing && qualified && (post_group_sort || !indexed_group);
         for a in &ap.aggs {
-            t.push(agg_type(a, &src, ctx.params));
+            t.push(agg_type(a, &src, ctx.params, materialized, &scope));
         }
         t
     } else {
@@ -2293,12 +2336,51 @@ fn col_source(scope: &Scope, c: usize) -> Option<(Arc<TableDef>, usize)> {
         .map(|t| (t.table.clone(), c - t.offset))
 }
 
-fn agg_type(a: &AggCall, src: &[ExprType], params: &[Value]) -> ExprType {
+/// Limit the temporary-field metadata contract to the captured single-table
+/// distinct integer-key shapes. Equality/complex predicates or duplicate
+/// keys can change MariaDB's grouping plan; they retain prior descriptors.
+fn grouped_metadata_qualified(scope: &Scope, groups: &[Expr], filters: &[Expr], params: &[Value]) -> bool {
+    if scope.tables.len() != 1 || groups.is_empty() || scope.tables[0].table.is_virtual() {
+        return false;
+    }
+    let integer_column = |e: &Expr| match e {
+        Expr::Col(c) => col_source(scope, *c).is_some_and(|(table, ci)| {
+            matches!(
+                table.columns[ci].ty().base,
+                BaseType::TinyInt | BaseType::SmallInt | BaseType::MediumInt | BaseType::Int | BaseType::BigInt
+            )
+        }),
+        _ => false,
+    };
+    let integer_literal = |e: &Expr| match e {
+        Expr::Lit(Value::Int(_) | Value::UInt(_)) => true,
+        // Text normalization replaces literal values with bound parameters.
+        // Prepared range parameters are unbound when their execution plan
+        // is cached, so those queries retain prior descriptors. They are
+        // outside the captured no-parameter text/binary wire qualification.
+        Expr::Param(i) => matches!(params.get(*i), Some(Value::Int(_) | Value::UInt(_))),
+        _ => false,
+    };
+    groups.iter().enumerate().all(|(i, group)| {
+        integer_column(group)
+            && !groups[..i]
+                .iter()
+                .any(|prior| matches!((group, prior), (Expr::Col(a), Expr::Col(b)) if a == b))
+    }) && match filters {
+        [] => true,
+        [Expr::Cmp(a, CmpOp::Lt | CmpOp::LtEq | CmpOp::Gt | CmpOp::GtEq, b, _)] => {
+            (integer_column(a) && integer_literal(b)) || (integer_literal(a) && integer_column(b))
+        }
+        _ => false,
+    }
+}
+
+fn agg_type(a: &AggCall, src: &[ExprType], params: &[Value], materialized: bool, scope: &Scope) -> ExprType {
     use tarn_common::column_flags;
     use ColumnType as C;
     let metadata = |flags, length| Some(crate::expr::ExprMetadata { flags, length });
     let arg = a.arg.as_ref().map(|e| infer(e, src, params));
-    match a.func {
+    let mut result = match a.func {
         AggFunc::CountStar | AggFunc::Count => {
             let mut t = ExprType::of(C::LongLong);
             t.nullable = false;
@@ -2352,7 +2434,30 @@ fn agg_type(a: &AggCall, src: &[ExprType], params: &[Value]) -> ExprType {
         }
         AggFunc::AnyValue => arg.unwrap_or_else(|| ExprType::of(C::VarString)),
         AggFunc::GroupConcat => ExprType::of(C::Blob),
+    };
+    if materialized {
+        if let Some(metadata) = &mut result.metadata {
+            // Numeric temporary fields do not inherit the aggregate item's
+            // BINARY flag. MIN/MAX of a direct field clone its definition;
+            // Field::create_tmp_field also retains NO_DEFAULT_VALUE_FLAG.
+            metadata.flags &= !column_flags::BINARY;
+            if matches!(a.func, AggFunc::Min | AggFunc::Max) {
+                if let Some(Expr::Col(c)) = &a.arg {
+                    if let Some((table, ci)) = col_source(scope, *c) {
+                        let column = &table.columns[ci];
+                        if result.ty == C::Double {
+                            metadata.length = column.ty().result_column("", "", true, false).length;
+                        }
+                        if !column.nullable && column.default.is_none() && !column.auto_increment {
+                            const NO_DEFAULT_VALUE: u16 = 4096;
+                            metadata.flags |= NO_DEFAULT_VALUE;
+                        }
+                    }
+                }
+            }
+        }
     }
+    result
 }
 
 /// ORDER BY / GROUP BY / HAVING items may name a select alias or position.
@@ -3650,8 +3755,15 @@ mod tests {
         let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
         ctx.catalog = &cat;
         // Exact fields observed on MariaDB 10.11.19 and MySQL 8.4.13. The
-        // empty, all-NULL and grouped shapes share the same static metadata.
-        for suffix in ["", " WHERE id < 0", " WHERE n IS NULL", " GROUP BY id"] {
+        // empty, all-NULL and index-ordered grouped shapes share metadata.
+        for suffix in [
+            "",
+            " WHERE id < 0",
+            " WHERE n IS NULL",
+            " GROUP BY id",
+            " GROUP BY id ORDER BY id",
+            " GROUP BY id ORDER BY id DESC",
+        ] {
             let sql = format!(
                 "SELECT SUM(s) AS total, SUM(u), SUM(n), COUNT(*), COUNT(n), SUM(d), MIN(d), MAX(d), \
                  MIN(u), MAX(s), SUM(n+0), SUM(u+0), SUM(f), MIN(f), MAX(f) FROM t{suffix}"
@@ -3698,6 +3810,145 @@ mod tests {
                     actual.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn grouped_aggregate_sort_metadata_matches_reference() {
+        use tarn_common::CHARSET_BINARY;
+
+        let empty = Catalog::default();
+        let mut ctx = PlanCtx {
+            statistics: None,
+            catalog: &empty,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT, s BIGINT NOT NULL, \
+             u BIGINT UNSIGNED NOT NULL, n BIGINT, z BIGINT NOT NULL DEFAULT 0, \
+             d DECIMAL(10,2) NOT NULL, f DOUBLE NOT NULL, a INT, KEY(a))",
+            &ctx,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        ctx.catalog = &cat;
+        // Complete raw descriptors captured on MariaDB 10.11.19 in text,
+        // COM_STMT_PREPARE and COM_STMT_EXECUTE. Cloned MIN/MAX fields retain
+        // NO_DEFAULT_VALUE, but remove AUTO_INCREMENT and key flags; nullable
+        // and explicitly defaulted columns never acquire NO_DEFAULT_VALUE.
+        let item = [
+            (ColumnType::NewDecimal, 128, 42, 0),
+            (ColumnType::LongLong, 160, 20, 0),
+            (ColumnType::LongLong, 128, 20, 0),
+            (ColumnType::LongLong, 129, 21, 0),
+            (ColumnType::LongLong, 128, 20, 0),
+            (ColumnType::LongLong, 128, 20, 0),
+            (ColumnType::Long, 128, 11, 0),
+            (ColumnType::NewDecimal, 128, 34, 2),
+            (ColumnType::NewDecimal, 128, 12, 2),
+            (ColumnType::Double, 128, 23, 31),
+            (ColumnType::Double, 128, 23, 31),
+        ];
+        let field = [
+            (ColumnType::NewDecimal, 0, 42, 0),
+            (ColumnType::LongLong, 4128, 20, 0),
+            (ColumnType::LongLong, 4096, 20, 0),
+            (ColumnType::LongLong, 1, 21, 0),
+            (ColumnType::LongLong, 0, 20, 0),
+            (ColumnType::LongLong, 0, 20, 0),
+            (ColumnType::Long, 0, 11, 0),
+            (ColumnType::NewDecimal, 0, 34, 2),
+            (ColumnType::NewDecimal, 4096, 12, 2),
+            (ColumnType::Double, 0, 23, 31),
+            (ColumnType::Double, 4096, 22, 31),
+        ];
+        for (suffix, materialized) in [
+            ("", false),
+            (" ORDER BY total", false),
+            (" GROUP BY id", false),
+            (" GROUP BY id ORDER BY id", false),
+            (" GROUP BY id ORDER BY id DESC", false),
+            (" GROUP BY a", false),
+            (" GROUP BY a ORDER BY a", false),
+            (" GROUP BY id ORDER BY total", true),
+            (" GROUP BY id ORDER BY total LIMIT 1", true),
+            (" GROUP BY a ORDER BY total", true),
+            (" GROUP BY n", true),
+            (" GROUP BY n ORDER BY total", true),
+            (" WHERE id < 0 GROUP BY id ORDER BY total", true),
+            (" GROUP BY id HAVING total > 0 ORDER BY total", true),
+            (" GROUP BY id ORDER BY MIN(u)", true),
+            (" GROUP BY id ORDER BY s", true),
+            (" GROUP BY id ORDER BY id, total", true),
+            (" GROUP BY id ORDER BY total, id", true),
+        ] {
+            let sql = format!(
+                "SELECT SUM(s) AS total,MIN(u),MAX(s),COUNT(*),MIN(n),MAX(z),MIN(id),\
+                 SUM(d),MIN(d),SUM(f),MIN(f) FROM t{suffix}"
+            );
+            let Stmt::Select(p) = plan(&sql, &ctx).unwrap() else {
+                panic!()
+            };
+            let prepared = prepare_select_columns(&sql, &ctx).unwrap();
+            let normalized = normalize(&sql, Mode::Literals).unwrap();
+            let normalized_ctx = PlanCtx {
+                params: &normalized.params,
+                ..ctx
+            };
+            let Stmt::Select(normalized_plan) = plan(&normalized.template, &normalized_ctx).unwrap() else {
+                panic!()
+            };
+            for (phase, actual, expected) in [
+                ("prepare", &*prepared, &item),
+                ("execute", &*p.columns, if materialized { &field } else { &item }),
+                (
+                    "normalized execute",
+                    &*normalized_plan.columns,
+                    if materialized { &field } else { &item },
+                ),
+            ] {
+                assert_eq!(actual.len(), expected.len());
+                for (actual, &(ty, flags, length, decimals)) in actual.iter().zip(expected) {
+                    assert_eq!(
+                        (actual.ty, actual.flags, actual.charset, actual.length, actual.decimals),
+                        (ty, flags, CHARSET_BINARY, length, decimals),
+                        "{phase}: {sql}: {}",
+                        actual.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unqualified_grouping_retains_prior_aggregate_descriptors() {
+        let cases = [
+            "SELECT SUM(k),MIN(k),COUNT(*) FROM sbtest1 GROUP BY k+0 ORDER BY SUM(k)",
+            "SELECT SUM(k),MIN(k),COUNT(*) FROM sbtest1 GROUP BY id,id ORDER BY SUM(k)",
+            "SELECT SUM(k),MIN(k),COUNT(*) FROM sbtest1 GROUP BY 1+0 ORDER BY SUM(k)",
+            "SELECT SUM(k),MIN(k),COUNT(*) FROM sbtest1 GROUP BY c ORDER BY SUM(k)",
+            "SELECT SUM(a.k),MIN(a.k),COUNT(*) FROM sbtest1 a JOIN sbtest1 b ON a.id=b.id \
+             GROUP BY a.id ORDER BY SUM(a.k)",
+            "SELECT SUM(k),MIN(k),COUNT(*) FROM sbtest1 WHERE id=1 GROUP BY id ORDER BY SUM(k)",
+            "SELECT SUM(k),MIN(k),COUNT(*) FROM sbtest1 WHERE id>0 AND id<5 GROUP BY id ORDER BY SUM(k)",
+            "SELECT SUM(k),MIN(k),COUNT(*) FROM sbtest1 WHERE id IN (1,2) GROUP BY id ORDER BY SUM(k)",
+        ];
+        let baseline = plan_sel("SELECT SUM(k),MIN(k),COUNT(*) FROM sbtest1");
+        let descriptors = |p: &SelectPlan| {
+            p.columns
+                .iter()
+                .map(|c| (c.ty, c.flags, c.charset, c.length, c.decimals))
+                .collect::<Vec<_>>()
+        };
+        for sql in cases {
+            let p = plan_sel(sql);
+            assert_eq!(descriptors(&p), descriptors(&baseline), "{sql}");
         }
     }
 

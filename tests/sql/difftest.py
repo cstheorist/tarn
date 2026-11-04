@@ -261,6 +261,8 @@ CASES = [
     ("SELECT SUM(n) AS total,SUM(u) AS utotal,MIN(n) AS lo,MAX(u) AS hi,COUNT(n) AS present,COUNT(*) AS nrows FROM sgn", "metadata"),
     ("SELECT SUM(n) AS total,SUM(u) AS utotal,MIN(n) AS lo,MAX(u) AS hi,COUNT(n) AS present FROM sgn WHERE id < 0", "metadata"),
     ("SELECT SUM(n) AS total,MIN(u) AS lo,MAX(n) AS hi,COUNT(*) AS nrows FROM sgn GROUP BY id ORDER BY total", "metadata"),
+    ("SELECT SUM(n) AS total,MIN(u) AS lo,MAX(n) AS hi,COUNT(*) AS nrows FROM sgn GROUP BY id ORDER BY id", "metadata"),
+    ("SELECT SUM(n) AS total,MIN(u) AS lo,MAX(n) AS hi,COUNT(*) AS nrows,MAX(ui) AS supplied_default FROM sgn GROUP BY id ORDER BY total DESC", "metadata"),
     ("SELECT SUM(n+0) AS total,SUM(u+0) AS utotal FROM sgn", "metadata"),
     ("SELECT SUM(c) AS total,MIN(c) AS lo,MAX(c) AS hi,COUNT(c) AS present FROM t1", "metadata"),
     ("SELECT SUM(c) AS total,MIN(c) AS lo,MAX(c) AS hi,COUNT(c) AS present FROM t1 WHERE c IS NULL", "metadata"),

@@ -341,6 +341,20 @@ def cases(mysql_profile=False):
              'reduction', before=writes + ['SAVEPOINT s',
                  'UPDATE p SET n=NULL WHERE tenant=1 AND id=1', 'ROLLBACK TO s'], after=['ROLLBACK']),
     ])
+    grouped = ('SELECT SUM(s) AS total,MIN(u) AS lo,MAX(s) AS hi,COUNT(*) AS nrows,'
+               'MIN(n) AS nullable_lo,MAX(z) AS default_hi,MIN(id) AS auto_lo,'
+               'SUM(price) AS price_total,MIN(price) AS price_lo,'
+               'SUM(d) AS d_total,MIN(d) AS d_lo FROM grouped_p')
+    # MariaDB sends aggregate-item metadata at PREPARE, but temporary-field
+    # metadata at execution when grouping needs materialization. Preserve
+    # both observations and compare each against its corresponding phase.
+    result.extend([
+        case('grouped_primary', grouped + ' GROUP BY id ORDER BY id'),
+        case('grouped_secondary', grouped + ' GROUP BY tag ORDER BY tag'),
+        case('grouped_sorted', grouped + ' GROUP BY id ORDER BY total'),
+        case('grouped_unindexed', grouped + ' GROUP BY n ORDER BY n'),
+        case('grouped_empty', grouped + ' WHERE id<0 GROUP BY id ORDER BY total'),
+    ])
     if mysql_profile:
         result += [
             case('mysql_extrema', 'SELECT MIN(s) AS lo,MAX(s) AS hi FROM exact_p', 'reduction', 'wire', profile='MYSQL'),
@@ -349,7 +363,8 @@ def cases(mysql_profile=False):
         ]
     prepared = {'integer_extrema', 'empty_nonnullable_extrema', 'all_null_extrema',
                 'integer_sums', 'integer_projection', 'savepoint_rollback',
-                'mysql_extrema', 'mysql_sum_refusal'}
+                'mysql_extrema', 'mysql_sum_refusal', 'grouped_primary',
+                'grouped_secondary', 'grouped_sorted', 'grouped_unindexed', 'grouped_empty'}
     result += [{**entry, 'id': 'binary_' + entry['id'], 'protocol': 'binary'}
                for entry in result if entry['id'] in prepared]
     return result
@@ -375,6 +390,12 @@ def setup(c, engine, mysql_profile, kind):
             'c SMALLINT,d SMALLINT UNSIGNED,e MEDIUMINT,f MEDIUMINT UNSIGNED,'
             'g INT,h INT UNSIGNED) ENGINE=' + engine)
     execute(c, 'INSERT INTO widths VALUES(1,-128,255,-32768,65535,-8388608,16777215,-2147483648,4294967295)')
+    execute(c, 'CREATE TABLE grouped_p (id INT PRIMARY KEY AUTO_INCREMENT,'
+            's BIGINT NOT NULL,u BIGINT UNSIGNED NOT NULL,n BIGINT,'
+            'z BIGINT NOT NULL DEFAULT 0,price DECIMAL(10,2) NOT NULL,'
+            'd DOUBLE NOT NULL,tag INT,KEY(tag)) ENGINE=' + engine)
+    execute(c, 'INSERT INTO grouped_p(id,s,u,n,price,d,tag) VALUES'
+            '(1,1,2,3,1.1,1.2,1),(2,3,4,NULL,3.3,3.4,1),(3,5,6,7,5.5,5.6,2)')
     if mysql_profile:
         collation = 'utf8mb4_0900_bin' if kind in ('off', 'mysql') else 'utf8mb4_bin'
         execute(c, 'CREATE TABLE exact_p (id INT PRIMARY KEY,s BIGINT NOT NULL) ENGINE='

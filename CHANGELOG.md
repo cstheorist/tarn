@@ -154,7 +154,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Aggregate result metadata describes the result rather than copying the
   source column's constraints. `MIN` and `MAX` are nullable even over a
   `NOT NULL` column; integer and decimal `SUM` report their widened decimal
-  precision, and `COUNT` reports a nonnullable integer. The typed-read
+  precision, and `COUNT` reports a nonnullable integer. Qualified grouped
+  queries distinguish prepared aggregate descriptors from execution's
+  temporary-field descriptors. The typed-read
   contract checks compare ordinary and pushed execution, including their
   wire descriptors, with MariaDB 10.11
   ([#135](https://github.com/cstheorist/tarn/issues/135)).

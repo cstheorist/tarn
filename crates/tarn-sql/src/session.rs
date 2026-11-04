@@ -1189,6 +1189,18 @@ impl Session {
         }
         let stmt = self.plan_cached(&n.template, &[])?;
         let columns = match &stmt {
+            Stmt::Select(p) if p.agg.as_ref().is_some_and(|a| !a.group.is_empty()) => {
+                let catalog = self.cluster.catalog();
+                let ctx = PlanCtx {
+                    statistics: None,
+                    catalog: &catalog,
+                    db: self.db.as_deref(),
+                    params: &[],
+                    conn_coll: &self.collation_connection,
+                    default_coll: &self.cluster.cfg.default_collation,
+                };
+                planner::prepare_select_columns(&n.template, &ctx)?
+            }
             Stmt::Select(p) => p.columns.clone(),
             Stmt::Explain { .. } => vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
             _ => Arc::from(Vec::new()),

@@ -171,8 +171,9 @@ workload before enabling them.
 Result metadata is derived from the SQL expression in both paths. Extrema
 can return NULL even when the source column cannot; an exact SUM widens
 the argument's decimal precision by 22 digits, up to 65, and returns a
-signed decimal. COUNT returns a nonnullable integer. These descriptors
-also apply to empty results and prepared statements. The wire contract
+signed decimal. COUNT returns a nonnullable integer. The qualified grouped
+shapes distinguish aggregate-item descriptors at preparation from temporary
+field descriptors at execution, including empty results. The wire contract
 suite retains typed values, descriptor fields, errors and diagnostics;
 ordinary SQL uses MariaDB 10.11 as its reference, while the explicit MYSQL
 key profile uses its pinned MySQL reference.

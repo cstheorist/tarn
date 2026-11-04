@@ -3417,6 +3417,16 @@ references agree on the captured integer aggregate descriptors, including
 smaller-integer extrema widths, and differ on DOUBLE extrema display
 length (MariaDB 23, MySQL 22).
 
+The [grouping reference capture](../tests/contracts/typed-read-oracles/41747407553/README.md)
+retains 18 query shapes and separate text, prepared and executed descriptors.
+The grouped release cases cover indexed/nonindexed grouping, aggregate
+sorting and empty input, including numeric NULL/default flags and DOUBLE
+widths. The phase distinction is limited to one ordinary table with distinct
+direct integer grouping keys and no filter or a literal integer range filter.
+Parameterized prepared ranges and other shapes retain their prior metadata;
+binding and handle reuse are outside this probe. This does not establish every
+cost-dependent MariaDB grouping plan, join-buffering or constant-key choice.
+
 The performance matrix starts fresh storage processes after the correctness
 fixture exits. It checks effective test flags on every replica before and
 after measurement, along with RF3 membership, synchronous user spaces and

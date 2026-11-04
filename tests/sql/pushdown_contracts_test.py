@@ -257,7 +257,7 @@ class Sensitivity(unittest.TestCase):
 
     def test_bounded_suite_admissions(self):
         suite = cases(True)
-        self.assertLessEqual(len(suite), 34)
+        self.assertLessEqual(len(suite), 44)
         self.assertEqual(len(suite), len({e['id'] for e in suite}))
         self.assertTrue(all(e['reference'] == 'wire' for e in suite
                             if not e['id'].endswith(('mysql_sum_refusal', 'division_warning_diagnostic'))))
