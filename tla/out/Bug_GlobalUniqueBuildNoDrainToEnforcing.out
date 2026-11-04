@@ -1,0 +1,323 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 38 and seed -5455638485763910785 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 1293] (Linux 6.18.44-fc-v233 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-uix/tla/GlobalUniqueBuild.tla
+Parsing file /tmp/tlc-15585170019501398233/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-15585170019501398233/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-15585170019501398233/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-uix/tla/GlobalUniqueRules.tla
+Parsing file /tmp/tlc-15585170019501398233/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-15585170019501398233/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-15585170019501398233/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-15585170019501398233/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module GlobalUniqueRules
+Semantic processing of module GlobalUniqueBuild
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module GlobalUniqueRules
+Linting of module GlobalUniqueBuild
+Starting... (2026-11-03 21:00:59)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 27 distinct states generated at 2026-11-03 21:01:00.
+Progress(10) at 2026-11-03 21:01:03: 76,288 states generated (76,288 s/min), 16,072 distinct states found (16,072 ds/min), 5,637 states left on queue.
+Error: Invariant Enforced is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = "to1"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 0, B |-> 0]
+/\ cursor = 1
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 2: <Fence("A") line 138, col 5 to line 141, col 90 of module GlobalUniqueBuild>
+/\ phase = "to1"
+/\ fenced = [A |-> TRUE, B |-> FALSE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 0, B |-> 0]
+/\ cursor = 1
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> TRUE, B |-> FALSE]
+
+State 3: <Fence("B") line 138, col 5 to line 141, col 90 of module GlobalUniqueBuild>
+/\ phase = "to1"
+/\ fenced = [A |-> TRUE, B |-> TRUE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 0, B |-> 0]
+/\ cursor = 1
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> TRUE, B |-> TRUE]
+
+State 4: <Decide line 147, col 5 to line 157, col 89 of module GlobalUniqueBuild>
+/\ phase = "to1"
+/\ fenced = [A |-> TRUE, B |-> TRUE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 0, B |-> 0]
+/\ cursor = 1
+/\ decided = TRUE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> TRUE, B |-> TRUE]
+
+State 5: <Publish("A") line 159, col 5 to line 171, col 52 of module GlobalUniqueBuild>
+/\ phase = "to1"
+/\ fenced = [A |-> FALSE, B |-> TRUE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 0]
+/\ cursor = 1
+/\ decided = TRUE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> TRUE, B |-> TRUE]
+
+State 6: <Publish("B") line 159, col 5 to line 171, col 52 of module GlobalUniqueBuild>
+/\ phase = "backfill"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 1
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 7: <BackfillRead line 187, col 5 to line 189, col 96 of module GlobalUniqueBuild>
+/\ phase = "backfill"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 1]
+/\ conflict = {}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 1
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 8: <BackfillWrite line 193, col 8 to line 201, col 74 of module GlobalUniqueBuild>
+/\ phase = "backfill"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 2
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 9: <BackfillRead line 187, col 5 to line 189, col 96 of module GlobalUniqueBuild>
+/\ phase = "backfill"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 2]
+/\ conflict = {}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 2
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 10: <Prepare(1,2,1) line 107, col 5 to line 113, col 95 of module GlobalUniqueBuild>
+/\ phase = "backfill"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 2]
+/\ conflict = {}
+/\ inflight = << [active |-> TRUE, ver |-> 1, key |-> 2],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 2
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 11: <BackfillWrite line 193, col 8 to line 201, col 74 of module GlobalUniqueBuild>
+/\ phase = "backfill"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> TRUE, ver |-> 1, key |-> 2],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 3
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 12: <BackfillRead line 187, col 5 to line 189, col 96 of module GlobalUniqueBuild>
+/\ phase = "backfill"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 0>>
+/\ pending = [key |-> 2, pk |-> 3]
+/\ conflict = {}
+/\ inflight = << [active |-> TRUE, ver |-> 1, key |-> 2],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 3
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 13: <BackfillWrite line 193, col 8 to line 201, col 74 of module GlobalUniqueBuild>
+/\ phase = "backfill"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 3>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> TRUE, ver |-> 1, key |-> 2],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 4
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 14: <BeginEnforcing line 173, col 5 to line 175, col 98 of module GlobalUniqueBuild>
+/\ phase = "to2"
+/\ fenced = [A |-> FALSE, B |-> FALSE]
+/\ entry = <<0, 3>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> TRUE, ver |-> 1, key |-> 2],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 4
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> FALSE, B |-> FALSE]
+
+State 15: <Fence("A") line 138, col 5 to line 141, col 90 of module GlobalUniqueBuild>
+/\ phase = "to2"
+/\ fenced = [A |-> TRUE, B |-> FALSE]
+/\ entry = <<0, 3>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> TRUE, ver |-> 1, key |-> 2],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 4
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> TRUE, B |-> FALSE]
+
+State 16: <Fence("B") line 138, col 5 to line 141, col 90 of module GlobalUniqueBuild>
+/\ phase = "to2"
+/\ fenced = [A |-> TRUE, B |-> TRUE]
+/\ entry = <<0, 3>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> TRUE, ver |-> 1, key |-> 2],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 4
+/\ decided = FALSE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> TRUE, B |-> TRUE]
+
+State 17: <Decide line 147, col 5 to line 157, col 89 of module GlobalUniqueBuild>
+/\ phase = "to2"
+/\ fenced = [A |-> TRUE, B |-> TRUE]
+/\ entry = <<0, 3>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {}
+/\ inflight = << [active |-> TRUE, ver |-> 1, key |-> 2],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 4
+/\ decided = TRUE
+/\ rows = <<0, 0, 2>>
+/\ acked = [A |-> TRUE, B |-> TRUE]
+
+State 18: <Commit(1) line 117, col 8 to line 121, col 75 of module GlobalUniqueBuild>
+/\ phase = "to2"
+/\ fenced = [A |-> TRUE, B |-> TRUE]
+/\ entry = <<0, 3>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {<<2, 1>>}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 1, B |-> 1]
+/\ cursor = 4
+/\ decided = TRUE
+/\ rows = <<2, 0, 2>>
+/\ acked = [A |-> TRUE, B |-> TRUE]
+
+State 19: <Publish("A") line 159, col 5 to line 171, col 52 of module GlobalUniqueBuild>
+/\ phase = "to2"
+/\ fenced = [A |-> FALSE, B |-> TRUE]
+/\ entry = <<0, 3>>
+/\ pending = [key |-> 0, pk |-> 0]
+/\ conflict = {<<2, 1>>}
+/\ inflight = << [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0],
+   [active |-> FALSE, ver |-> 0, key |-> 0] >>
+/\ ver = [A |-> 2, B |-> 1]
+/\ cursor = 4
+/\ decided = TRUE
+/\ rows = <<2, 0, 2>>
+/\ acked = [A |-> TRUE, B |-> TRUE]
+
+1132977 states generated, 185730 distinct states found, 9397 states left on queue.
+The depth of the complete state graph search is 19.
+Finished in 15s at (2026-11-03 21:01:14)
+Trace exploration spec path: ./GlobalUniqueBuild_TTrace_1793757659.tla

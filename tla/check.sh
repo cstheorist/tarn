@@ -121,6 +121,12 @@ DEFAULT="$DEFAULT ReplicatedBuildFence Bug_BuildFenceNoQuorumWait Bug_BuildFence
 DEFAULT="$DEFAULT ShadowUnique Bug_ShadowUniqueFailOnDirtyHolder Bug_ShadowUniqueEvictClean Bug_ShadowUniqueTailInPlace"
 DEFAULT="$DEFAULT Bug_ShadowUniquePassHolderOldSet Bug_ShadowUniquePassInPlace"
 DEFAULT="$DEFAULT PlanGuardScalar PlanGuardBatch Bug_PlanGuardSkipSpace Bug_PlanGuardYield"
+DEFAULT="$DEFAULT GlobalUniqueBuild Bug_GlobalUniqueBuildBackfillUnvalidated Bug_GlobalUniqueBuildPublishConflicts
+Bug_GlobalUniqueBuildEarlyPublish Bug_GlobalUniqueBuildNoDrainToEnforcing Bug_GlobalUniqueBuildNoDrainToAbort
+Bug_GlobalUniqueBuildStaleWrite Bug_GlobalUniqueBuildVolatileFence"
+DEFAULT="$DEFAULT GlobalUniqueWrites Bug_GlobalUniqueWritesKeyUnserialized Bug_GlobalUniqueWritesNoOverlay
+Bug_GlobalUniqueWritesCursorEarly Bug_GlobalUniqueWritesSkipConflict Bug_GlobalUniqueWritesNoPromote
+Bug_GlobalUniqueWritesBlindLeave Bug_GlobalUniqueWritesJoinReplace"
 CONFIGS=${*:-$DEFAULT}
 # SHARD=k/n checks every n-th configuration, from the k-th on: CI checks the
 # list in n jobs.
