@@ -137,3 +137,28 @@ open, non-SSA condition in upstream #1085. Record unknown phase/state when
 the dump cannot distinguish them. A successful trace compilation proves
 neither execution of that store after closing the upvalue nor crash causality.
 
+## Retained engines with rebuild blocked
+
+The manual `blocked` mode reuses the same audited runtime pair for three
+additional profiles: default GC, incremental GC, and incremental GC with JIT
+disabled. It constructs 64 engines, repeatedly invalidates them, and checks
+each new mark through a cut that refuses rebuild. The fixture asserts that
+the meter's `current` remains nil throughout this loop. Only after all
+iterations does it permit and verify one final rebuild for each engine.
+
+This isolates a path missed by repeated successful rebuilds. In the retained
+trace observation from run `41766793267`, the compiled mark-store path
+specialized `q.current == nil`; a successful rebuild installs a nonnil meter.
+Preserving the nil state permits repeated source-level exercise of that
+path. It does not prove that a particular compiled trace executes or explain
+the historical crash.
+
+At the default 20,000 iterations, each new profile must record 64 constructors,
+20,064 marks, 20,128 cuts, 20,000 invalidations and blocked rebuilds, and 64
+successful final rebuilds. The incremental profiles require exactly 20,000
+explicit GC steps. The collector validates these counts and the distinct
+rebuild stage; missing final rebuilds cannot qualify as a functional pass.
+The default profile selection remains the eight earlier profiles; select
+the three new profiles explicitly with `--profiles`, or use manual mode
+`blocked`. All observations remain diagnostic, with `qualification_pass=false`.
+

@@ -15,11 +15,15 @@ import time
 
 TARANTOOL = "8b9a0f59a95bb6c4a491e716966d9df9d5a4f6bc"
 LUAJIT = "8af934d93cf26fb1e9b08b28a8b51833d55fc8e8"
-PROFILES = (
+LEGACY_PROFILES = (
     "ordinary", "jit-off", "incremental-gc", "construction-warm",
     "construction-warm-incremental-gc",
     "retained-construction-warm", "retained-construction-warm-incremental-gc",
     "retained-construction-warm-incremental-gc-jit-off",
+)
+PROFILES = LEGACY_PROFILES + (
+    "retained-blocked-rebuild", "retained-blocked-rebuild-incremental-gc",
+    "retained-blocked-rebuild-incremental-gc-jit-off",
 )
 
 
@@ -78,13 +82,21 @@ def validate_receipt(record, profile, iterations, identities):
     if runtime.get("effective_jit", {}).get("enabled") is not (not profile.endswith("jit-off")):
         raise ValueError("fixture JIT configuration mismatch")
     config = record.get("config", {})
-    warming, retained = "construction-warm" in profile, profile.startswith("retained-")
+    if profile not in PROFILES:
+        raise ValueError("unknown fixture profile")
+    blocked = profile.startswith("retained-blocked-rebuild")
+    if not blocked:
+        # Schema-1 legacy receipts predate these fields; present values stay strict.
+        config = {"rebuild_stage": "per-iteration rebuild", "final_rebuild_count": 0, **config}
+    warming, retained = "construction-warm" in profile or blocked, profile.startswith("retained-")
     expected_config = {"iterations": iterations, "max_iterations": 1_000_000,
                        "batch_size": 64 if warming else 1,
                        "constructor_warming": warming, "retained_engines": retained,
                        "gc": "explicit incremental step(1) each iteration" if "incremental-gc" in profile else "default",
                        "native": False, "sync": False, "transactions": False, "wal_mode": "none",
-                       "cut_sequence": "false then true"}
+                       "cut_sequence": "false during loop, true after loop" if blocked else "false then true",
+                       "rebuild_stage": "blocked-only iterations" if blocked else "per-iteration rebuild",
+                       "final_rebuild_count": 64 if blocked else 0}
     if any(type(config.get(k)) is not type(v) or config.get(k) != v for k, v in expected_config.items()):
         raise ValueError("fixture configuration mismatch")
     if record.get("passed") is not True:
@@ -94,10 +106,13 @@ def validate_receipt(record, profile, iterations, identities):
     if record.get("complete") is not True:
         raise ValueError("incomplete receipt claims a pass")
     counts = record.get("counts", {})
-    constructors = min(64, iterations) if retained else iterations if warming else 1
+    if not blocked:
+        counts = {"final_rebuilds": 0, **counts}
+    constructors = 64 if blocked else min(64, iterations) if retained else iterations if warming else 1
+    rebuilds = 64 if blocked else iterations
     expected = {"iterations": iterations, "constructors": constructors,
-                "marks": constructors + iterations, "cuts": 3 * iterations,
-                "invalidations": iterations, "rebuilds": iterations,
+                "marks": constructors + iterations, "cuts": iterations + 2 * rebuilds,
+                "invalidations": iterations, "rebuilds": rebuilds, "final_rebuilds": 64 if blocked else 0,
                 "blocked_rebuilds": iterations,
                 "gc_steps": iterations if "incremental-gc" in profile else 0}
     if any(type(counts.get(key)) is not int or counts.get(key) != value for key, value in expected.items()):
@@ -178,11 +193,11 @@ def run(args):
     result = {"schema_version": 1, "arm": args.arm, "source_identities": identities,
               "runtime_receipt": receipt, "collection_complete": False, "qualification_pass": False,
               "interpretation": "diagnostic observations only; no GC cause or fix established",
-              "trials": [], "profiles": list(PROFILES), "trials_per_profile": args.trials,
+              "trials": [], "profiles": list(args.profiles), "trials_per_profile": args.trials,
               "iterations_per_trial": args.iterations}
     save(output / "study.json", result)
     failed = False
-    for profile in PROFILES:
+    for profile in args.profiles:
         for trial in range(1, args.trials + 1):
             item = collect_trial(runtime / "bin/tarantool", root / "tests/gc_upvalue.lua",
                                  output / f"{profile}-{trial:02}", profile, args.iterations,
@@ -211,11 +226,15 @@ def main():
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--arm", choices=("baseline", "candidate"), required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--profiles", nargs="+", choices=PROFILES, default=LEGACY_PROFILES,
+                        help="selected profiles (default: the eight legacy profiles)")
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--iterations", type=int, default=20000)
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--core-dir", type=Path, help="empty directory configured in kernel.core_pattern by the isolated runner")
     args = parser.parse_args()
+    if len(set(args.profiles)) != len(args.profiles):
+        parser.error("--profiles must not contain duplicates")
     try:
         return run(args)
     except (ValueError, OSError, subprocess.SubprocessError) as error:

@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("gc_upvalue_study", ROOT / "scripts/gc_upvalue_study.py")
@@ -15,10 +16,12 @@ SPEC.loader.exec_module(STUDY)
 
 
 def passing(profile="ordinary", n=7):
-    construction = "construction-warm" in profile
+    blocked = profile.startswith("retained-blocked-rebuild")
+    construction = "construction-warm" in profile or blocked
     retained = profile.startswith("retained-")
     incremental = "incremental-gc" in profile
-    constructors = min(64, n) if retained else n if construction else 1
+    constructors = 64 if blocked else min(64, n) if retained else n if construction else 1
+    rebuilds = 64 if blocked else n
     return {"schema_version": 1, "profile": profile, "source_identities": {"test": "fixture"},
             "complete": True, "passed": True,
             "runtime": {"os": "Linux", "arch": "x64", "gc64": False,
@@ -26,10 +29,14 @@ def passing(profile="ordinary", n=7):
             "config": {"iterations": n, "max_iterations": 1000000, "batch_size": 64 if construction else 1,
                        "constructor_warming": construction, "retained_engines": retained,
                        "native": False, "sync": False,
-                       "transactions": False, "wal_mode": "none", "cut_sequence": "false then true",
+                       "transactions": False, "wal_mode": "none",
+                       "cut_sequence": "false during loop, true after loop" if blocked else "false then true",
+                       "rebuild_stage": "blocked-only iterations" if blocked else "per-iteration rebuild",
+                       "final_rebuild_count": 64 if blocked else 0,
                        "gc": "explicit incremental step(1) each iteration" if incremental else "default"},
             "counts": {"iterations": n, "constructors": constructors, "marks": constructors + n,
-                       "cuts": 3*n, "invalidations": n, "rebuilds": n, "blocked_rebuilds": n,
+                       "cuts": n + 2*rebuilds, "invalidations": n, "rebuilds": rebuilds, "blocked_rebuilds": n,
+                       "final_rebuilds": 64 if blocked else 0,
                        "gc_steps": n if incremental else 0}}
 
 
@@ -37,10 +44,43 @@ class ReceiptControls(unittest.TestCase):
     def validate(self, record, profile="ordinary"):
         return STUDY.validate_receipt(record, profile, 7, {"test": "fixture"})
 
+    def test_profile_selection_keeps_legacy_defaults_and_accepts_only_known_profiles(self):
+        argv = ["study", "--source", ".", "--runtime", ".", "--arm", "baseline", "--output", "out"]
+        for selected in ((), STUDY.PROFILES[-3:]):
+            with patch.object(sys, "argv", argv + (["--profiles", *selected] if selected else [])), \
+                 patch.object(STUDY, "run", return_value=0) as run:
+                self.assertEqual(STUDY.main(), 0)
+                self.assertEqual(tuple(run.call_args.args[0].profiles), selected or STUDY.LEGACY_PROFILES)
+        for invalid in (("unknown",), ("ordinary", "ordinary")):
+            with patch.object(sys, "argv", argv + ["--profiles", *invalid]), \
+                 patch("sys.stderr"), self.assertRaises(SystemExit) as error:
+                STUDY.main()
+            self.assertEqual(error.exception.code, 2)
+
     def test_profiles_and_exact_counts(self):
         for profile in STUDY.PROFILES:
             with self.subTest(profile=profile):
                 self.assertEqual(self.validate(passing(profile), profile), "pass")
+
+    def test_legacy_receipts_may_omit_new_fields(self):
+        for profile in STUDY.LEGACY_PROFILES:
+            record = passing(profile)
+            del record["config"]["rebuild_stage"], record["config"]["final_rebuild_count"]
+            del record["counts"]["final_rebuilds"]
+            with self.subTest(profile=profile):
+                self.assertEqual(self.validate(record, profile), "pass")
+
+    def test_legacy_present_new_fields_remain_strict(self):
+        for profile in STUDY.LEGACY_PROFILES:
+            for section, key, value in (("config", "rebuild_stage", "blocked-only iterations"),
+                                        ("config", "final_rebuild_count", 64),
+                                        ("config", "final_rebuild_count", False),
+                                        ("counts", "final_rebuilds", 64),
+                                        ("counts", "final_rebuilds", False)):
+                record = passing(profile)
+                record[section][key] = value
+                with self.subTest(profile=profile, key=key, value=value), self.assertRaises(ValueError):
+                    self.validate(record, profile)
 
     def test_incomplete_cannot_claim_pass(self):
         record = passing()
@@ -55,6 +95,26 @@ class ReceiptControls(unittest.TestCase):
         record["counts"].update(constructors=137, marks=274)
         with self.assertRaisesRegex(ValueError, "counts"):
             STUDY.validate_receipt(record, profile, 137, {"test": "fixture"})
+
+    def test_blocked_stage_and_final_rebuilds_are_required(self):
+        for profile in STUDY.PROFILES[len(STUDY.LEGACY_PROFILES):]:
+            record = passing(profile, 137)
+            self.assertEqual(STUDY.validate_receipt(record, profile, 137, {"test": "fixture"}), "pass")
+            for key in record["counts"]:
+                bad = copy.deepcopy(record)
+                bad["counts"][key] -= 1
+                with self.subTest(profile=profile, key=key), self.assertRaisesRegex(ValueError, "counts"):
+                    STUDY.validate_receipt(bad, profile, 137, {"test": "fixture"})
+            bad = copy.deepcopy(record)
+            del bad["counts"]["final_rebuilds"]
+            with self.assertRaisesRegex(ValueError, "counts"):
+                STUDY.validate_receipt(bad, profile, 137, {"test": "fixture"})
+            for key, value in (("rebuild_stage", "per-iteration rebuild"), ("final_rebuild_count", 0),
+                               ("cut_sequence", "false then true")):
+                bad = copy.deepcopy(record)
+                bad["config"][key] = value
+                with self.subTest(profile=profile, key=key), self.assertRaisesRegex(ValueError, "configuration"):
+                    STUDY.validate_receipt(bad, profile, 137, {"test": "fixture"})
 
     def test_omitted_iterations_and_cuts_fail(self):
         for key in ("iterations", "constructors", "marks", "cuts", "invalidations", "rebuilds", "blocked_rebuilds"):

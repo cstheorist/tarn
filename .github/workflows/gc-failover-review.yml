@@ -25,7 +25,7 @@ on:
       mode:
         description: Diagnostic experiment
         type: choice
-        options: [failover, upvalue, coverage, effects]
+        options: [failover, upvalue, coverage, effects, blocked]
         default: failover
       iterations:
         description: Iterations per upvalue trial (1-1000000)
@@ -41,7 +41,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: gc-review-${{ github.ref }}
+  group: gc-review-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'pr' }}
   cancel-in-progress: true
 
 env:
@@ -140,11 +140,11 @@ jobs:
           if-no-files-found: error
 
   coverage:
-    name: Pinned runtime trace coverage / ${{ matrix.arm }}
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'coverage'
+    name: Audited runtime diagnostic / ${{ matrix.arm }}
+    if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'coverage' || inputs.mode == 'blocked')
     needs: upvalue-controls
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -153,6 +153,8 @@ jobs:
     env:
       PYTHONDONTWRITEBYTECODE: '1'
       STUDY_ARM: ${{ matrix.arm }}
+      STUDY_ITERATIONS: ${{ inputs.iterations }}
+      STUDY_TRIALS: ${{ inputs.trials }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -169,18 +171,43 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq libunwind-dev libreadline-dev libicu-dev libssl-dev libncurses-dev
       - name: Observe bounded compilation using the same verified binaries
+        if: inputs.mode == 'coverage'
         run: |
           chmod +x "$RUNNER_TEMP/audited-runtime/upvalue-runtime/bin/tarantool"
           python3 -B scripts/gc_trace_coverage.py --source "$GITHUB_WORKSPACE" \
             --runtime "$RUNNER_TEMP/audited-runtime/upvalue-runtime" --arm "$STUDY_ARM" \
             --output "$RUNNER_TEMP/trace-coverage"
+      - name: Keep rebuild blocked during repeated invalidation
+        if: inputs.mode == 'blocked'
+        run: |
+          PYTHONPATH=scripts python3 -B - <<'PY'
+          import os
+          from pathlib import Path
+          from gc_trace_coverage import verify_audited_runtime
+          runtime = Path(os.environ['RUNNER_TEMP']) / 'audited-runtime/upvalue-runtime'
+          verify_audited_runtime(runtime, os.environ['STUDY_ARM'], Path('ci/gc-runtime/urefo-x86.patch'))
+          PY
+          chmod +x "$RUNNER_TEMP/audited-runtime/upvalue-runtime/bin/tarantool"
+          mkdir -p "$RUNNER_TEMP/blocked-cores"
+          cat /proc/sys/kernel/core_pattern > "$RUNNER_TEMP/blocked-core-pattern-before.txt"
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/blocked-cores/core.%e.%p"
+          ulimit -c unlimited
+          python3 -B scripts/gc_upvalue_study.py --source "$GITHUB_WORKSPACE" \
+            --runtime "$RUNNER_TEMP/audited-runtime/upvalue-runtime" --arm "$STUDY_ARM" \
+            --output "$RUNNER_TEMP/blocked-study" --core-dir "$RUNNER_TEMP/blocked-cores" \
+            --iterations "$STUDY_ITERATIONS" --trials "$STUDY_TRIALS" --timeout 60 \
+            --profiles retained-blocked-rebuild retained-blocked-rebuild-incremental-gc \
+              retained-blocked-rebuild-incremental-gc-jit-off
       - name: Retain every observation and the reused runtime identities
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: gc-trace-coverage-${{ matrix.arm }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: gc-${{ inputs.mode }}-${{ matrix.arm }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/trace-coverage
+            ${{ runner.temp }}/blocked-study
+            ${{ runner.temp }}/blocked-cores
+            ${{ runner.temp }}/blocked-core-pattern-before.txt
             ${{ runner.temp }}/audited-runtime/upvalue-runtime/bin
             ${{ runner.temp }}/audited-runtime/upvalue-runtime/runtime-receipt.json
             ${{ runner.temp }}/audited-runtime/upvalue-runtime/inputs

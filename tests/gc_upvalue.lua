@@ -18,12 +18,19 @@ local profiles = {
     ['retained-construction-warm-incremental-gc-jit-off'] = {
         batch = 64, construct = true, retained = true, gc_step = true, jit_off = true,
     },
+    ['retained-blocked-rebuild'] = {batch = 64, construct = true, retained = true, blocked_only = true},
+    ['retained-blocked-rebuild-incremental-gc'] = {
+        batch = 64, construct = true, retained = true, blocked_only = true, gc_step = true,
+    },
+    ['retained-blocked-rebuild-incremental-gc-jit-off'] = {
+        batch = 64, construct = true, retained = true, blocked_only = true, gc_step = true, jit_off = true,
+    },
 }
 local result = {
     schema_version = 1, fixture = 'tarn-engine-upvalue-functional', complete = false, passed = false,
     profile = arg[1] or 'ordinary',
     counts = {iterations = 0, constructors = 0, marks = 0, cuts = 0,
-              invalidations = 0, rebuilds = 0, blocked_rebuilds = 0, gc_steps = 0},
+              invalidations = 0, rebuilds = 0, blocked_rebuilds = 0, final_rebuilds = 0, gc_steps = 0},
     position = {phase = 'configuration', iteration = 0},
     runtime = {tarantool = tostring(_TARANTOOL), luajit = jit.version,
                arch = jit.arch, os = jit.os, gc64 = ffi.abi('gc64')},
@@ -56,7 +63,9 @@ local function run()
         retained_engines = profile.retained == true,
         gc = profile.gc_step and 'explicit incremental step(1) each iteration' or 'default',
         native = false, sync = false, wal_mode = 'none',
-        cut_sequence = 'false then true', transactions = false,
+        cut_sequence = profile.blocked_only and 'false during loop, true after loop' or 'false then true',
+        rebuild_stage = profile.blocked_only and 'blocked-only iterations' or 'per-iteration rebuild',
+        final_rebuild_count = profile.blocked_only and profile.batch or 0, transactions = false,
     }
 
     -- The real meter consults box.info and box.is_in_txn even without writes.
@@ -111,22 +120,8 @@ local function run()
         assert(state.expected > 0 and not E.tickets.ready(), 'constructor state mismatch')
         return {engine = E, state = state}
     end
-    local function exercise(item, iteration)
+    local function rebuild(item)
         local E, state = item.engine, item.state
-        result.position.phase, result.position.iteration = 'invalidate', iteration
-        E.invalidate(true)
-        counts.invalidations = counts.invalidations + 1
-        assert(not E.tickets.ready(), 'invalidation did not retire READY')
-        if profile.gc_step then
-            -- Explicit scheduling perturbation: never part of ordinary/default GC.
-            collectgarbage('step', 1)
-            counts.gc_steps = counts.gc_steps + 1
-        end
-        result.position.phase = 'blocked-rebuild'
-        state.allow = false
-        assert(E.tickets.rebuild() == false and not E.tickets.ready(), 'blocked cut admitted rebuild')
-        counts.blocked_rebuilds = counts.blocked_rebuilds + 1
-        result.position.phase = 'rebuild'
         state.allow = true
         assert(E.tickets.rebuild() == true and E.tickets.ready(), 'valid cut failed to rebuild')
         counts.rebuilds = counts.rebuilds + 1
@@ -136,6 +131,30 @@ local function run()
                'zero-accounting snapshot mismatch')
         assert(E.tickets.outstanding == 0 and next(E.tickets.tickets) == nil,
                'unexpected terminal ticket')
+    end
+    local function exercise(item, iteration)
+        local E, state = item.engine, item.state
+        result.position.phase, result.position.iteration = 'invalidate', iteration
+        if profile.blocked_only then assert(E.tickets.current == nil, 'current before invalidation') end
+        E.invalidate(true)
+        counts.invalidations = counts.invalidations + 1
+        assert(not E.tickets.ready(), 'invalidation did not retire READY')
+        if profile.blocked_only then assert(E.tickets.current == nil, 'invalidation installed current') end
+        if profile.gc_step then
+            -- Explicit scheduling perturbation: never part of ordinary/default GC.
+            collectgarbage('step', 1)
+            counts.gc_steps = counts.gc_steps + 1
+        end
+        result.position.phase = 'blocked-rebuild'
+        state.allow = false
+        assert(E.tickets.rebuild() == false and not E.tickets.ready(), 'blocked cut admitted rebuild')
+        counts.blocked_rebuilds = counts.blocked_rebuilds + 1
+        if profile.blocked_only then
+            assert(E.tickets.current == nil, 'blocked rebuild installed current')
+        else
+            result.position.phase = 'rebuild'
+            rebuild(item)
+        end
         counts.iterations = counts.iterations + 1
     end
 
@@ -143,9 +162,19 @@ local function run()
         -- Keep the same closed upvalues live throughout repeated exercise.
         -- Constructor warming remains an attempt, not proof of a trace.
         result.position.phase = 'construction'
-        local batch, n = {}, math.min(profile.batch, iterations)
+        local batch, n = {}, profile.blocked_only and profile.batch or math.min(profile.batch, iterations)
         for j = 1, n do batch[j] = new_engine() end
         for i = 1, iterations do exercise(batch[(i - 1) % n + 1], i) end
+        if profile.blocked_only then
+            -- cut=false exits q.rebuild before current installation. Keep that
+            -- guard throughout the loop; only now permit each retained mark.
+            result.position.phase = 'final-rebuild'
+            for j = 1, n do
+                assert(batch[j].engine.tickets.current == nil, 'current before final rebuild')
+                rebuild(batch[j])
+                counts.final_rebuilds = counts.final_rebuilds + 1
+            end
+        end
     elseif profile.construct then
         -- Repeated real constructors can warm a shared prototype while their
         -- own mark upvalues are open. Exercise each instance only after return.
@@ -162,12 +191,16 @@ local function run()
         local item = new_engine()
         for i = 1, iterations do exercise(item, i) end
     end
+    local final_rebuilds = profile.blocked_only and profile.batch or 0
+    local rebuilds = profile.blocked_only and final_rebuilds or iterations
     assert(counts.iterations == iterations and counts.invalidations == iterations
-           and counts.rebuilds == iterations and counts.blocked_rebuilds == iterations,
+           and counts.rebuilds == rebuilds and counts.final_rebuilds == final_rebuilds
+           and counts.blocked_rebuilds == iterations,
            'incomplete iteration accounting')
-    assert(counts.marks == counts.constructors + iterations and counts.cuts == 3 * iterations,
+    assert(counts.marks == counts.constructors + iterations and counts.cuts == iterations + 2 * rebuilds,
            'mark/cut callback accounting mismatch')
-    local constructors = profile.retained and math.min(profile.batch, iterations)
+    local constructors = profile.blocked_only and profile.batch
+                         or profile.retained and math.min(profile.batch, iterations)
                          or (profile.construct and iterations or 1)
     assert(counts.constructors == constructors, 'constructor accounting mismatch')
     result.position.phase = 'finished'
