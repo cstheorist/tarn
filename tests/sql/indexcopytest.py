@@ -80,6 +80,16 @@ while a session writes, and one with a row out of the new range, or a NULL
 for NOT NULL, fails with the in-place change's error (1264, 1265), leaving
 the table as it was and no copy behind (#184).
 
+An ALTER that drops a global unique index and a lazy index, and adds an
+index, copies the table too, while a session changes both indexes' keys,
+inserts, deletes and moves rows (#184). After it, every replica keeps the
+table's other global and lazy indexes as above, has dropped the dropped
+global index's space and retired the dropped generation, and binds nothing
+else to the old space; the kept indexes find every row, and the dropped
+unique key takes a duplicate. Before it, one whose new unique index meets a
+duplicate fails from the copy, and leaves the table and its indexes as
+they were.
+
 A shard whose BUILD ended first keeps noting the writes to its rows while
 the other shard builds, here held after a page by a test hook, and these
 writes outgrow its capture. The coordinator sends BUILD everywhere again
@@ -132,6 +142,13 @@ def check(name, cond, detail=None):
         fails += 1
         print(f"  FAIL {name}" + (f"  -- {json.dumps(detail, default=str)}" if detail is not None else ""),
               flush=True)
+
+
+def vinyl_refusal(e):
+    """Vinyl admission's documented refusal of a fresh write, 1205: throttled
+    while dump or compaction catches up (docs/operations.md). Nothing was
+    written, and the remedy is to retry."""
+    return e.args[0] == 1205 and "Vinyl" in str(e.args[1])
 
 
 def owned_by_model(i):
@@ -632,6 +649,213 @@ def main():
               all(shapes[n] == shapes[g["replicas"][0]] for g in groups for n in g["replicas"])
               and all(sh is not None and "kk" in sh["indexes"] and sh["indexes"]["kk"]["rows"] == sh["rows"]
                       for sh in shapes.values()), shapes)
+        q(c, f"DROP TABLE {t}")
+
+    def lazy_gens(node, space):
+        """The table's published lazy generations on node, by index name."""
+        return ev(node, """
+            local sp, out = box.space[...], {}
+            local cap = sp and box.space._tarn_lazy_capture:get{sp.id}
+            for _, s in ipairs(cap and cap.specs or {}) do
+                for name, ix in pairs(sp.index) do
+                    if type(name) == 'string' and ix.id == s.local_index_id then out[name] = s.gen end
+                end
+            end
+            return out
+        """, [space]) or {}
+
+    def gen_phases(node, gens):
+        """Each generation's phase and the space its descriptor names on node."""
+        return ev(node, """
+            local out = {}
+            for i, gen in ipairs({...}) do
+                local d = box.space._tarn_lazy_defs:get{gen}
+                out[i] = d and {d.phase, d.base_id} or 'none'
+            end
+            return out
+        """, gens)
+
+    def dropped_indexes(engine):
+        """An ALTER that drops a global unique index and a lazy index, and
+        adds an index, copies the table too (#184), while a session changes
+        both indexes' keys, inserts, deletes and moves rows: until PREPARE
+        the dropped indexes take the table's writes, and publication retires
+        them, dropping the global index's space on every replica. The table's
+        other global and lazy indexes are kept. Before it, one whose new
+        unique index meets a duplicate fails from the copy and leaves the
+        table and its indexes as they were."""
+        t, space = f"dx_{engine}", f"{DB}.dx_{engine}"
+        n, keys = 10000, 40
+        q(c, f"CREATE TABLE {t} (tenant_id INT NOT NULL, id INT NOT NULL, k INT, j INT, u INT NOT NULL, "
+             f"w INT NOT NULL, b INT, PRIMARY KEY (tenant_id, id), KEY by_k (k, id) COMMENT 'tarn:lazy', "
+             f"KEY by_j (j, id) COMMENT 'tarn:lazy', UNIQUE KEY uu (u), UNIQUE KEY uw (w)) "
+             f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
+        for first in range(0, n, 1000):
+            q(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},{i % keys},{i % keys},{i},{i},{i % 2})"
+                                                     for i in range(first, first + 1000)))
+        # (tenant_id, id) -> [k, j, u, w]
+        model = {(i % TENANTS, i): [i % keys, i % keys, i, i] for i in range(n)}
+        fresh = {"id": 6 * FRESH_ID, "u": 6 * FRESH_C}
+        errors, writes, throttled = [], [0], [0]
+        shard_of = {node: g_["id"] for g_ in groups for node in g_["replicas"]}
+
+        def new(what):
+            fresh[what] += 1
+            return fresh[what]
+
+        def writer(stop):
+            conn = connect(args.tarn, read_timeout=120)
+            rnd = random.Random(f"dropped-{engine}")
+            while not stop.is_set():
+                rows, op = sorted(model), rnd.random()
+                try:
+                    if op < 0.35:
+                        a, k, j = rnd.choice(rows), rnd.randrange(keys), rnd.randrange(keys)
+                        q(conn, f"UPDATE {t} SET k = %s, j = %s WHERE tenant_id = %s AND id = %s", (k, j, *a))
+                        model[a][0:2] = [k, j]
+                    elif op < 0.5:
+                        a, u, w = (rnd.randrange(TENANTS), new("id")), new("u"), new("u")
+                        k = rnd.randrange(keys)
+                        q(conn, f"INSERT INTO {t} (tenant_id, id, k, j, u, w, b) VALUES (%s, %s, %s, %s, %s, %s, 0)",
+                          (*a, k, k, u, w))
+                        model[a] = [k, k, u, w]
+                    elif op < 0.65:
+                        a = rnd.choice(rows)
+                        q(conn, f"DELETE FROM {t} WHERE tenant_id = %s AND id = %s", a)
+                        del model[a]
+                    elif op < 0.8:
+                        # the row moves to a new primary key, which its entries hold
+                        a, i = rnd.choice(rows), new("id")
+                        q(conn, f"UPDATE {t} SET id = %s WHERE tenant_id = %s AND id = %s", (i, *a))
+                        model[(a[0], i)] = model.pop(a)
+                    else:
+                        # new unique values for both keys
+                        a, u, w = rnd.choice(rows), new("u"), new("u")
+                        q(conn, f"UPDATE {t} SET u = %s, w = %s WHERE tenant_id = %s AND id = %s", (u, w, *a))
+                        model[a][2:4] = [u, w]
+                    writes[0] += 1
+                except pymysql.MySQLError as e:
+                    # (vinyl admission's refusal wrote nothing: the model
+                    # stays as it was, and the next write comes after a pause)
+                    if vinyl_refusal(e):
+                        throttled[0] += 1
+                    else:
+                        errors.append(f"dropped: {e.args}")
+                    time.sleep(0.05)
+                time.sleep(0.003)
+
+        drained()
+        gens = lazy_gens(leader(groups[0]), space)
+        globals_before = {node: globals_of(node, space) for node in nodes}
+        uw_ids = {g_["id"]: globals_of(leader(g_), space)[uix_name(leader(g_), space, "uw")]["id"] for g_ in groups}
+        uu_ids = {g_["id"]: globals_of(leader(g_), space)[uix_name(leader(g_), space, "uu")]["id"] for g_ in groups}
+        check(f"{engine}: the table has two lazy indexes and two global index spaces on every replica",
+              set(gens) == {"by_k", "by_j"} and all(len(v) == 2 for v in globals_before.values()),
+              {"gens": gens, "globals": globals_before})
+
+        # A new unique index that meets a duplicate fails the change, from
+        # the copy, and leaves the table and its indexes as they were.
+        ids = {g_["id"]: space_id(leader(g_), space) for g_ in groups}
+        shapes = {g_["id"]: shape(leader(g_), space) for g_ in groups}
+        refused = None
+        try:
+            q(c, f"ALTER TABLE {t} DROP INDEX uw, DROP INDEX by_j, ADD UNIQUE KEY ub (tenant_id, b)")
+        except pymysql.MySQLError as e:
+            refused = e.args[0]
+        check(f"{engine}: a duplicate under the new unique index fails the change with 1062", refused == 1062,
+              refused)
+        caught_up()
+        records = {g_["id"]: engine_record(leader(g_), space, ids[g_["id"]]) for g_ in groups}
+        check(f"{engine}: that change was a copy, aborted on every shard",
+              all(r == {"phase": "aborted", "rebuild": True} for r in records.values()), records)
+        phases = {node: gen_phases(node, [gens["by_k"], gens["by_j"]]) for node in nodes}
+        check(f"{engine}: the table, its global index spaces and its lazy generations are as they were",
+              {g_["id"]: shape(leader(g_), space) for g_ in groups} == shapes
+              and {node: globals_of(node, space) for node in nodes} == globals_before
+              and all(v == [["ready", ids[shard_of[node]]], ["ready", ids[shard_of[node]]]]
+                      for node, v in phases.items()), phases)
+        left = {node: leftovers(node) for node in nodes}
+        check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
+
+        sql = f"ALTER TABLE {t} DROP INDEX uw, DROP INDEX by_j, ADD INDEX kb (b)"
+        before_terms = terms()
+        stop = threading.Event()
+        th = threading.Thread(target=writer, args=(stop,), daemon=True)
+        th.start()
+        time.sleep(1)
+        at = writes[0]
+        alter_error, began = None, time.monotonic()
+        try:
+            q(c, sql)
+        except pymysql.MySQLError as e:
+            alter_error = e.args
+        during = writes[0] - at
+        print(f"  ({engine}: ALTER took {time.monotonic() - began:.2f} s; writes during it: {during})", flush=True)
+        time.sleep(1)
+        stop.set()
+        th.join(30)
+        check(f"{engine}: {sql}", alter_error is None, alter_error)
+        check(f"{engine}: writes went on through every index during it, and none failed (vinyl admission may "
+              f"refuse one, which writes nothing)", during > 0 and not errors,
+              {"during": during, "errors": errors[:5], "vinyl refusals": throttled[0]})
+        if throttled[0]:
+            print(f"  ({engine}: vinyl admission refused {throttled[0]} writes, which wrote nothing)", flush=True)
+        check(f"{engine}: no replica changed its election term", terms() == before_terms,
+              {"before": before_terms, "after": terms()})
+        drained()
+        after = {g_["id"]: space_id(leader(g_), space) for g_ in groups}
+        records = {g_["id"]: engine_record(leader(g_), space, ids[g_["id"]]) for g_ in groups}
+        check(f"{engine}: that change was a copy, published on every shard",
+              all(after[s_] != ids[s_] for s_ in after)
+              and all(r == {"phase": "published", "rebuild": True} for r in records.values()), records)
+        spaces = {node: globals_of(node, space) for node in nodes}
+        names = {node: uix_name(node, space, "uu") for node in nodes}
+        stale = {node: named_after(node, ids[shard_of[node]]) for node in nodes}
+        gone = {node: ev(node, "return box.space[...] ~= nil", [uw_ids[shard_of[node]]]) for node in nodes}
+        check(f"{engine}: every replica keeps uu's space, by id, named after the copy, and has dropped uw's",
+              all(set(spaces[node]) == {names[node]} and spaces[node][names[node]]["id"] == uu_ids[shard_of[node]]
+                  for node in nodes) and not any(stale.values()) and not any(gone.values())
+              and all(spaces[node] == spaces[g_["replicas"][0]] for g_ in groups for node in g_["replicas"])
+              and sum(v["rows"] for g_ in groups for v in spaces[g_["replicas"][0]].values()) == len(model),
+              {"spaces": spaces, "named after the old space": stale, "uw's space": gone})
+        phases = {node: gen_phases(node, [gens["by_k"], gens["by_j"]]) for node in nodes}
+        states = {node: lazy_state(node, after[shard_of[node]]) for node in nodes}
+        olds = {node: lazy_state(node, ids[shard_of[node]]) for node in nodes}
+        check(f"{engine}: every replica keeps by_k's generation bound to the copy, and has retired by_j's",
+              all(v == [["ready", after[shard_of[node]]], ["retired", ids[shard_of[node]]]]
+                  and states[node]["capture"] == [gens["by_k"]] and olds[node]["capture"] == []
+                  and set(olds[node]["defs"]) == {str(gens["by_j"])}
+                  for node, v in phases.items()), {"phases": phases, "capture": states, "old space": olds})
+        live = [tuple(e) for g_ in groups for e in live_entries(g_["replicas"][0], gens["by_k"])]
+        want = {(v[0], *key) for key, v in model.items()}
+        check(f"{engine}: by_k's live entries are the table's rows, one each",
+              len(live) == len(want) and set(live) == want,
+              {"entries": len(live), "rows": len(want), "missing": sorted(want - set(live))[:5],
+               "extra": sorted(set(live) - want)[:5]})
+        rows = {(r[0], r[1]): list(r[2:]) for r in q(c, f"SELECT tenant_id, id, k, j, u, w FROM {t}")}
+        check(f"{engine}: the table holds the model's rows", rows == model,
+              {"rows": len(rows), "model": len(model), "differ": [key for key in model if rows.get(key) != model[key]][:5]})
+        sample = random.Random(f"dx-{engine}").sample(sorted(model), 50)
+        by_u = [q(c, f"SELECT tenant_id, id FROM {t} WHERE u = %s", (model[key][2],)) for key in sample]
+        by_k = [q(c, f"SELECT tenant_id, id FROM {t} WHERE k = %s AND id = %s", (model[key][0], key[1]))
+                for key in sample]
+        by_w = [q(c, f"SELECT tenant_id, id FROM {t} WHERE w = %s", (model[key][3],)) for key in sample[:10]]
+        check(f"{engine}: the kept indexes find rows by their keys, and the dropped keys still find them",
+              all(f == (key,) for f, key in zip(by_u, sample)) and all(f == (key,) for f, key in zip(by_k, sample))
+              and all(f == (key,) for f, key in zip(by_w, sample[:10])),
+              {"u": [(key, f) for key, f in zip(sample, by_u) if f != (key,)][:3],
+               "k": [(key, f) for key, f in zip(sample, by_k) if f != (key,)][:3],
+               "w": [(key, f) for key, f in zip(sample[:10], by_w) if f != (key,)][:3]})
+        a = sample[0]
+        q(c, f"INSERT INTO {t} (tenant_id, id, k, j, u, w, b) VALUES (%s, %s, 0, 0, %s, %s, 0)",
+          ((a[0] + 1) % TENANTS, 9 * FRESH_ID, new("u"), model[a][3]))
+        twice = q(c, f"SELECT COUNT(*) FROM {t} WHERE w = %s", (model[a][3],))[0][0]
+        check(f"{engine}: the dropped unique key takes a duplicate", twice == 2, twice)
+        created = q(c, f"SHOW CREATE TABLE {t}")[0][1]
+        check(f"{engine}: the table's definition has kb and neither dropped index",
+              "KEY `kb`" in created and "`uw`" not in created and "`by_j`" not in created, created)
+        left = {node: leftovers(node) for node in nodes}
+        check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
         q(c, f"DROP TABLE {t}")
 
     def drained(timeout=120):
@@ -1327,6 +1551,7 @@ def main():
         lazily_made(engine)
         catch_up_round(engine)
         checked_copy(engine)
+        dropped_indexes(engine)
 
     # An engine change copies too, into a space that has its indexes first.
     before_terms = terms()

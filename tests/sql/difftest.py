@@ -466,6 +466,15 @@ CASES = [
     ("SELECT id FROM gu WHERE n = 500", "q"),
     ("SELECT id FROM gu WHERE t = 1 AND live = 1 AND h = 'b'", "q"),
     ("SELECT * FROM gu ORDER BY id", "q"),
+    # ... dropping one along with adding an index, which copies the table on
+    # replicated shards (#184): the key takes a duplicate then
+    ("ALTER TABLE gu DROP INDEX code, ADD INDEX kh (h)", "ddl:gu"),
+    ("INSERT INTO gu VALUES (22, 9, 'z', 1, 500)", "dml:gu"),
+    ("SELECT id FROM gu WHERE n = 500 ORDER BY id", "q"),
+    ("SELECT id FROM gu WHERE h = 'b' ORDER BY id", "q"),
+    ("ALTER TABLE gu ADD UNIQUE KEY code (n)", "err"),
+    ("DELETE FROM gu WHERE id = 22", "dml:gu"),
+    ("ALTER TABLE gu DROP INDEX kh, ADD UNIQUE KEY code (n)", "ddl:gu"),
     # session isolation level, lock wait timeout, locking reads (issue #17);
     # the rest of the cases run at READ COMMITTED on both servers
     ("SET SESSION tx_isolation = 'READ-COMMITTED'", "q"),
@@ -1502,6 +1511,14 @@ CASES += [
     ("SELECT id,n FROM lazy185 WHERE k='a' ORDER BY n DESC,id DESC LIMIT 2 OFFSET 1", "q"),
     ("SELECT id FROM lazy185 WHERE k='a' AND n=10 ORDER BY id", "q"),
     ("SELECT id FROM lazy185 WHERE k IS NULL ORDER BY n,id", "q"),
+    # The lazy index renewed along with a new index, then dropped along with
+    # another: each copies the table on replicated shards (#184).
+    ("ALTER TABLE lazy185 DROP KEY lk, ADD KEY lk(k,n) COMMENT 'tarn:lazy=2', ADD KEY kn (n)", "q"),
+    ("SELECT id,n FROM lazy185 WHERE k='a' ORDER BY n,id", "q"),
+    ("SELECT id FROM lazy185 WHERE n = 10 ORDER BY id", "q"),
+    ("ALTER TABLE lazy185 DROP KEY lk, ADD KEY ni (n, id)", "q"),
+    ("SELECT id,n FROM lazy185 WHERE k='A ' ORDER BY n,id", "q"),
+    ("SELECT id FROM lazy185 WHERE n = 10 ORDER BY id", "q"),
     ("DROP TABLE lazy185", "q"),
 ]
 

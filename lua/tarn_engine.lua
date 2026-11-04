@@ -14,7 +14,11 @@
 -- publication binds them to the new space (L.rebind in lua/tarn_lazy.lua).
 -- The lazy indexes it makes (a.lazy_made) are built online against the old
 -- space before the copy, as an ALTER in place builds them, and published
--- with the kept ones.
+-- with the kept ones. Those the ALTER drops (a.uix_drop, a.lazy_drop) it
+-- retires as an engine change retires all of them (issue #184): they take
+-- the table's writes until PREPARE, which holds them with the table;
+-- publication dooms their readers and retires the generations, and
+-- cleanup drops the global index spaces; ABORT leaves them as they were.
 local fiber, clock, mp, uuid = require('fiber'), require('clock'), require('msgpack'), require('uuid')
 local M = {}
 local RC = {txn_isolation = 'read-confirmed'}
@@ -74,6 +78,18 @@ function M.new(c)
         for _, gen in ipairs(type(a.lazy_made) == 'table' and a.lazy_made or {}) do
             if type(gen) ~= 'number' or gen % 1 ~= 0 or gen < 1 then fail(1210, 'Malformed engine-change descriptor') end
         end
+        -- (The spaces it retires join the source's group in its record, ABORT's
+        -- too: every step refuses a list, or an id in one, that is not one.)
+        for _, field in ipairs({'uix_drop', 'lazy_drop'}) do
+            local list = a[field]
+            -- (type: box.NULL == nil holds, and it is no list)
+            if type(list) ~= 'nil' and type(list) ~= 'table' then fail(1210, 'Malformed engine-change descriptor') end
+            for _, sid in ipairs(type(list) == 'table' and list or {}) do
+                if type(sid) ~= 'number' or sid % 1 ~= 0 or sid < 1 then
+                    fail(1210, 'Malformed engine-change descriptor')
+                end
+            end
+        end
         return x
     end
     -- The lazy generations a copy makes (a.lazy_made), as a set. Their
@@ -86,6 +102,16 @@ function M.new(c)
         return out
     end
     local function makes(a) return next(made_set(a)) ~= nil end
+    -- The lazy generations a rebuild drops (a.lazy_drop), as a set: the
+    -- table's, which publication retires (issue #184; L.keep checks them).
+    local function dropped_set(a)
+        local out = {}
+        for _, gen in ipairs(type(a.lazy_drop) == 'table' and a.lazy_drop or {}) do out[gen] = true end
+        return out
+    end
+    -- The generations a rebuild keeps and makes (L.keep), each live one of
+    -- the table's being one of those or one it drops.
+    local function keep_lazy(a, x) return c.lazy.keep(a.def, x.old_id, made_set(a), dropped_set(a)) end
     -- The ALTER's arguments as the online build of its made generations
     -- takes them: in place, on the old space (L.made_def).
     local function made_args(a, x)
@@ -131,9 +157,11 @@ function M.new(c)
     -- starts its copy (not at ABORT, which must end a job however it was
     -- refused): only a 'layout', 'aux' or 'lazy' rebuild changes the stored
     -- layout (format and padding). A rebuild may check rows (row_checks),
-    -- renames no table, and makes and drops no global or lazy index. Only an
-    -- 'aux' or 'lazy' rebuild has global indexes, and only a 'lazy' one lazy
-    -- indexes, which they keep.
+    -- renames no table, and makes no global index. Only an 'aux' or 'lazy'
+    -- rebuild has global indexes, which it keeps or drops (kept_globals),
+    -- and only a 'lazy' one lazy indexes, which it keeps, makes or drops
+    -- (keep_lazy). (Storage from before drops refuses a rebuild that drops
+    -- one here, and the SQL server asks it first.)
     local function admissible(x, a)
         if x.rebuild ~= 'layout' and not keeps_aux(x) and (not nilish(a.format) or not nilish(a.pad)) then
             fail(1210, x.rebuild and 'A rebuild that changes the stored layout must say so'
@@ -142,29 +170,32 @@ function M.new(c)
         if x.rebuild ~= nil then
             row_checks(a)
             if not nilish(a.rename) then fail(1210, "An engine rebuild keeps the table's name") end
-            if not none(a.uix) or not none(a.uix_drop) or not none(a.lazy_drop) then
-                fail(1210, 'An engine rebuild makes and drops no global or lazy index')
-            end
-            if not keeps_aux(x) and (not none(a.def.uix) or #c.uix_spaces(x.old_id) > 0) then
+            if not none(a.uix) then fail(1210, 'An engine rebuild makes no global index') end
+            if not keeps_aux(x) and (not none(a.def.uix) or not none(a.uix_drop) or #c.uix_spaces(x.old_id) > 0) then
                 fail(1210, 'A rebuild that keeps global indexes must say so')
             end
-            if x.rebuild ~= 'lazy' and (not none(a.def.lazy) or #c.lazy.live(x.old_id) > 0) then
+            if x.rebuild ~= 'lazy' and (not none(a.def.lazy) or not none(a.lazy_drop) or #c.lazy.live(x.old_id) > 0) then
                 fail(1210, 'A rebuild that keeps lazy indexes must say so')
             end
         end
     end
     -- The global index spaces an 'aux' rebuild keeps: every one of the
-    -- source's, as the new definition names them, after the new space.
-    -- {id, old_name, new_name} each, which APPLY renames. The index id in a
-    -- name may change: an index on a column made nullable gets a new id
+    -- source's but those it drops (a.uix_drop, each one of the source's),
+    -- as the new definition names them, after the new space. {id,
+    -- old_name, new_name} each, which APPLY renames. The index id in a name
+    -- may change: an index on a column made nullable gets a new id
     -- (alter.rs), and such a change made in place left the space under the
-    -- old one.
+    -- old one. (A dropped one joins the source's group: start, old_uix.)
     local function kept_globals(x, a)
-        local have, n, out, taken = {}, 0, {}, {}
+        local have, n, out, taken, dropped = {}, 0, {}, {}, {}
         for _, sp in ipairs(c.uix_spaces(x.old_id)) do have[sp.id], n = sp.name, n + 1 end
+        for _, id in ipairs(type(a.uix_drop) == 'table' and a.uix_drop or {}) do
+            if have[id] == nil or dropped[id] then fail(1210, 'Malformed dropped global index') end
+            dropped[id], n = true, n - 1
+        end
         local old_tag, new_tag = '^' .. c.uix_prefix .. x.old_id .. '_%d+$', '^' .. c.uix_prefix .. a.def.id .. '_%d+$'
         for _, u in ipairs(type(a.def.uix) == 'table' and a.def.uix or {}) do
-            local name = type(u) == 'table' and have[u.id]
+            local name = type(u) == 'table' and not dropped[u.id] and have[u.id]
             local new = name and type(u.name) == 'string' and u.name
             local other = new and box.space[new]
             if not name or not name:match(old_tag) or not new or not new:match(new_tag) or taken[new]
@@ -173,7 +204,7 @@ function M.new(c)
             end
             out[#out + 1], have[u.id], taken[new] = {id = u.id, old_name = name, new_name = new}, nil, true
         end
-        if #out ~= n then fail(1210, 'A rebuild keeps every global index of its table') end
+        if #out ~= n then fail(1210, 'A rebuild keeps every global index of its table it does not drop') end
         return out
     end
     local function group(r, old)
@@ -767,7 +798,7 @@ function M.new(c)
             schema = x.rebuild ~= nil and rebuilt(sp, a) or snapshot(sp)
             pad = x.rebuild ~= nil and padding(a) or box.NULL
             if keeps_aux(x) then kept = kept_globals(x, a) end
-            if x.rebuild == 'lazy' then kept_lazy, made_lazy = c.lazy.keep(a.def, x.old_id, made_set(a)) end
+            if x.rebuild == 'lazy' then kept_lazy, made_lazy = keep_lazy(a, x) end
             if #made_lazy > 0 then scan_bound(a, x) end
         end
         local old_aux, new_aux, old_uix = {}, {}, {}
@@ -1512,7 +1543,7 @@ function M.new(c)
             end
             -- (The descriptor as the copy will take it, before anything
             -- starts: a generation it would refuse is never built.)
-            c.lazy.keep(a.def, x.old_id, made_set(a))
+            keep_lazy(a, x)
             local m = made_args(a, x)
             if op == 'bootstrap' then return c.lazy.bootstrap(name, m, gen) end
             return c.lazy_start(name, m, gen)

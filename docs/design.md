@@ -1808,11 +1808,12 @@ makes the leader resign under strict fencing (issue #267).
 So on a cluster with replicated shards, a change that builds secondary
 indexes copies the table instead, through the engine change's copy below,
 in the table's own engine. That takes new indexes with drops and renames of
-others, and columns the same statement adds, renames or drops, but no
-change that checks existing rows against a new type, of the primary key or
-of the table's name, or that makes or drops a global index or drops or
-changes a lazy one. It takes new lazy indexes on columns the statement
-neither adds nor retypes, unless it also materializes fields (below). The
+others, global and lazy ones among them, columns the same statement adds,
+renames or drops, and checks of existing rows against a narrower type or
+`NOT NULL`, which the copy applies to each row it writes (issue #184); but
+no change of the primary key or of the table's name, nor one that makes a
+global index. It takes new lazy indexes on columns the statement neither
+adds nor retypes, unless it also materializes fields (below). The
 new space gets every
 index, and the new format, while it is empty, and the rows reach it in
 ordinary batches, which followers apply and acknowledge at once. When an
@@ -1829,9 +1830,11 @@ and `in_place` never does. A replica that does not answer
 `tarn_engine_rebuild_capabilities`, for a change of the stored layout
 `tarn_engine_rebuild_format_capabilities`, for a table with global indexes
 `tarn_engine_rebuild_aux_capabilities`, for a table with lazy indexes
-`tarn_engine_rebuild_lazy_capabilities`, or for a change that makes them
-`tarn_engine_rebuild_lazy_made_capabilities`, makes the change build in
-place.
+`tarn_engine_rebuild_lazy_capabilities`, for a change that makes them
+`tarn_engine_rebuild_lazy_made_capabilities`, for one that checks rows
+`tarn_engine_rebuild_checks_capabilities`, or for one that drops global or
+lazy indexes `tarn_engine_rebuild_drops_capabilities`, makes the change
+build in place.
 
 Built in place on a replicated shard, writes to the table wait for the
 build however long it takes (it is not bounded by
@@ -1852,9 +1855,10 @@ it, because the row is asynchronous. That is Tarantool's default for DDL,
 and Tarn keeps it: a synchronous build would have to reach a quorum within
 `replication_synchro_timeout`, and followers acknowledge it only once they
 have built it. Issue #267 makes this likelier, since a node elected while
-it applies a build writes the row after its PROMOTE. Checking existing
-rows (a narrower type, `NOT NULL`) still happens behind the fence, and is
-refused above `tarn.cfg.alter_check_rows` rows per shard.
+it applies a build writes the row after its PROMOTE. A change that checks
+existing rows (a narrower type, `NOT NULL`) and builds no index still
+checks them behind the fence, and is refused above
+`tarn.cfg.alter_check_rows` rows per shard.
 
 **Online engine changes.** A separate `ALTER TABLE ... ENGINE=memtx` or
 `ENGINE=vinyl` creates an owned shadow with a fresh space ID. The source
@@ -2071,12 +2075,12 @@ between, `UIX.spaces` finds them through the catalog entry of the table
 whose name the space has (`EngineCutover`: `KeptFound`). Such a rebuild
 says so (`rebuild = 'aux'`): storage from before it refuses the job at
 every step, rather than leave the spaces under names nothing finds them by.
-It must keep every global index of the table, each under the name the new
-definition gives it after the new space, which no other space has (the
-index id in a name may change: an index on a column made nullable gets a
-new id), and make or drop none. A descriptor that asks otherwise, and a
-rebuild of a table with global indexes that does not say so, are refused
-before the copy begins.
+It must keep every global index of the table but those the change drops
+(below), each under the name the new definition gives it after the new
+space, which no other space has (the index id in a name may change: an
+index on a column made nullable gets a new id), and make none. A
+descriptor that asks otherwise, and a rebuild of a table with global
+indexes that does not say so, are refused before the copy begins.
 
 A rebuild keeps the table's lazy indexes too, where an engine change makes
 new generations and bootstraps them behind its fence. A lazy index's
@@ -2102,11 +2106,11 @@ its writes, as it does an engine change's through its new generations'
 descriptors (`KeptLazyCaptured`); APPLY reads it again once the
 transaction returns. ABORT retires none of the kept generations
 (`KeptLazyAlive`). Such a rebuild says so (`rebuild = 'lazy'`, which keeps
-any global indexes too): it must keep every generation bound to the table,
-each ready, built and published, with no build of it in progress, as the
-new definition names it but for the space, and make, drop or change none.
-A rebuild of a table with lazy indexes that does not say so is refused
-before the copy begins.
+any global indexes too): it must keep every generation bound to the table
+but those the change drops (below), each ready, built and published, with
+no build of it in progress, as the new definition names it but for the
+space, and change none. A rebuild of a table with lazy indexes that does
+not say so is refused before the copy begins.
 
 Such a rebuild also makes the lazy indexes the change adds, as an ALTER in
 place makes them. Before the copy begins, the SQL server builds each new
@@ -2137,6 +2141,29 @@ generations it makes and materializes is refused at every step. Storage
 from before refuses a copy that makes generations before it begins, and
 the SQL server sends one only when every replica answers
 `tarn_engine_rebuild_lazy_made_capabilities`.
+
+A rebuild drops the global and lazy indexes the change drops (issue #184)
+as an engine change retires all of its table's. Its descriptor names them
+(`uix_drop`, `lazy_drop`), and its record puts their spaces in the
+source's group. Until PREPARE they take the table's writes as before.
+PREPARE holds their spaces with the table's and fences them, so that the
+old definition's writes no longer reach them. Publication dooms their
+readers with the table's, APPLY's catalog transaction retires the dropped
+generations, and cleanup drops the dropped global index spaces before the
+original space; a write that still names one is told to retry (1412), as
+for the original. ABORT leaves them as they were (`EngineCutover`:
+`RetiredOnlyUnnamed`, which an ABORT that retires them and a retirement
+before the catalog commit each break). The copy refuses, before it begins, a descriptor
+that would drop a space that is not one of the table's global indexes, or
+a generation that is not live and bound to the table or that it keeps or
+makes, and one that drops either kind without saying that the table has
+it (`rebuild = 'aux'` or `'lazy'`). Every step, ABORT included, refuses one
+whose lists are not lists of IDs, which its record would take. A lazy
+index on a column made nullable gets a new index id, and so a new
+generation: the copy drops the old one and makes the new one. Storage from
+before refuses a copy that drops indexes before it begins, and the SQL
+server sends one only when every replica answers
+`tarn_engine_rebuild_drops_capabilities`.
 
 The global job's confirmed APPLY decision precedes native renames and
 catalog publication. Recovery uses the explicit old/new IDs even if a
@@ -2585,6 +2612,7 @@ throughput measurements:
 | `lua/test/engine_lazy_made_test.lua` | rebuilds that make a lazy index (issue #184), on both engines: the online start before the copy, writes during a held scan batch and during the copy, the pending new space (also for a table's first lazy index), READY, APPLY interrupted before the catalog commit, publication, later writes, a schema export, ABORT before and after the copy, a late start, the scan behind the fence and its bound, APPLY without READY or the coordinator's batches, takeovers after the online scan and after the copy, refused descriptors | 74 checks with the native module and with native disabled; the generation built for the old space and bound with the kept ones at publication; ABORT retires it, and none of the kept ones |
 | `lua/test/engine_catchup_test.lua` | a copy's catch-up passes (issue #184), on both engines: passes during a copy written to more keys than its capture holds, a threshold of 0, the final pass's bound, unique values that change hands across a pass, a row written since a pass's swap that held a reread row's value, a write in flight at a pass's swap and one left in the synchronous queue, a pass that fails after its swap, after its deletes and through another job's cut, with and without room for its keys, passes in PREPARE over more keys than a batch, a capture lost during and after a pass, writes that outpace the passes during the copy and before the fence (1205); BUILD and PREPARE in slices, the budget of passes across sliced calls, a takeover and an ABORT between slices, a call that waited for the serial lock longer than its slice; PREPARE's own budget of passes after BUILD's, and the copy's restarts counted until it reaches the end of the table | 54 checks with the native module and with native disabled; the copy never restarts for its capture's size, and is exact |
 | `lua/test/engine_resume_test.lua` | a copy's durable capture (issue #184), on both engines: a capture lost during the copy, during a pass after its swap, and behind the fence resumes, with the rows written before and after the loss and after the resume; a pass's settled generation bounds the capture rebuilt; a pass and the final pass clear only the keys the durable capture notes, so a key whose write rolled back keeps its copy; a copy the holder rule takes out is a hole, which a resume puts back (and PREPARE meets the source's duplicate, 1062); a write rolled back leaves no entry; a resume waits for a write in flight and orders after one left in the synchronous queue; a copy not marked durable starts over; one past its limits starts over with a durable capture of its own; publication and ABORT drop the durable capture; a resume that fails part way (a deadline, another job's cut) leaves the capture lost, and one whose capture is lost meanwhile fails the step for now (1213), and the step sent again resumes; a durable capture bound again takes the generation after the settled one; a pass prunes the entries it settled once there are many; a write that began during ABORT's cut is not aborted by the drop of the durable capture; a reset after a resume has a deadline of its own, and one that fails leaves the copy to start over | 56 checks with the native module and with native disabled; every copy is exact |
+| `lua/test/engine_drop_test.lua` | rebuilds that drop a global or a lazy index (issue #184), on both engines: writes and a duplicate through the dropped global index during the copy, PREPARE holding and fencing its space and not the kept one's, an APPLY interrupted before the catalog commit, publication keeping and renaming the other index, cleanup dropping the dropped one's space, a write naming it then (1412), the schema export, DROP TABLE; a dropped generation that takes the old space's writes until publication, which rebinds the kept one and retires it, and later writes; a lazy index renewed, dropped and made in one copy; ABORT; refused descriptors, malformed ones at every step | 74 checks with the native module and with native disabled; ABORT retires nothing |
 | `lua/test/engine_checks_test.lua` | rebuilds that check rows against a narrower type or NOT NULL (issue #184), on both engines: a page's row that fails a range, NOT NULL, length or digits check, a pass's reread of a row made invalid during the copy, and the final pass's, each fail the change with the in-place error and the row's position; a row made invalid and valid again fails nothing; a check of an unknown kind is refused; ABORT leaves the table as it was | 32 checks with the native module and with native disabled |
 | `lua/test/engine_terminal_test.lua` | a detached shadow commit remains tracked after its caller ends; cleanup waits for the terminal/native queue cut; capture allocation failure cannot certify a lost tail | focused native-terminal fault gate, separate from process loss |
 | `lua/test/engine_replication.sh` | quorum-2/fsync replica sets: leader loss during copy resumes the copy from the durable capture, whose entry for a row written behind the cursor reached every replica with it (issue #184); a later leader loss preserves PREPARED and completes publication/cleanup | passes in both engine directions, with native enabled and disabled; eight owned leader terminations across four cohorts |
@@ -2718,12 +2746,13 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineCopyTailUnchecked | violates CheckedImage | 137124 | 413836 | 14 | 05s | 14 |
 | Bug_EngineCopyUnbindEarly | violates PreparedImage | 459597 | 1564903 | 17 | 12s | 17 |
 | Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 554 | 898 | 6 | 00s | 6 |
-| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 43487 | 242696 | 12 | 04s | 12 |
+| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 43487 | 242696 | 12 | 03s | 12 |
 | Bug_EngineCutoverAbortKeepsMade | violates AbortedMadeRetired | 1200 | 3313 | 4 | 01s | 4 |
+| Bug_EngineCutoverAbortRetiresDropped | violates RetiredOnlyUnnamed | 1008 | 2579 | 4 | 01s | 4 |
 | Bug_EngineCutoverAbortRetiresKept | violates KeptLazyAlive | 288 | 468 | 3 | 01s | 3 |
 | Bug_EngineCutoverAbortSkipsMissing | violates AbortedMadeRetired | 5450 | 20321 | 6 | 01s | 6 |
-| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 49386 | 279743 | 13 | 04s | 13 |
-| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 41228 | 235663 | 12 | 03s | 12 |
+| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 49386 | 279743 | 13 | 03s | 13 |
+| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 41228 | 235663 | 12 | 04s | 12 |
 | Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 15782 | 70057 | 8 | 01s | 8 |
 | Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 38 | 38 | 2 | 00s | 2 |
 | Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 39 | 39 | 2 | 00s | 2 |
@@ -2732,14 +2761,15 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineCutoverNoPendingNew | violates KeptLazyCaptured | 18236 | 102791 | 13 | 02s | 13 |
 | Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 41228 | 235663 | 12 | 03s | 12 |
 | Bug_EngineCutoverPendingOnlyKept | violates KeptLazyCaptured | 31211 | 181755 | 13 | 03s | 13 |
-| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 26144 | 122608 | 9 | 03s | 9 |
+| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 26144 | 122608 | 9 | 02s | 9 |
 | Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 40207 | 212970 | 11 | 03s | 11 |
 | Bug_EngineCutoverPublishBeforeKeptRename | violates KeptNamedAfterCatalog | 30339 | 155590 | 10 | 02s | 10 |
-| Bug_EngineCutoverPublishUnready | violates MadePublished | 36605 | 199495 | 11 | 02s | 11 |
+| Bug_EngineCutoverPublishUnready | violates MadePublished | 36605 | 199495 | 11 | 03s | 11 |
 | Bug_EngineCutoverReadyUnscanned | violates MadePublished | 41875 | 225687 | 11 | 03s | 11 |
-| Bug_EngineCutoverRebindAfterPublish | violates KeptLazyBound | 36605 | 199495 | 11 | 02s | 11 |
-| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 46886 | 279936 | 14 | 03s | 14 |
+| Bug_EngineCutoverRebindAfterPublish | violates KeptLazyBound | 36605 | 199495 | 11 | 03s | 11 |
+| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 46886 | 279936 | 14 | 04s | 14 |
 | Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 41231 | 235670 | 12 | 03s | 12 |
+| Bug_EngineCutoverRetireBeforePublish | violates RetiredOnlyUnnamed | 268 | 414 | 3 | 00s | 3 |
 | Bug_EngineCutoverRetireKept | violates KeptAlive | 41225 | 235660 | 12 | 03s | 12 |
 | Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FairnessPrefix | violates BoundedWait | 1281 | 1281 | 6 | 00s | 6 |
@@ -3062,10 +3092,10 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   replicated shards, a change that builds secondary indexes, with columns
   added, renamed or dropped, copies the table instead (§2.11), and needs
   room for a second copy of it; so does one that also narrows a column's
-  type or makes it NOT NULL, whose copy checks each row it writes. Other
-  changes that build indexes on a replicated shard (with a new or dropped
-  global or lazy index, or a changed lazy one) still build in place, where
-  the followers'
+  type or makes it NOT NULL, whose copy checks each row it writes, and one
+  that drops a global or lazy index or renews a lazy one. Other changes
+  that build indexes on a replicated shard (with a new global unique index,
+  or a renamed table) still build in place, where the followers'
   builds also hold the shard's other writes, and a build that takes them
   more than about a second makes the leader resign (#267).
   Checking or materializing existing rows

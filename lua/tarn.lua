@@ -8127,6 +8127,7 @@ BK.production_functions = {
         'tarn_engine_rebuild_aux_capabilities',
         'tarn_engine_rebuild_capabilities',
         'tarn_engine_rebuild_checks_capabilities',
+        'tarn_engine_rebuild_drops_capabilities',
         'tarn_engine_rebuild_format_capabilities',
         'tarn_engine_rebuild_lazy_capabilities',
         'tarn_engine_rebuild_lazy_made_capabilities',
@@ -8279,6 +8280,11 @@ function tarn_engine_rebuild_lazy_made_capabilities() return {'ok', 1} end
 -- type, NOT NULL), as it writes them to the replacement. A node that
 -- answers only the calls above refuses such a job before its copy begins.
 function tarn_engine_rebuild_checks_capabilities() return {'ok', 1} end
+-- A rebuild that drops global or lazy indexes of its table (a.uix_drop,
+-- a.lazy_drop, issue #184), which publication retires and cleanup drops,
+-- as an engine change does its table's. A node that answers only the calls
+-- above refuses such a job before its copy begins; its ABORT retires none.
+function tarn_engine_rebuild_drops_capabilities() return {'ok', 1} end
 -- A copy that keeps its capture durably too (engine_change.durable, issue
 -- #184): every leader must note its writes there. The SQL server asks for
 -- it only when every replica answers.

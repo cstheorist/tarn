@@ -620,14 +620,16 @@ function M.new(c)
     -- The generations a copy of space old_id into def.id keeps, and those it
     -- makes (made: the set of their gens). It keeps every generation bound
     -- to old_id, published, ready and built, each as def.lazy names it, the
-    -- same but for the space. One it makes is not published, and either
-    -- absent still or built for old_id (L.made_def). The two lists, or 1210.
+    -- same but for the space, but those it drops (dropped: the set of their
+    -- gens, issue #184), which def.lazy does not name: publication retires
+    -- them. One it makes is not published, and either absent still or built
+    -- for old_id (L.made_def). The two lists, or 1210.
     local function identity_on(s, base)
         return mp.encode({s.gen, base, s.local_index_id, s.route_parts, s.key_fields,
                           s.key_types, s.pk_fields, s.pk_native_fields, s.pk_types, s.bucket_field})
     end
-    function L.keep(def, old_id, made)
-        made = made or {}
+    function L.keep(def, old_id, made, dropped)
+        made, dropped = made or {}, dropped or {}
         local live, published, online = {}, {}, box.space._tarn_lazy_online
         local cap = box.space._tarn_lazy_capture:get{old_id}
         for _, s in ipairs(cap and cap.specs or {}) do published[s.gen] = true end
@@ -656,7 +658,13 @@ function M.new(c)
         for gen in pairs(made) do
             if not named[gen] then bad(1210, 'Malformed made lazy index') end
         end
-        if next(live) ~= nil then bad(1210, 'A rebuild keeps every lazy index of its table') end
+        -- (One it keeps or makes is no longer in live: a dropped one is live,
+        -- and neither.)
+        for gen in pairs(dropped) do
+            if not live[gen] then bad(1210, 'Malformed dropped lazy index') end
+            live[gen] = nil
+        end
+        if next(live) ~= nil then bad(1210, 'A rebuild keeps every lazy index of its table it does not drop') end
         return kept, making
     end
     -- def as the online build of a copy's made generations takes it: bound
