@@ -80,7 +80,7 @@ function M.new(c)
         end
         -- (The spaces it retires join the source's group in its record, ABORT's
         -- too: every step refuses a list, or an id in one, that is not one.)
-        for _, field in ipairs({'uix_drop', 'lazy_drop'}) do
+        for _, field in ipairs({'uix_drop', 'lazy_drop', 'uix_check'}) do
             local list = a[field]
             -- (type: box.NULL == nil holds, and it is no list)
             if type(list) ~= 'nil' and type(list) ~= 'table' then fail(1210, 'Malformed engine-change descriptor') end
@@ -177,6 +177,14 @@ function M.new(c)
             if x.rebuild ~= 'lazy' and (not none(a.def.lazy) or not none(a.lazy_drop) or #c.lazy.live(x.old_id) > 0) then
                 fail(1210, 'A rebuild that keeps lazy indexes must say so')
             end
+        end
+        -- The conflicts spaces of building global indexes that PREPARE checks
+        -- (issue #292): only a rebuild that keeps the indexes has them, each
+        -- one it drops.
+        local drops = {}
+        for _, id in ipairs(type(a.uix_drop) == 'table' and a.uix_drop or {}) do drops[id] = true end
+        for _, id in ipairs(type(a.uix_check) == 'table' and a.uix_check or {}) do
+            if not drops[id] or not keeps_aux(x) then fail(1210, 'A rebuild checks only conflicts it drops') end
         end
     end
     -- The global index spaces an 'aux' rebuild keeps: every one of the
@@ -400,8 +408,17 @@ function M.new(c)
             end
         end
     end
-    local function duplicate(ix)
-        fail(1062, "Duplicate entry for key '" .. ix.name .. "'")
+    -- MySQL's error for row `tuple` that unique index `ix` of the
+    -- replacement cannot take: with the key, unless a part is a weight
+    -- field (varbinary), which is not the column's value.
+    local function duplicate(ix, tuple)
+        local parts = {}
+        for i, p in ipairs(ix.parts) do
+            local v = tuple[p.fieldno]
+            if nilish(v) or p.type == 'varbinary' then fail(1062, "Duplicate entry for key '" .. ix.name .. "'") end
+            parts[i] = type(v) == 'cdata' and (tostring(v):gsub('U?LL$', '')) or tostring(v)
+        end
+        fail(1062, string.format("Duplicate entry '%s' for key '%s'", table.concat(parts, '-'), ix.name))
     end
     local function capture_valid(t)
         return t ~= nil and t.valid and t.epoch == E.capture_epoch
@@ -745,16 +762,47 @@ function M.new(c)
             fail(1412, 'Engine change has no matching confirmed ' .. phase .. ' decision')
         end
     end
+    -- The engine change that job record `j` runs, and its version: an
+    -- ALTER's, or the step of an online build of global unique indexes
+    -- that copies the table to make them enforcing (issue #292, the second
+    -- of its three steps). nil for any other job.
+    local function job_step(j)
+        if type(j) ~= 'table' or type(j.a) ~= 'table' then return nil end
+        local a, ver = j.a, j.ver
+        if j.kind == 'unique_build' then
+            a = type(j.a.uix_build) == 'table' and j.a.uix_build[2] or nil
+            ver = type(a) == 'table' and a.ver or nil
+        elseif j.kind ~= 'alter' then
+            return nil
+        end
+        if type(a) ~= 'table' or type(a.engine_change) ~= 'table' or type(a.def) ~= 'table' then return nil end
+        return a, ver
+    end
+    -- The decision for its engine change that job record `j` makes in
+    -- phase `phase`: 'apply' or 'abort', or nil while it makes none. An
+    -- ALTER's phase is its decision; an online build decides to apply its
+    -- copy in 'enforcing:apply', and to abort it in 'enforcing:abort',
+    -- which holds through the steps that then drop the index
+    -- ('dropping:...'). Once made, a job's decision does not change
+    -- (tarn_job_phase refuses a phase that would change it).
+    function E.job_decision(j, phase)
+        if job_step(j) == nil or type(phase) ~= 'string' then return nil end
+        if j.kind == 'alter' then return (phase == 'apply' or phase == 'abort') and phase or nil end
+        if phase == 'enforcing:apply' then return 'apply' end
+        if phase == 'enforcing:abort' or phase:sub(1, 9) == 'dropping:' then return 'abort' end
+        return nil
+    end
     function E.decision(name, old_id, new_id, ver, gen)
         c.writable()
         return read(function()
             local t = box.space._tarn_meta:get{'job:' .. name}
             local j = t and t.value
-            local x = j and j.a and j.a.engine_change
-            if j == nil or j.kind ~= 'alter' or j.space ~= name or j.ver ~= ver
-               or (j.gen or 1) ~= gen or type(x) ~= 'table' or x.old_id ~= old_id
-               or j.a.def.id ~= new_id then return {'error', 1412, 'Engine decision binding changed'} end
-            return {'ok', j.phase}
+            local a, jver = job_step(j)
+            if a == nil or j.space ~= name or jver ~= ver or (j.gen or 1) ~= gen
+               or a.engine_change.old_id ~= old_id or a.def.id ~= new_id then
+                return {'error', 1412, 'Engine decision binding changed'}
+            end
+            return {'ok', E.job_decision(j, j.phase) or j.phase}
         end)
     end
     local function check_source(a)
@@ -995,7 +1043,7 @@ function M.new(c)
                         local row = shape(confirmed)
                         local other, ix = holder(target, unique, row)
                         while other ~= nil do
-                            if not captured(t, x.old_id, other) then duplicate(ix) end
+                            if not captured(t, x.old_id, other) then duplicate(ix, row) end
                             local key = pk:extract_key(other)
                             target:delete(key); hole(x, t, key:totable())
                             other, ix = holder(target, unique, row)
@@ -1216,7 +1264,7 @@ function M.new(c)
                             -- notes the copy taken out as a hole.)
                             local other, ix = holder(shadow, unique, tuple)
                             while other ~= nil do
-                                if not captured(t, x.old_id, other) then duplicate(ix) end
+                                if not captured(t, x.old_id, other) then duplicate(ix, tuple) end
                                 local key = pk:extract_key(other)
                                 shadow:delete(key); hole(x, t, key:totable())
                                 other, ix = holder(shadow, unique, tuple)
@@ -1365,7 +1413,7 @@ function M.new(c)
                     check_row(confirmed, position_in(r.old_id, confirmed))
                     local row = shape(confirmed)
                     local other, ix = holder(target, unique, row)
-                    if other ~= nil then duplicate(ix) end
+                    if other ~= nil then duplicate(ix, row) end
                     target:replace(row)
                 end
             end, held)
@@ -1382,6 +1430,11 @@ function M.new(c)
         new_lazy(a, gen)
         if makes(a) then scan_bound(a, bound(a)) end
         cut(deadline)
+        -- The copy that makes building global indexes enforcing (issue #292):
+        -- behind the drained fence, the source's conflicts of them on this
+        -- shard must be gone, or two rows share a key and the change fails.
+        local dup = c.uix_conflicts(a.uix_check)
+        if dup ~= nil then fail(1062, dup) end
         update(a, gen, {preparing = true}, function(v)
             if not capture_valid(t) then fail(1213, 'Engine capture was lost') end
             v.phase = 'prepared'

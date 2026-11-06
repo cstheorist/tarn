@@ -1961,6 +1961,27 @@ pub fn builds_globals_online(def: &TableDef, ch: &Change) -> bool {
         && ch.builds.iter().all(|b| new.iter().any(|i| i.id == b.id))
 }
 
+/// Whether the step of an online build of global indexes of `def` that
+/// makes them enforcing can copy the table (`online_steps`, issue #292):
+/// as `rebuild_eligible` takes a rebuild of a table whose other changes
+/// are settled, every lazy index of it ready. The copy keeps the table's
+/// global and lazy indexes, and only adds the new keys' local indexes
+/// (`builds_globals_online`).
+pub fn online_copy_eligible(def: &TableDef) -> bool {
+    !def.indexes
+        .iter()
+        .any(|i| i.lazy.as_ref().is_some_and(|l| l.space_id != 0 && !l.ready) || i.building.is_some())
+}
+
+/// The table's copy that makes an online build's global indexes enforcing
+/// (`online_steps`, `online_copy_eligible`): the space it copies the table
+/// into, and whether it keeps its capture durably (`EngineChange`).
+#[derive(Clone, Copy, Debug)]
+pub struct OnlineCopy {
+    pub space_id: u32,
+    pub durable: bool,
+}
+
 /// The steps of an online build of the global indexes change `ch` of `def`
 /// adds (`builds_globals_online`; tla/GlobalUniqueBuild.tla), at versions
 /// `vers`, with the space ids of each new index's entries and conflicts
@@ -1968,9 +1989,19 @@ pub fn builds_globals_online(def: &TableDef, ch: &Change) -> bool {
 /// 1. the building version: the indexes building, their spaces made, no
 ///    local index yet;
 /// 2. the enforcing version: the local unique indexes built, the conflicts
-///    checked empty behind the fence and dropped;
+///    checked empty behind the fence and dropped. With `copy`, by a rebuild
+///    that copies the table into a new space whose indexes exist before its
+///    rows (issue #292, as `rebuild_eligible` takes one), rather than in
+///    place: it keeps the table's global indexes, the new ones' entries
+///    among them, renamed after the new space, and drops their conflicts;
 /// 3. if the second fails: the original definition, the spaces dropped.
-pub fn online_steps(def: &TableDef, ch: &Change, vers: [u64; 3], ids: &[(u32, u32)]) -> SqlResult<[Change; 3]> {
+pub fn online_steps(
+    def: &TableDef,
+    ch: &Change,
+    vers: [u64; 3],
+    ids: &[(u32, u32)],
+    copy: Option<OnlineCopy>,
+) -> SqlResult<[Change; 3]> {
     let n = def.indexes.len();
     let mut building = ch.clone();
     building.def.ver = vers[0];
@@ -1993,6 +2024,19 @@ pub fn online_steps(def: &TableDef, ch: &Change, vers: [u64; 3], ids: &[(u32, u3
         building.uix_new.extend([entries, conflicts]);
         enforcing.uix_check.push(conflicts);
         enforcing.uix_drop.push(conflicts);
+    }
+    if let Some(copy) = copy {
+        // (The version the first step publishes is the one it copies.)
+        enforcing.def.space_id = copy.space_id;
+        enforcing.def.counter_id = Some(def.counter_space_id());
+        enforcing.engine_change = Some(EngineChange {
+            old_id: def.space_id,
+            old_ver: vers[0],
+            old_engine: def.engine,
+            old_name: def.space_name(),
+            rebuild: true,
+            durable: copy.durable,
+        });
     }
     building.def.resolve_globals()?;
     enforcing.def.resolve_globals()?;
@@ -2705,7 +2749,7 @@ mod tests {
              PARTITION BY KEY(tenant_id)",
         );
         let ch = alter(&def, &cat, "ALTER TABLE t ADD UNIQUE INDEX ua (a) INVISIBLE").unwrap();
-        let [building, enforcing, dropped] = online_steps(&def, &ch, [11, 12, 13], &[(701, 702)]).unwrap();
+        let [building, enforcing, dropped] = online_steps(&def, &ch, [11, 12, 13], &[(701, 702)], None).unwrap();
         let n = def.indexes.len();
         // 1. Building: neither unique nor visible to anything that would read
         // or enforce it, with no local index, its spaces made.
@@ -2757,6 +2801,91 @@ mod tests {
         // The building definition goes through the catalog's JSON intact.
         let back = catalog::parse_def_json(&building.def.lua_def().json).unwrap();
         assert_eq!(back.indexes[n].building, building.def.indexes[n].building);
+    }
+
+    #[test]
+    fn online_steps_copy_the_table_to_enforce() {
+        // (A table with a global index already: the copy keeps it.)
+        let (mut def, _) = table(
+            "CREATE TABLE t (tenant_id INT, id INT, a INT, b INT, PRIMARY KEY (tenant_id, id), UNIQUE KEY ub (b)) \
+             PARTITION BY KEY(tenant_id)",
+        );
+        let pos = def.indexes.iter().position(|i| i.name == "ub").unwrap();
+        def.indexes[pos].global = Some(600);
+        def.resolve_globals().unwrap();
+        let cat = Catalog::new(1, vec!["db".into(), "other".into()], vec![def.clone()]);
+        assert!(online_copy_eligible(&def));
+        let ch = alter(&def, &cat, "ALTER TABLE t ADD UNIQUE INDEX ua (a)").unwrap();
+        let copy = OnlineCopy {
+            space_id: 900,
+            durable: true,
+        };
+        let [building, enforcing, dropped] = online_steps(&def, &ch, [11, 12, 13], &[(701, 702)], Some(copy)).unwrap();
+        // Only the enforcing step copies: from the version the first one
+        // publishes, into the new space, keeping the table's counter.
+        assert!(building.engine_change.is_none() && dropped.engine_change.is_none());
+        assert_eq!(
+            (building.def.space_id, dropped.def.space_id),
+            (def.space_id, def.space_id)
+        );
+        let e = enforcing.engine_change.as_ref().expect("a copy");
+        assert_eq!(
+            (e.old_id, e.old_ver, e.old_name.clone(), e.rebuild, e.durable),
+            (def.space_id, 11, def.space_name(), true, true)
+        );
+        assert_eq!(
+            (enforcing.def.space_id, enforcing.def.counter_id),
+            (900, Some(def.counter_space_id()))
+        );
+        // Its global indexes, the table's and the new one's entries, named
+        // after the new space; the new one's conflicts checked and dropped.
+        let n = def.indexes.len();
+        let names: Vec<(String, u32)> = enforcing
+            .def
+            .globals
+            .iter()
+            .map(|g| (g.table.name.clone(), g.table.space_id))
+            .collect();
+        let ub = def.globals[0].table.space_id;
+        let ua = enforcing.def.indexes[n].id;
+        let ub_id = def.indexes[def.globals[0].pos].id;
+        assert_eq!(
+            names,
+            [
+                (format!("_tarn_uix_900_{ub_id}"), ub),
+                (format!("_tarn_uix_900_{ua}"), 701)
+            ]
+        );
+        assert!(enforcing.def.globals.iter().all(|g| g.conflicts.is_none()));
+        assert_eq!(
+            (enforcing.uix_check.clone(), enforcing.uix_drop.clone()),
+            (vec![702], vec![702])
+        );
+        assert!(rebuild_keeps_globals(&enforcing) && rebuild_drops_indexes(&enforcing));
+        let args = lua_args(&enforcing, 12, 5.0);
+        assert!(job_copies(&args).unwrap() && !job_copies(&lua_args(&building, 11, 5.0)).unwrap());
+        let engine = arg(&args, "engine_change").unwrap();
+        let mut rd = Rd::new(&engine);
+        let mut fields = std::collections::HashMap::new();
+        for _ in 0..rd.map().unwrap() {
+            let k = rd.string().unwrap().to_string();
+            fields.insert(k, rd.raw_value().unwrap().to_vec());
+        }
+        assert_eq!(Rd::new(&fields["rebuild"]).string().unwrap(), "aux");
+        assert_eq!(Rd::new(&fields["old_ver"]).value().unwrap().as_i64(), Some(11));
+        assert_eq!(fields["durable"], vec![0xc3]);
+        assert_eq!(Rd::new(&arg(&args, "uix").unwrap()).array().unwrap(), 0);
+        assert_eq!(enforcing.builds.len(), 1);
+        // A table with a lazy index not ready yet (an unfinished change of
+        // its) builds the local indexes in place.
+        let mut unsettled = def.clone();
+        unsettled.indexes[1].lazy = Some(catalog::LazyDef {
+            space_id: 77,
+            ready: false,
+            route_parts: 1,
+        });
+        assert!(!online_copy_eligible(&unsettled));
+        assert!(!online_copy_eligible(&building.def));
     }
 
     #[test]

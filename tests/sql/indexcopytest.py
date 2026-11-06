@@ -90,6 +90,19 @@ unique key takes a duplicate. Before it, one whose new unique index meets a
 duplicate fails from the copy, and leaves the table and its indexes as
 they were.
 
+An ALTER that adds a unique key without the shard key to a populated table
+builds its global index online (#292): the step that makes the index
+enforcing copies the table too, rather than build the key's local index in
+place, so a shard holding more rows than alter_check_rows takes it, while a
+session hands values between rows, perhaps on the other shard, inserts,
+deletes and moves rows to new primary keys. It succeeds, no replica's term
+changes, the writes go on, none failing, and the table's space is replaced
+on every shard; every replica holds the index's entries, one per row, in its
+space named after the copy, and no conflicts space or copy; the key finds
+rows by value and refuses a duplicate on the other shard. One that meets a
+value two rows of different shards share fails with 1062, naming the value,
+and leaves the table as it was, with no copy or index space left.
+
 A shard whose BUILD ended first keeps noting the writes to its rows while
 the other shard builds, here held after a page by a test hook, and these
 writes outgrow its capture. The coordinator sends BUILD everywhere again
@@ -483,6 +496,157 @@ def main():
 
     def space_id(node, space):
         return ev(node, "local sp = box.space[...]; return sp and sp.id or box.NULL", [space])
+
+    def online_unique(engine):
+        """An ALTER that adds a unique key without the shard key builds its
+        global index online (#292), and copies the table for the step that
+        makes it enforcing, past alter_check_rows rows per shard, while a
+        session writes; one that meets a value two rows share fails with
+        1062 and leaves the table as it was."""
+        o, ospace = f"o_{engine}", f"{DB}.o_{engine}"
+        n = 20000
+        q(c, f"CREATE TABLE {o} (tenant_id INT, id INT, u INT, k INT, PRIMARY KEY (tenant_id, id)) "
+             f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
+        for first in range(0, n, 1000):
+            q(c, f"INSERT INTO {o} VALUES " + ",".join(f"({i % TENANTS},{i},{i},0)"
+                                                     for i in range(first, first + 1000)))
+        model = {(i % TENANTS, i): i for i in range(n)}
+        fresh = {"id": 5 * FRESH_ID, "u": 5 * FRESH_C}
+        errors, writes = [], [0]
+
+        def new(what):
+            fresh[what] += 1
+            return fresh[what]
+
+        def writer(stop):
+            conn = connect(args.tarn, read_timeout=120)
+            rnd = random.Random(f"online-{engine}")
+            while not stop.is_set():
+                keys = sorted(model)
+                op = rnd.random()
+                try:
+                    if op < 0.4:
+                        # a hands its value to b, perhaps on the other shard
+                        a, b = rnd.sample(keys, 2)
+                        x = model[a]
+                        q(conn, f"UPDATE {o} SET u = %s WHERE tenant_id = %s AND id = %s", (new("u"), *a))
+                        model[a] = fresh["u"]
+                        q(conn, f"UPDATE {o} SET u = %s WHERE tenant_id = %s AND id = %s", (x, *b))
+                        model[b] = x
+                    elif op < 0.6:
+                        tn, i = rnd.randrange(TENANTS), new("id")
+                        q(conn, f"INSERT INTO {o} VALUES (%s, %s, %s, 0)", (tn, i, new("u")))
+                        model[(tn, i)] = fresh["u"]
+                    elif op < 0.8:
+                        a = rnd.choice(keys)
+                        q(conn, f"DELETE FROM {o} WHERE tenant_id = %s AND id = %s", a)
+                        del model[a]
+                    else:
+                        # the row moves to a new primary key, with its value
+                        a, j = rnd.choice(keys), new("id")
+                        q(conn, f"UPDATE {o} SET id = %s WHERE tenant_id = %s AND id = %s", (j, *a))
+                        model[(a[0], j)] = model.pop(a)
+                    writes[0] += 1
+                except pymysql.MySQLError as e:
+                    if not vinyl_refusal(e):
+                        errors.append(f"online unique: {e.args}")
+                    time.sleep(0.05)
+                time.sleep(0.003)
+
+        limits = {node: ev(node, "local o = tarn.cfg.alter_check_rows; tarn.cfg.alter_check_rows = ...; return o",
+                           [1000]) for node in nodes}
+        try:
+            caught_up()
+            before = {g["id"]: shape(leader(g), ospace)["id"] for g in groups}
+            before_terms = terms()
+            stop = threading.Event()
+            th = threading.Thread(target=writer, args=(stop,), daemon=True)
+            th.start()
+            time.sleep(1)
+            at, began = writes[0], time.monotonic()
+            try:
+                q(c, f"ALTER TABLE {o} ADD UNIQUE KEY ou (u)")
+                alter_error = None
+            except pymysql.MySQLError as e:
+                alter_error = e.args
+            during = writes[0] - at
+            print(f"  ({engine}: ALTER took {time.monotonic() - began:.2f} s; writes during it: {during})",
+                  flush=True)
+            time.sleep(1)
+            stop.set()
+            th.join(30)
+            check(f"{engine}: ADD UNIQUE KEY without the shard key, with alter_check_rows 1000 below the rows "
+                  f"per shard", alter_error is None, alter_error)
+            check(f"{engine}: writes went on during it, and none failed", during > 0 and not errors,
+                  {"during": during, "errors": errors[:5]})
+            check(f"{engine}: no replica changed its election term", terms() == before_terms,
+                  {"before": before_terms, "after": terms()})
+            caught_up()
+            records = {g["id"]: engine_record(leader(g), ospace, before[g["id"]]) for g in groups}
+            after = {g["id"]: shape(leader(g), ospace)["id"] for g in groups}
+            check(f"{engine}: its enforcing step was a copy, published on every shard",
+                  all(after[s] != before[s] for s in after)
+                  and all(r == {"phase": "published", "rebuild": True} for r in records.values()), records)
+            rows = {(r[0], r[1]): r[2] for r in q(c, f"SELECT tenant_id, id, u FROM {o}")}
+            check(f"{engine}: the table holds the model's rows", rows == model,
+                  {"rows": len(rows), "model": len(model)})
+            spaces = {node: globals_of(node, ospace) for node in nodes}
+            names = {node: uix_name(node, ospace, "ou") for node in nodes}
+            check(f"{engine}: every replica holds the index's entries in its space, named after the copy, "
+                  f"and no conflicts space",
+                  all(set(spaces[node]) == {names[node]} for node in nodes)
+                  and all(spaces[node] == spaces[g["replicas"][0]] for g in groups for node in g["replicas"])
+                  and sum(v["rows"] for g in groups for v in spaces[g["replicas"][0]].values()) == len(model),
+                  {"spaces": {g["id"]: spaces[g["replicas"][0]] for g in groups}, "names": names})
+            left = {node: leftovers(node) for node in nodes}
+            check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
+            sample = random.Random(f"o-{engine}").sample(sorted(model), 300)
+            found = [q(c, f"SELECT tenant_id, id FROM {o} WHERE u = %s", (model[k],)) for k in sample]
+            check(f"{engine}: the key finds rows by their value", all(f == (k,) for f, k in zip(found, sample)),
+                  [(k, f) for k, f in zip(sample, found) if f != (k,)][:5])
+            dup = None
+            try:
+                a = sample[0]
+                q(c, f"INSERT INTO {o} VALUES (%s, %s, %s, 0)", ((a[0] + 1) % TENANTS, 6 * FRESH_ID, model[a]))
+            except pymysql.MySQLError as e:
+                dup = e.args[0]
+            check(f"{engine}: the key refuses a duplicate in another tenant", dup == 1062, dup)
+
+            # A value two rows of different shards share: the change fails.
+            q(c, f"ALTER TABLE {o} DROP INDEX ou")
+            home = {}
+            for gi, g in enumerate(groups):
+                for tn in ev(leader(g), """
+                    local sp, out = box.space[...], {}
+                    for tn = 0, 63 do
+                        if sp.index[0]:select({tn}, {limit = 1})[1] ~= nil then out[#out + 1] = tn end
+                    end
+                    return out
+                """, [ospace]):
+                    home[tn] = gi
+            a = next(k for k in sorted(model) if k[0] in home)
+            tn = next(x for x in range(TENANTS) if x in home and home[x] != home[a[0]])
+            q(c, f"INSERT INTO {o} VALUES (%s, %s, %s, 0)", (tn, 7 * FRESH_ID, model[a]))
+            caught_up()
+            before = {g["id"]: shape(leader(g), ospace)["id"] for g in groups}
+            try:
+                q(c, f"ALTER TABLE {o} ADD UNIQUE KEY ou (u)")
+                failed = None
+            except pymysql.MySQLError as e:
+                failed = e.args
+            caught_up()
+            after = {g["id"]: shape(leader(g), ospace)["id"] for g in groups}
+            left = {node: leftovers(node) for node in nodes}
+            spaces = {node: globals_of(node, ospace) for node in nodes}
+            check(f"{engine}: one that meets a value two rows of different shards share fails with 1062, naming "
+                  f"it, and leaves the table as it was, with no copy or index space left",
+                  failed == (1062, f"Duplicate entry '{model[a]}' for key 'ou'") and after == before
+                  and all(not v for v in left.values()) and not any(spaces.values()),
+                  {"failed": failed, "before": before, "after": after, "left": left, "spaces": spaces})
+        finally:
+            for node, v in limits.items():
+                ev(node, "tarn.cfg.alter_check_rows = ...", [v])
+        q(c, f"DROP TABLE {o}")
 
     def checked_copy(engine):
         """An ALTER that narrows a column's type and makes it NOT NULL, and
@@ -1565,6 +1729,7 @@ def main():
               {"columns": columns})
 
         globally_unique(engine)
+        online_unique(engine)
         lazily_indexed(engine)
         lazily_made(engine)
         catch_up_round(engine)

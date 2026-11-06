@@ -17,7 +17,15 @@
 //!    (tarn_alter_prepare, `a.uix_check`); the index is published
 //!    enforcing, its conflicts space dropped. A PREPARE refused for a
 //!    transient reason (a lock wait, a shard between leaders) is sent again
-//!    for up to `JOB_STEP_RETRY` before the step is aborted.
+//!    for up to `JOB_STEP_RETRY` before the step is aborted. On a cluster
+//!    that copies its index builds (`ClusterConfig::index_build`: replicated
+//!    shards), the step copies the table into a new space whose indexes
+//!    exist before its rows instead (`online_copies`, lua/tarn_engine.lua),
+//!    whose PREPARE checks the conflicts behind its fence: a follower that
+//!    built the index in place would hold the shard's writes (#267). Its
+//!    BUILD and PREPARE go in slices, with a catch-up round, as an ALTER's,
+//!    and the job's phase is the copy's decision: `enforcing:apply`, or
+//!    `enforcing:abort` and the phases after it (`tarn_engine_decision`).
 //! 4. `dropping`, if the third step fails (two rows share a key: 1062, or
 //!    another error): the table is published as it was and the index's
 //!    spaces dropped; the statement fails with the third step's error. This
@@ -170,9 +178,11 @@ impl UixBuild {
 }
 
 /// Sends a refused step again, with a growing pause, until `limit` has
-/// passed since the first refusal.
+/// passed since the first refusal. (Not since the first try: one that
+/// copies the table may take far longer than `limit` before a shard
+/// refuses its PREPARE.)
 struct StepRetry {
-    since: Instant,
+    since: Option<Instant>,
     wait: Duration,
     limit: Duration,
 }
@@ -180,15 +190,16 @@ struct StepRetry {
 impl StepRetry {
     fn new(limit: Duration) -> StepRetry {
         StepRetry {
-            since: Instant::now(),
+            since: None,
             wait: Duration::from_millis(200),
             limit,
         }
     }
 
-    /// Wait before the next try, or false once `limit` has passed.
+    /// After a refusal: wait before the next try, or false once `limit`
+    /// has passed since the first one.
     async fn wait(&mut self) -> bool {
-        if self.since.elapsed() >= self.limit {
+        if self.since.get_or_insert_with(Instant::now).elapsed() >= self.limit {
             return false;
         }
         tokio::time::sleep(self.wait).await;
@@ -217,11 +228,23 @@ impl Cluster {
             self.next_catalog_version().await?,
             self.next_catalog_version().await?,
         ];
-        let mut steps = crate::alter::online_steps(def, ch, vers, &ids)?;
-        // The third step builds the keys' local indexes in place: on a
-        // replicated shard, as copy_index_builds would not, within the
-        // limit of a fill behind the fence (#267).
-        steps[0].building_limit = self.cfg.index_build != IndexBuild::InPlace
+        let copy = match self.online_copies(def).await {
+            false => None,
+            true => Some(crate::alter::OnlineCopy {
+                space_id: self.alloc_space_ids(1).await?,
+                // (as alter_table decides for a copy)
+                durable: self
+                    .replica_not_answering("tarn_engine_durable_capabilities")
+                    .await
+                    .is_none(),
+            }),
+        };
+        let mut steps = crate::alter::online_steps(def, ch, vers, &ids, copy)?;
+        // Without the copy, the second step builds the keys' local indexes
+        // in place: on a replicated shard, as copy_index_builds would not,
+        // within the limit of a fill behind the fence (#267).
+        steps[0].building_limit = copy.is_none()
+            && self.cfg.index_build != IndexBuild::InPlace
             && self.live_shards().any(|i| self.shards[i].replicas().len() > 1);
         let st = UixBuild {
             db: def.db.clone(),
@@ -251,6 +274,46 @@ impl Cluster {
         }
         self.run_job(&job).await?;
         Ok(true)
+    }
+
+    /// Whether the step of an online build of `def`'s new global indexes
+    /// that makes them enforcing copies the table into a new space whose
+    /// indexes exist before its rows, rather than building their local
+    /// indexes in place (`alter::online_steps`): as `copy_index_builds`
+    /// decides for an ALTER (`ClusterConfig::index_build`), when the table
+    /// can be copied (`alter::online_copy_eligible`) and every replica of
+    /// every shard knows such a copy, which checks the indexes' conflicts
+    /// behind its fence and keeps the table's other global and lazy indexes.
+    async fn online_copies(&self, def: &TableDef) -> bool {
+        let wanted = match self.cfg.index_build {
+            IndexBuild::InPlace => false,
+            IndexBuild::Copy => true,
+            IndexBuild::Auto => self.live_shards().any(|i| self.shards[i].replicas().len() > 1),
+        };
+        if !wanted || !crate::alter::online_copy_eligible(def) {
+            return false;
+        }
+        let mut needed = vec![
+            "tarn_uix_building_copy_capabilities",
+            "tarn_engine_rebuild_capabilities",
+            "tarn_engine_rebuild_aux_capabilities",
+            "tarn_engine_rebuild_drops_capabilities",
+        ];
+        if def.has_lazy() {
+            needed.push("tarn_engine_rebuild_lazy_capabilities");
+        }
+        for func in needed {
+            if let Some(addr) = self.replica_not_answering(func).await {
+                tracing::info!(
+                    table = %def.space_name(),
+                    replica = %addr,
+                    "the new global unique index's local index is built in place: a replica does not answer {}",
+                    func
+                );
+                return false;
+            }
+        }
+        true
     }
 
     /// Run (or go on with) an online build, keeping its job alive.
@@ -387,19 +450,31 @@ impl Cluster {
     }
 
     /// The call of step `args` to `proc` on shard `i`, sent again while it
-    /// fails for a transient reason.
+    /// fails for a transient reason. BUILD and PREPARE take a slice (issue
+    /// #184, as in run_job_steps): a step that copies the table returns
+    /// ["ok", "more"] once a call has copied that long, and is sent again
+    /// until it is done; one in place ignores it.
     async fn uix_send(&self, job: &Job, i: usize, proc: &'static str, args: &[u8]) -> SqlResult<bytes::Bytes> {
+        let sliced = matches!(proc, "tarn_alter_build" | "tarn_alter_prepare");
         let mut call = Mp::new();
-        call.arr(3).str(&job.space);
+        call.arr(3 + sliced as usize).str(&job.space);
         call.0.extend_from_slice(args);
         call.uint(job.gen);
+        if sliced {
+            call.map(1).str("slice").f64(self.cfg.step_slice());
+        }
         let call = &call;
-        retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || async move {
-            self.call(i, proc, &call.0)
-                .await
-                .and_then(|d| lua_status(&d).map(|_| d.clone()))
-        })
-        .await
+        loop {
+            let d = retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || async move {
+                self.call(i, proc, &call.0)
+                    .await
+                    .and_then(|d| lua_status(&d).map(|_| d.clone()))
+            })
+            .await?;
+            if !more_reply(&d) {
+                return Ok(d);
+            }
+        }
     }
 
     /// BUILD, then PREPARE, of step `args` on every live shard: None once
@@ -407,16 +482,27 @@ impl Cluster {
     /// goes forward); else the first refusal.
     async fn uix_prepare(&self, job: &Job, args: &[u8]) -> SqlResult<Option<SqlError>> {
         let live: Vec<usize> = self.live_shards().collect();
-        let mut failed: Option<SqlError> = None;
-        for r in crate::topology::collect(
-            live.iter().map(|&i| self.uix_send(job, i, "tarn_alter_build", args)),
-            self.cfg.topology.fanout,
-        )
-        .await
-        {
-            if let Err(e) = r {
-                failed.get_or_insert(e);
+        let build = || async {
+            let mut first: Option<SqlError> = None;
+            for r in crate::topology::collect(
+                live.iter().map(|&i| self.uix_send(job, i, "tarn_alter_build", args)),
+                self.cfg.topology.fanout,
+            )
+            .await
+            {
+                if let Err(e) = r {
+                    first.get_or_insert(e);
+                }
             }
+            first
+        };
+        let mut failed = build().await;
+        // A copy's catch-up round, as in run_job_steps: its BUILD sent again
+        // before any shard's PREPARE runs its catch-up passes over the
+        // writes since its BUILD ended, while the other shards copied, so
+        // that no shard fences its writes for that.
+        if failed.is_none() && crate::alter::job_copies(args)? {
+            failed = build().await;
         }
         if failed.is_some() {
             return Ok(failed);
@@ -636,6 +722,22 @@ fn backfill_transient(e: &SqlError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_step_is_sent_again_for_the_limit_after_its_first_refusal() {
+        let limit = Duration::from_millis(300);
+        let mut retry = StepRetry::new(limit);
+        // (a first try that takes longer than the limit, as a copy may)
+        tokio::time::sleep(limit * 2).await;
+        let first = Instant::now();
+        let mut tries = 0;
+        while retry.wait().await {
+            tries += 1;
+        }
+        // (pauses of 200 and 400 ms, then the limit has passed)
+        assert_eq!(tries, 2);
+        assert!(first.elapsed() >= limit, "{:?}", first.elapsed());
+    }
 
     #[test]
     fn the_job_arguments_round_trip() {

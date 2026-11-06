@@ -8,7 +8,11 @@
    Catalog publication, old-generation retirement and reader dooming are
    one local metadata step, acknowledged from confirmed state.
    The decision variable is confirmed central state, not a quorum-pending
-   journal row. Exact binding/phase reads must use read-confirmed visibility;
+   journal row. (An online build of a global unique index copies its
+   table this way for the step that makes the index enforcing, issue #292:
+   its job's phase holds the decision, 'enforcing:apply', or
+   'enforcing:abort' and the phases after it, which tarn_job_phase keeps
+   from changing once made.) Exact binding/phase reads must use read-confirmed visibility;
    LazyTargetConfirm/LazyApplyConfirm/PrepareConfirm and runtime tests cover
    that native visibility premise, not this local publication model.
    Native DDL
