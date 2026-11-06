@@ -3,7 +3,7 @@
 
   python3 bench/online_lazy_build.py --tarn HOST:PORT --kv LEADER,LEADER
         [--rows-per-shard 1200000] [--rate 200] [--engine vinyl] [--out RESULTS]
-        [--index lazy|plain|unique] [--any-size] [--other-rate 0]
+        [--index lazy|plain|unique] [--any-size] [--other-rate 0] [--settle NODE,...]
 
 --index plain adds an ordinary secondary index instead (no lazy checks; each
 shard's new index is counted against its rows). --index unique adds a
@@ -17,7 +17,9 @@ rows are looked up by their values, and a duplicate must be refused.
 session inserting into another table (u) at that rate: on a replicated
 shard, a vinyl build behind the fence makes the shard's other synchronous
 writes go one at a time (#264), and they wait while the followers apply the
-build (#267).
+build (#267). --settle (every storage node) checkpoints them after loading
+and waits until vinyl dumps and compacts nothing on any of them: on one
+host, the load's dumps would otherwise share the disk with the build.
 
 Needs the Python `tarantool` connector for its storage probes.
 
@@ -301,6 +303,35 @@ def job_steps(jobs, alter_s):
     return out
 
 
+# A checkpoint, which dumps vinyl's in-memory level to disk.
+CHECKPOINT = "box.snapshot() return true"
+# Whether vinyl is busy: tasks (dumps, compactions) running, or bytes waiting
+# for compaction.
+VINYL_BUSY = """
+local s = box.stat.vinyl().scheduler
+return s.tasks_inprogress > 0 or s.compaction_queue > 0
+"""
+
+
+def settle(all_nodes, quiet=5, timeout=900):
+    """After loading: checkpoint every storage node, then wait until vinyl
+    has run no dump or compaction on any of them for `quiet` seconds: the
+    load's dumps would otherwise share the disk with the ALTER (all the
+    nodes here share one). The seconds it took."""
+    t0 = time.monotonic()
+    for n in all_nodes:
+        ev(n, CHECKPOINT, [])
+    since = time.monotonic()
+    while time.monotonic() - since < quiet:
+        assert time.monotonic() - t0 < timeout, "the storage nodes did not settle"
+        if any(ev(n, VINYL_BUSY, []) for n in all_nodes):
+            since = time.monotonic()
+        time.sleep(1)
+    took = time.monotonic() - t0
+    print(f"settled in {took:.0f} s", flush=True)
+    return took
+
+
 def sha256(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -329,6 +360,8 @@ def main():
     ap.add_argument("--index", choices=("lazy", "plain", "unique"), default="lazy")
     ap.add_argument("--any-size", action="store_true", help="allow shards below alter_check_rows")
     ap.add_argument("--other-rate", type=float, default=0, help="writes per second to another table, u")
+    ap.add_argument("--settle", help="every storage node, comma-separated: after loading, checkpoint each and wait "
+                                     "until no vinyl dump or compaction runs on any, before the writes begin")
     args = ap.parse_args()
     args.out = args.out or os.path.join(HERE, f"results_online_lazy_build_{args.engine}.json")
     nodes = args.kv.split(",")
@@ -364,6 +397,7 @@ def main():
             if first and first % 200_000 == 0:
                 print(f"loaded {first} rows ({time.monotonic() - started:.0f} s)", flush=True)
     load_s = time.monotonic() - started
+    settle_s = settle(args.settle.split(",")) if args.settle else None
     before_state = nodes_state(nodes)
     print(f"loaded {total} rows in {load_s:.0f} s; per shard: {[s['rows'] for s in before_state]}", flush=True)
     assert args.any_size or all(s["rows"] > s["check_rows"] for s in before_state), (
@@ -457,7 +491,7 @@ def main():
         wait_empty(nodes, timeout=600)
     after_state = nodes_state(nodes)
     common = {"alter_error": alter_error, "published_s": published_s, "timeline": timeline, "stalls": stalls,
-              "errors": errors}
+              "errors": errors, "settle_s": settle_s}
 
     if args.index == "plain":
         return finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
@@ -556,7 +590,8 @@ return {rows = sp.index[0]:count(), entries = idx and idx:count() or box.NULL}
 
 def finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
            samples, other, alter_begin, alter_end, replicas, checked=None, mismatched=None,
-           alter_error=None, published_s=None, timeline=None, stalls=None, errors=None, extra=None):
+           alter_error=None, published_s=None, timeline=None, stalls=None, errors=None, extra=None,
+           settle_s=None):
     if mismatched is None:
         counts = [ev(n, PLAIN_COUNT, [f"{DB}.t"]) for n in nodes]
         mismatched = [c for c in counts if c["entries"] != c["rows"]]
@@ -583,7 +618,8 @@ def finish(args, nodes, shards, before_state, after_state, load_s, refusals, alt
         "rows_per_shard": args.rows_per_shard,
         "alter_check_rows": before_state[0]["check_rows"], "writer_rate": args.rate,
         "other_rate": args.other_rate,
-        "load_s": round(load_s, 1), "load_vinyl_refusals": refusals, "alter_s": round(alter_s, 2),
+        "load_s": round(load_s, 1), "load_vinyl_refusals": refusals,
+        "settle_s": round(settle_s, 1) if settle_s is not None else None, "alter_s": round(alter_s, 2),
         "alter_error": alter_error, "published_s": round(published_s, 1) if published_s is not None else None,
         "leader_changes": [a["term"] - b["term"] for a, b in zip(after_state, before_state)],
         "build_rows_per_s": round(total / alter_s), "writes": phases(samples),
