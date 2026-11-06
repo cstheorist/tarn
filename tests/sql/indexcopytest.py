@@ -90,6 +90,15 @@ unique key takes a duplicate. Before it, one whose new unique index meets a
 duplicate fails from the copy, and leaves the table and its indexes as
 they were.
 
+An ALTER that renames a table with a global unique index and adds an index
+copies it too, and publishes it under the new name (#292), while a session
+moves values and rows and, once the old name is gone (1146), goes on under
+the new one. It succeeds, no replica's term changes, the writes go on, none
+failing but those the rename moved, and every replica holds the global
+index's entries, one per row, in its space, named after the copy; the old
+name is gone, and the key finds rows and refuses a duplicate under the new
+one.
+
 An ALTER that adds a unique key without the shard key to a populated table
 builds its global index online (#292): the step that makes the index
 enforcing copies the table too, rather than build the key's local index in
@@ -496,6 +505,135 @@ def main():
 
     def space_id(node, space):
         return ev(node, "local sp = box.space[...]; return sp and sp.id or box.NULL", [space])
+
+    def renamed(engine):
+        """An ALTER that renames a table with a global unique index and adds
+        an index copies it, and publishes it under the new name (#292), while
+        a session writes, going on under the new name once the old one is
+        gone."""
+        r, to = f"rn_{engine}", f"rn2_{engine}"
+        n = 20000
+        q(c, f"CREATE TABLE {r} (tenant_id INT, id INT, u INT, k INT, PRIMARY KEY (tenant_id, id), "
+             f"UNIQUE KEY ru (u)) ENGINE={engine} PARTITION BY KEY(tenant_id)")
+        for first in range(0, n, 1000):
+            q(c, f"INSERT INTO {r} VALUES " + ",".join(f"({i % TENANTS},{i},{i},{i % 97})"
+                                                     for i in range(first, first + 1000)))
+        model = {(i % TENANTS, i): i for i in range(n)}
+        fresh = {"id": 8 * FRESH_ID, "u": 8 * FRESH_C}
+        errors, writes, moved, name = [], [0], [0], [r]
+
+        def new(what):
+            fresh[what] += 1
+            return fresh[what]
+
+        def writer(stop):
+            conn = connect(args.tarn, read_timeout=120)
+            rnd = random.Random(f"renamed-{engine}")
+            while not stop.is_set():
+                keys = sorted(model)
+                op = rnd.random()
+                t = name[0]
+                try:
+                    if op < 0.4:
+                        a, b = rnd.sample(keys, 2)
+                        x = model[a]
+                        q(conn, f"UPDATE {t} SET u = %s WHERE tenant_id = %s AND id = %s", (new("u"), *a))
+                        model[a] = fresh["u"]
+                        q(conn, f"UPDATE {t} SET u = %s WHERE tenant_id = %s AND id = %s", (x, *b))
+                        model[b] = x
+                    elif op < 0.6:
+                        tn, i = rnd.randrange(TENANTS), new("id")
+                        q(conn, f"INSERT INTO {t} VALUES (%s, %s, %s, 0)", (tn, i, new("u")))
+                        model[(tn, i)] = fresh["u"]
+                    elif op < 0.8:
+                        a = rnd.choice(keys)
+                        q(conn, f"DELETE FROM {t} WHERE tenant_id = %s AND id = %s", a)
+                        del model[a]
+                    else:
+                        a, j = rnd.choice(keys), new("id")
+                        q(conn, f"UPDATE {t} SET id = %s WHERE tenant_id = %s AND id = %s", (j, *a))
+                        model[(a[0], j)] = model.pop(a)
+                    writes[0] += 1
+                except pymysql.MySQLError as e:
+                    # (The table under its new name, once its old one is
+                    # gone: the statement went nowhere, and goes on there.
+                    # A statement that a hand-over split, its first half
+                    # done, leaves the model as the table has it.)
+                    if e.args[0] == 1146 and t == r:
+                        name[0], moved[0] = to, moved[0] + 1
+                    elif not vinyl_refusal(e):
+                        errors.append(f"renamed: {e.args}")
+                    time.sleep(0.05)
+                time.sleep(0.003)
+
+        caught_up()
+        before = {g["id"]: shape(leader(g), f"{DB}.{r}")["id"] for g in groups}
+        kept = {g["id"]: {v["id"] for v in globals_of(leader(g), f"{DB}.{r}").values()} for g in groups}
+        before_terms = terms()
+        stop = threading.Event()
+        th = threading.Thread(target=writer, args=(stop,), daemon=True)
+        th.start()
+        time.sleep(1)
+        at, began = writes[0], time.monotonic()
+        try:
+            q(c, f"ALTER TABLE {r} RENAME TO {to}, ADD INDEX rk (k)")
+            alter_error = None
+        except pymysql.MySQLError as e:
+            alter_error = e.args
+        during = writes[0] - at
+        print(f"  ({engine}: ALTER took {time.monotonic() - began:.2f} s; writes during it: {during})", flush=True)
+        time.sleep(1)
+        stop.set()
+        th.join(30)
+        check(f"{engine}: ALTER TABLE ... RENAME TO ..., ADD INDEX", alter_error is None, alter_error)
+        check(f"{engine}: writes went on during it, none failed, and the writer went on under the new name",
+              during > 0 and not errors and moved[0] == 1 and name[0] == to,
+              {"during": during, "errors": errors[:5], "moved": moved[0]})
+        check(f"{engine}: no replica changed its election term", terms() == before_terms,
+              {"before": before_terms, "after": terms()})
+        caught_up()
+        space = f"{DB}.{to}"
+        records = {g["id"]: engine_record(leader(g), space, before[g["id"]]) for g in groups}
+        after = {g["id"]: shape(leader(g), space)["id"] for g in groups}
+        gone = {node: ev(node, "return box.space[...] == nil and box.space._tarn_catalog:get{...} == nil",
+                         [f"{DB}.{r}"]) for node in nodes}
+        check(f"{engine}: that change was a copy, published under the new name on every shard, and the old "
+              f"name is gone from every replica",
+              all(after[s] != before[s] for s in after) and all(gone.values())
+              and all(r_ == {"phase": "published", "rebuild": True} for r_ in records.values()),
+              {"records": records, "gone": gone})
+        rows = {(x[0], x[1]): x[2] for x in q(c, f"SELECT tenant_id, id, u FROM {to}")}
+        check(f"{engine}: the table holds the model's rows under the new name", rows == model,
+              {"rows": len(rows), "model": len(model)})
+        spaces = {node: globals_of(node, space) for node in nodes}
+        names = {node: uix_name(node, space, "ru") for node in nodes}
+        check(f"{engine}: every replica keeps the global index's space, by id, named after the copy, "
+              f"one entry per row",
+              all({v["id"] for v in spaces[node].values()} == kept[g["id"]] for g in groups for node in g["replicas"])
+              and all(set(spaces[node]) == {names[node]} for node in nodes)
+              and all(spaces[node] == spaces[g["replicas"][0]] for g in groups for node in g["replicas"])
+              and sum(v["rows"] for g in groups for v in spaces[g["replicas"][0]].values()) == len(model),
+              {"spaces": {g["id"]: spaces[g["replicas"][0]] for g in groups}, "names": names})
+        left = {node: leftovers(node) for node in nodes}
+        check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
+        sample = random.Random(f"rn-{engine}").sample(sorted(model), 200)
+        found = [q(c, f"SELECT tenant_id, id FROM {to} WHERE u = %s", (model[k],)) for k in sample]
+        old_name = None
+        try:
+            q(c, f"SELECT COUNT(*) FROM {r}")
+        except pymysql.MySQLError as e:
+            old_name = e.args[0]
+        dup = None
+        try:
+            a = sample[0]
+            q(c, f"INSERT INTO {to} VALUES (%s, %s, %s, 0)", ((a[0] + 1) % TENANTS, 9 * FRESH_ID, model[a]))
+        except pymysql.MySQLError as e:
+            dup = e.args[0]
+        check(f"{engine}: under the new name the key finds rows and refuses a duplicate, and the old name is "
+              f"gone (1146)",
+              all(f == (k,) for f, k in zip(found, sample)) and dup == 1062 and old_name == 1146,
+              {"dup": dup, "old": old_name})
+        q(c, f"DROP TABLE {to}")
 
     def online_unique(engine):
         """An ALTER that adds a unique key without the shard key builds its
@@ -1730,6 +1868,7 @@ def main():
 
         globally_unique(engine)
         online_unique(engine)
+        renamed(engine)
         lazily_indexed(engine)
         lazily_made(engine)
         catch_up_round(engine)

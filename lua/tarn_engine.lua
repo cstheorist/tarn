@@ -52,6 +52,13 @@ function M.new(c)
         local t = box.space._tarn_meta:get{key(sid)}
         return t and t.value or nil
     end
+    -- The name a rebuild publishes its table under when it also renames it
+    -- (issue #292): a.rename, which the new definition has too; nil when
+    -- it keeps the table's name. An engine change keeps it.
+    local function renamed_to(a, x)
+        if x.rebuild == nil or type(a.rename) ~= 'string' or a.rename == x.old_name then return nil end
+        return a.rename
+    end
     local function bound(a)
         local x = type(a) == 'table' and a.engine_change
         -- A rebuild keeps the engine; an engine change changes it. A rebuild
@@ -69,7 +76,8 @@ function M.new(c)
            or (a.def.engine ~= 'memtx' and a.def.engine ~= 'vinyl')
            or (x.rebuild ~= nil and x.rebuild ~= true and x.rebuild ~= 'layout' and x.rebuild ~= 'aux'
                and x.rebuild ~= 'lazy')
-           or (x.old_engine == a.def.engine) ~= (x.rebuild ~= nil) or a.def.name ~= x.old_name
+           or (x.old_engine == a.def.engine) ~= (x.rebuild ~= nil)
+           or type(a.def.name) ~= 'string' or (a.def.name ~= x.old_name and a.def.name ~= renamed_to(a, x))
            or (x.durable ~= nil and type(x.durable) ~= 'boolean')
            or (not nilish(a.lazy_made) and (x.rebuild ~= 'lazy' or type(a.lazy_made) ~= 'table'
                                              or a.materialize == true)) then
@@ -157,8 +165,10 @@ function M.new(c)
     -- starts its copy (not at ABORT, which must end a job however it was
     -- refused): only a 'layout', 'aux' or 'lazy' rebuild changes the stored
     -- layout (format and padding). A rebuild may check rows (row_checks),
-    -- renames no table, and makes no global index. Only an 'aux' or 'lazy'
-    -- rebuild has global indexes, which it keeps or drops (kept_globals),
+    -- and rename the table (renamed_to, unless it makes a lazy index), and
+    -- makes no global index; an engine change keeps the table's name. Only
+    -- an 'aux' or 'lazy' rebuild has global indexes, which it keeps or
+    -- drops (kept_globals),
     -- and only a 'lazy' one lazy indexes, which it keeps, makes or drops
     -- (keep_lazy). (Storage from before drops refuses a rebuild that drops
     -- one here, and the SQL server asks it first.)
@@ -167,9 +177,20 @@ function M.new(c)
             fail(1210, x.rebuild and 'A rebuild that changes the stored layout must say so'
                 or 'An engine change keeps the stored layout')
         end
+        if x.rebuild == nil and not nilish(a.rename) then fail(1210, "An engine change keeps the table's name") end
         if x.rebuild ~= nil then
             row_checks(a)
-            if not nilish(a.rename) then fail(1210, "An engine rebuild keeps the table's name") end
+            -- (A rebuild may rename the table, to a name no table has.)
+            if not nilish(a.rename) and (renamed_to(a, x) == nil or a.def.name ~= a.rename) then
+                fail(1210, 'Malformed engine-rebuild rename')
+            end
+            local name = renamed_to(a, x)
+            if name ~= nil and (box.space[name] ~= nil or box.space._tarn_catalog:get{name} ~= nil) then
+                fail(1050, string.format("Table '%s' already exists", name))
+            end
+            -- (The online build of a lazy index it made would bind the old
+            -- space by the table's name, which the new definition names.)
+            if name ~= nil and makes(a) then fail(1210, 'A rebuild that renames the table makes no lazy index') end
             if not none(a.uix) then fail(1210, 'An engine rebuild makes no global index') end
             if not keeps_aux(x) and (not none(a.def.uix) or not none(a.uix_drop) or #c.uix_spaces(x.old_id) > 0) then
                 fail(1210, 'A rebuild that keeps global indexes must say so')
@@ -859,6 +880,7 @@ function M.new(c)
             for _, d in ipairs(a.def.lazy or {}) do new_aux[#new_aux + 1] = d.gen end
         end
         r = {old_id = x.old_id, old_ver = x.old_ver, old_engine = x.old_engine, old_name = name,
+            new_name = renamed_to(a, x),
             new_id = a.def.id, engine = a.def.engine, ver = a.ver, gen = gen, phase = 'resetting',
             shadow_name = '_tarn_engine_' .. x.old_id .. '_' .. a.def.id,
             retired_name = '_tarn_engine_old_' .. x.old_id .. '_' .. a.def.id,
@@ -1496,20 +1518,32 @@ function M.new(c)
         if alias[1] ~= 'ok' then fail(1412, 'Engine counter alias is not confirmed') end
         local old, target = box.space[r.old_id], box.space[r.new_id]
         if target == nil or target.engine ~= r.engine then fail(1412, 'Engine replacement disappeared') end
-        if old ~= nil and old.name == r.old_name then old:rename(r.retired_name) end
-        if target.name == r.shadow_name then target:rename(r.old_name) end
-        if target.name ~= r.old_name then fail(1412, 'Engine replacement name changed') end
-        c.hook('engine_renamed')
         -- The global index spaces a rebuild keeps are named after the space
         -- that has the table's name, by which the storage finds them
         -- (UIX.spaces in lua/tarn.lua, which until the catalog below names
         -- that space finds them through the catalog too). Their contents
         -- stay, so their readers are not doomed: both definitions write them.
-        for _, k in ipairs(r.kept_uix or {}) do
-            local u = box.space[k.id]
-            if u ~= nil and u.name == k.old_name then u:rename(k.new_name) end
-            if u == nil or u.name ~= k.new_name then fail(1412, 'Kept global index identity changed') end
+        -- Renamed by id, repeatably, once the old space has given the
+        -- table's name up.
+        local function rename_kept()
+            for _, k in ipairs(r.kept_uix or {}) do
+                local u = box.space[k.id]
+                if u ~= nil and u.name == k.old_name then u:rename(k.new_name) end
+                if u == nil or u.name ~= k.new_name then fail(1412, 'Kept global index identity changed') end
+            end
         end
+        -- A copy that renames the table gives the new space the new name
+        -- (issue #292), under which the catalog lists no table until its
+        -- transaction below: until then a lookup through the new space finds
+        -- the kept spaces by their own names only, so they are renamed
+        -- first (tla/EngineCutover.tla, BugRenameBeforeKept).
+        local published_name = r.new_name or r.old_name
+        if old ~= nil and old.name == r.old_name then old:rename(r.retired_name) end
+        if r.new_name ~= nil then rename_kept() end
+        if target.name == r.shadow_name then target:rename(published_name) end
+        if target.name ~= published_name then fail(1412, 'Engine replacement name changed') end
+        c.hook('engine_renamed')
+        rename_kept()
         for _, sid in ipairs(group(r, true)) do c.doom(sid) end
         c.hook('engine_publish')
         transaction(function()
@@ -1521,7 +1555,9 @@ function M.new(c)
             for _, gen_ in ipairs(v.made_lazy or {}) do bind[#bind + 1] = gen_ end
             c.lazy.rebind(a.def, bind)
             box.space._tarn_lazy_capture:delete{v.old_id}
-            box.space._tarn_catalog:replace{name, a.def}
+            -- (A copy that renames the table moves its entry to the new name.)
+            if v.new_name ~= nil then box.space._tarn_catalog:delete{name} end
+            box.space._tarn_catalog:replace{v.new_name or name, a.def}
             v.phase, v.cleaned = 'published', false; replace_record(v)
             for _, sid in ipairs(group(v, true)) do
                 box.space._tarn_meta:replace{'fence:' .. sid,
@@ -1595,7 +1631,9 @@ function M.new(c)
                 fail(1412, 'A different engine job owns the source')
             end
             -- (The descriptor as the copy will take it, before anything
-            -- starts: a generation it would refuse is never built.)
+            -- starts: a generation it would refuse is never built, nor one
+            -- of a copy that renames the table, which admissible refuses.)
+            if renamed_to(a, x) ~= nil then fail(1210, 'A rebuild that renames the table makes no lazy index') end
             keep_lazy(a, x)
             local m = made_args(a, x)
             if op == 'bootstrap' then return c.lazy.bootstrap(name, m, gen) end

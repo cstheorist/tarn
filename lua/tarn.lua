@@ -1841,7 +1841,9 @@ end
 -- rebuild keeps a table's global index spaces and renames them after its
 -- new space as it publishes (lua/tarn_engine.lua E.apply): after the new
 -- space took the table's name, and before the catalog names it, only the
--- catalog finds them.
+-- catalog finds them. A rebuild that renames the table renames them first:
+-- no catalog entry is under the new name until it publishes, so only their
+-- names find them then.
 function UIX.spaces(sid)
     local out, seen, tag = {}, {}, UIX.prefix .. sid .. '_'
     for _, s in box.space._space.index.name:pairs({tag}, {iterator = 'GE'}) do
@@ -6233,8 +6235,12 @@ end
 -- or is recorded as a conflict, already: the backfill stops at the rows that
 -- were there when it began). Keys are the index's own (a case-insensitive
 -- part is its weight), which the SQL server passes back as they are. Read
--- on the leader, as the backfill's transactions then read the rows.
+-- on the leader, as the backfill's transactions then read the rows. A page
+-- also stops before its rows pass UIX.page_bytes, with one row at least: a
+-- reply larger than a SQL server takes from storage (8 MiB) would close its
+-- connection, and the page's transaction reads the same rows again.
 -- {OK, rows, the last row's key (the next `after`), done (1 or 0), bound}.
+UIX.page_bytes = 1024 * 1024
 function tarn_uix_backfill_page(sid, after, bound, limit)
     writable()
     local sp = box.space[sid]
@@ -6247,11 +6253,11 @@ function tarn_uix_backfill_page(sid, after, bound, limit)
     end
     local rows, from, it = {}, {}, 'GE'
     if after ~= nil and after ~= box.NULL then from, it = after, 'GT' end
-    local done = 1
+    local done, bytes = 1, 0
     for _, t in pk:pairs(from, {iterator = it}) do
         if kd:compare_with_key(t, bound) > 0 then break end
-        if #rows >= limit then done = 0; break end
-        rows[#rows + 1] = t
+        if #rows >= limit or (#rows > 0 and bytes + t:bsize() > UIX.page_bytes) then done = 0; break end
+        rows[#rows + 1], bytes = t, bytes + t:bsize()
     end
     local last = #rows > 0 and kd:extract_key(rows[#rows]):totable() or after
     return {OK, rows, last == nil and box.NULL or last, done, bound}
@@ -8279,6 +8285,7 @@ BK.production_functions = {
         'tarn_engine_rebuild_format_capabilities',
         'tarn_engine_rebuild_lazy_capabilities',
         'tarn_engine_rebuild_lazy_made_capabilities',
+        'tarn_engine_rebuild_rename_capabilities',
         'tarn_estimate',
         'tarn_fence',
         'tarn_info',
@@ -8441,6 +8448,10 @@ function tarn_engine_rebuild_drops_capabilities() return {'ok', 1} end
 -- #184): every leader must note its writes there. The SQL server asks for
 -- it only when every replica answers.
 function tarn_engine_durable_capabilities() return {'ok', 1} end
+-- A rebuild that also renames the table (issue #292): it publishes the copy
+-- under the new name. The SQL server copies such a change only when every
+-- replica answers; storage from before refuses it.
+function tarn_engine_rebuild_rename_capabilities() return {'ok', 1} end
 -- Building global indexes (issue #292): ALTER steps with a.building and
 -- a.uix_check, catalog entries with def.building, and the fence pair that
 -- says a write maintains building indexes. The SQL server builds a global

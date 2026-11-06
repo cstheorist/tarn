@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `ALTER TABLE ... RENAME TO ...` along with index builds copies the table
+  on replicated shards too, as other index builds do there (#267), and
+  publishes the copy under the new name
+  ([#292](https://github.com/cstheorist/tarn/issues/292)); it used to build
+  the indexes in place. The table's global unique indexes are kept, their
+  spaces renamed after the copy before it takes the new name, and its lazy
+  ones rebound to it; ABORT leaves the table under its old name.
+  `tla/EngineCutover.tla` takes such a copy on every run, with a control
+  that renames the kept spaces too late (`BugRenameBeforeKept`). A rename
+  along with a new lazy index still builds in place.
+
 - `ALTER TABLE ... ADD UNIQUE` (and `CREATE UNIQUE INDEX`) of a key without
   the shard key builds the key's global index while writes go on
   ([#292](https://github.com/cstheorist/tarn/issues/292)), with no row
@@ -20,16 +31,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   conflict instead of failing, and a backfill gives the rows from before
   their entries in transactions that validate them, each with a query
   memory budget of its own (not the statement's, which would refuse a
-  table of more than some tens of megabytes). The key is published
+  table of more than some tens of megabytes), in pages of 64 rows or 1 MiB
+  of them. The key is published
   only once no conflict is left behind the table's drained fence; else the
   change fails with 1062, as in MariaDB, and leaves the table as it was. A
   server that takes the job over goes on from the backfill's stored
   cursors. `TLA+` models (`GlobalUniqueBuild`, `GlobalUniqueWrites`) and
   Verus proofs (`uix::leave_key`, `uix::join_key`) cover the design, and
   `tests/uniquebuild.sh` runs it through SQL, on memtx and on vinyl, with a
-  takeover, with and without the copy, and `tests/indexcopy.sh` on 2 shards
-  × 3 replicas. `global_index_build = "fenced"` in `cluster.json` keeps the
-  earlier fill behind the fence, which a change that does more also uses.
+  takeover, with and without the copy, `tests/indexcopy.sh` on 2 shards
+  × 3 replicas, and `tests/uniquefaults.sh` there through a leader crash
+  during the copy, a lost PREPARE reply during the backfill, and a
+  duplicate that another shard's row writes during it.
+  `global_index_build = "fenced"` in `cluster.json` keeps the earlier fill
+  behind the fence, which a change that does more also uses.
   A unique index whose build finds two rows with one key now names the key
   in its 1062, as MySQL does.
 
