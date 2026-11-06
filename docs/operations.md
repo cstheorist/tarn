@@ -766,11 +766,14 @@ node from before), builds `fenced`. Where `index_build` copies (on a
 cluster with replicated shards, by default), the online build's step that
 makes the key enforcing copies the table, as other index builds do, with
 what such a copy costs (room for a second copy of the table, and a new
-physical space ID); its local index is built in place otherwise. A
+physical space ID); its local index is built in place otherwise. As in
+MariaDB, two rows of one shard that share the key while the copy reads
+them fail the change (1062), even if one moves on before it ends. A
 cluster with replicated shards that builds it in place, because a replica
-does not answer `tarn_uix_building_copy_capabilities`, refuses the change
-above `alter_check_rows` rows per shard (1846) unless `index_build` is
-`in_place`, as a fill behind the fence is. While a build runs, the shards
+does not answer `tarn_uix_building_copy_capabilities` or the copy's own
+capabilities, or a lazy index of the table is not ready, refuses the
+change above `alter_check_rows` rows per shard (1846) unless `index_build`
+is `in_place`, as a fill behind the fence is. While a build runs, the shards
 refuse (1412) writes to the table from SQL servers that predate it:
 upgrade the SQL servers before adding such keys.
 

@@ -178,9 +178,11 @@ impl UixBuild {
 }
 
 /// Sends a refused step again, with a growing pause, until `limit` has
-/// passed since the first refusal.
+/// passed since the first refusal. (Not since the first try: one that
+/// copies the table may take far longer than `limit` before a shard
+/// refuses its PREPARE.)
 struct StepRetry {
-    since: Instant,
+    since: Option<Instant>,
     wait: Duration,
     limit: Duration,
 }
@@ -188,15 +190,16 @@ struct StepRetry {
 impl StepRetry {
     fn new(limit: Duration) -> StepRetry {
         StepRetry {
-            since: Instant::now(),
+            since: None,
             wait: Duration::from_millis(200),
             limit,
         }
     }
 
-    /// Wait before the next try, or false once `limit` has passed.
+    /// After a refusal: wait before the next try, or false once `limit`
+    /// has passed since the first one.
     async fn wait(&mut self) -> bool {
-        if self.since.elapsed() >= self.limit {
+        if self.since.get_or_insert_with(Instant::now).elapsed() >= self.limit {
             return false;
         }
         tokio::time::sleep(self.wait).await;
@@ -719,6 +722,22 @@ fn backfill_transient(e: &SqlError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_step_is_sent_again_for_the_limit_after_its_first_refusal() {
+        let limit = Duration::from_millis(300);
+        let mut retry = StepRetry::new(limit);
+        // (a first try that takes longer than the limit, as a copy may)
+        tokio::time::sleep(limit * 2).await;
+        let first = Instant::now();
+        let mut tries = 0;
+        while retry.wait().await {
+            tries += 1;
+        }
+        // (pauses of 200 and 400 ms, then the limit has passed)
+        assert_eq!(tries, 2);
+        assert!(first.elapsed() >= limit, "{:?}", first.elapsed());
+    }
 
     #[test]
     fn the_job_arguments_round_trip() {

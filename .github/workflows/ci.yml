@@ -273,6 +273,11 @@ jobs:
           if grep -h "lock copy differs" /tmp/tarn-cluster/*.log; then
             echo "::error title=locks::the native module's copy of the lock index differed from it"; exit 1
           fi
+      - name: SQL differential tests with every index build copying the table
+        run: |
+          scripts/cluster.sh stop
+          TARN_INDEX_BUILD=copy TARN_TEST_HOOKS=1 TARN_CHECK_LOCKS=1 scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
+          ci/annotate.sh difftest-copy python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
       - name: The same suites with vinyl tables, read from disk
         run: |
           scripts/cluster.sh stop

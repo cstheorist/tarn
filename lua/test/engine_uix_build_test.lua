@@ -10,16 +10,20 @@
 -- space, and drops its conflicts. Two rows of the shard that share the key
 -- fail the copy with 1062 too, with the key. The job's phase is the copy's
 -- decision: 'enforcing:apply', or 'enforcing:abort' and the phases after
--- it, which do not change once made. A copy that would check a space it
--- does not drop is refused before it begins.
-local fio, fiber, json, mp = require('fio'), require('fiber'), require('json'), require('msgpack')
+-- it, which do not change once made. A PREPARE refused behind its fence
+-- keeps it, and sent again, by the server that took the job over, resumes
+-- the copy and prepares. A copy that would check a space it does not drop
+-- is refused before it begins.
+local fio, fiber, json, mp, net = require('fio'), require('fiber'), require('json'), require('msgpack'),
+    require('net.box')
 io.stdout:setvbuf('no')
 local here = debug.getinfo(1, 'S').source:sub(2):match('(.*/)') or './'
 package.path = here .. '../?.lua;' .. package.path
 local native = os.getenv('TARN_NATIVE')
 if native ~= nil and native ~= '0' then package.cpath = fio.dirname(native) .. '/lib?.so;' .. package.cpath end
 local dir = assert(arg[1], 'private test directory required'); fio.mktree(dir)
-box.cfg{work_dir = dir, listen = 'unix/:' .. fio.pathjoin(dir, 'iproto.sock'), memtx_use_mvcc_engine = true,
+local uri = 'unix/:' .. fio.pathjoin(dir, 'iproto.sock')
+box.cfg{work_dir = dir, listen = uri, memtx_use_mvcc_engine = true,
     memtx_memory = 128 * 1048576, vinyl_memory = 64 * 1048576, vinyl_cache = 0, wal_mode = 'write',
     txn_isolation = 'read-confirmed', election_mode = 'off', replication_synchro_quorum = 1,
     replication_synchro_timeout = .5, log_level = 3}
@@ -134,6 +138,17 @@ local function copy_step(t, tag, adjust)
     return j
 end
 local function call(op, j, args) return _G['tarn_alter_' .. op](j.name, args or j.args, j.gen) end
+-- A transaction prepared on row n of t, as its stored row, holding the
+-- row's lock (a PREPARE's drain waits for it): its id and vote.
+local conns = {}
+local function held(t, n)
+    local conn = net.connect(uri, {user = 'tarn', password = 'tarn', wait_connected = 3})
+    conns[#conns + 1] = conn
+    local s = conn:new_stream()
+    s:eval('tarn.fresh.begin_stream()')
+    local txid = 'UIX' .. t.sid .. '-' .. n
+    return txid, s:call('tarn_prepare', {txid, 1, {1}, {{'replace', t.sid, {n, t.rows[n], 1}}}, {}, {}, fiber.time()})
+end
 local function phase(j, p) return tarn_job_phase(j.owner, p) end
 local function end_job(j) ok(tarn_job_end(j.owner)); jobs[j.owner] = nil end
 local function refused_change(r) return r[1] == 'conflict' and tostring(r[3]):find('immutable', 1, true) ~= nil end
@@ -251,6 +266,35 @@ local function exercise(engine)
 
     ok(tarn_drop_table(t.name))
 
+    -- A PREPARE refused behind its fence, for a transient reason, keeps
+    -- the fence; sent again, by the server that took the job over, it
+    -- resumes the copy from its durable capture and prepares.
+    t = building_table(engine, 'again', 40)
+    j = copy_step(t, 'again', function(a) a.timeout = 0.5 end)
+    ok(call('build', j)); ok(call('build', j))
+    local txid, vote = held(t, 39)
+    r = call('prepare', j)
+    local behind = t.write({{'insert', t.sid, {4001, 'n4001', 1}}})
+    check(label('a PREPARE whose drain times out on a prepared transaction is refused (1205), and keeps its fence'),
+        vote[1] == 'yes' and r[1] ~= 'ok' and r[2] == 1205 and meta('engine:' .. t.sid).phase == 'preparing'
+        and behind[1] == 'error' and behind[2] == 1412, {vote, r, behind})
+    ok(tarn_apply(txid))
+    local took = ok(tarn_job_touch(j.owner .. '-next', j.owner))
+    jobs[j.owner], j.owner, j.gen = nil, j.owner .. '-next', took[2]
+    jobs[j.owner] = j
+    ok(call('prepare', j))
+    local stale = _G.tarn_alter_prepare(j.name, j.args, 1)
+    local record = meta('engine:' .. t.sid)
+    check(label('sent again by the server that took the job over, it prepares, and the run before is refused'),
+        took[2] == 2 and record.phase == 'prepared' and record.gen == 2 and stale[1] ~= 'ok' and stale[2] == 1412,
+        {took, record.phase, record.gen, stale})
+    ok(phase(j, 'enforcing:apply')); ok(call('apply', j)); end_job(j)
+    check(label('... and its APPLY publishes the index enforcing on the copy, with every entry'),
+        box.space[t.name].id == j.new_id and box.space[j.new_id].index.uh ~= nil
+        and box.space[j.new_id]:count() == 40 and same(rows(t.eid), wanted(t)) and not exists(t.cid),
+        box.space[t.name].id)
+    ok(tarn_drop_table(t.name))
+
     -- A copy that would check a space it does not drop: refused (1210).
     t = building_table(engine, 'stray', 10)
     j = copy_step(t, 'stray', function(a) a.uix_check = {t.eid} end)
@@ -263,6 +307,7 @@ local function exercise(engine)
 end
 
 local function cleanup()
+    for _, conn in ipairs(conns) do pcall(conn.close, conn) end
     pcall(tarn_test_hook, 'engine_copy', 'release')
     for _, j in pairs(jobs) do
         pcall(tarn_job_phase, j.owner, 'enforcing:abort'); pcall(call, 'abort', j); pcall(tarn_job_end, j.owner)

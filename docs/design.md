@@ -562,19 +562,30 @@ PREPARE and APPLY as in §2.10, and a backfill:
    conflicts behind its fence, after the copy's final pass; APPLY
    publishes the copy, keeps the index's entries, renamed after the new
    space, and drops its conflicts. Two rows of one shard that share the
-   key fail the copy with 1062, naming the key, as a conflict left does.
-   The job's phase is then the copy's decision, which each shard confirms
-   on the first shard before it publishes or aborts its copy
-   (`tarn_engine_decision`): `enforcing:apply`, or `enforcing:abort` and
-   the phases after it. Once made, the decision does not change. A shard
-   that refused the copy's PREPARE after it fenced keeps its fence until
-   the PREPARE, sent again, resumes the copy from its durable capture, or
-   the step is aborted. When a replica does not know such a copy
-   (`tarn_uix_building_copy_capabilities`), or `index_build` is
-   `in_place`, the second step builds the local index in place. On a
-   cluster with replicated shards, when `index_build` is not `in_place`,
-   the first step is then refused (1846) above `alter_check_rows` rows per
-   shard, as a fill behind the fence was refused before. Built in place on
+   key fail the copy with 1062, naming the key, as a conflict left does:
+   also two that share it only while the copy reads them, one moving on
+   before the fence, as MariaDB's online `ADD UNIQUE` fails on a
+   duplicate its log of concurrent writes meets even when a later write
+   undoes it. (Built in place, only a conflict left behind the fence fails
+   the change.) The job's phase is then the copy's decision, which each
+   shard confirms on the first shard before it publishes or aborts its
+   copy (`tarn_engine_decision`): `enforcing:apply`, or `enforcing:abort`
+   and the phases after it. Once made, the decision does not change. A
+   shard that refused the copy's PREPARE after it fenced keeps its fence
+   until the PREPARE, sent again, resumes the copy from its durable
+   capture, or the step is aborted; the job sends it again for up to a
+   minute from the first refusal, however long the copy before it took.
+   The second step builds the local index in place when `index_build` is
+   `in_place`, when a lazy index of the table is not ready, and when a
+   replica does not answer `tarn_uix_building_copy_capabilities` or one of
+   the copy's own (`tarn_engine_rebuild_capabilities`,
+   `tarn_engine_rebuild_aux_capabilities`,
+   `tarn_engine_rebuild_drops_capabilities`, and
+   `tarn_engine_rebuild_lazy_capabilities` for a table with lazy indexes).
+   On a cluster with replicated shards, when `index_build` is not
+   `in_place`, the first step is then refused (1846) above
+   `alter_check_rows` rows per shard, as a fill behind the fence was
+   refused before. Built in place on
    an unreplicated shard's vinyl table, the key's local index is built
    before the second step fences the table, as every vinyl build is
    (§2.11): from then on, a write that gives a row a key another row of the
@@ -2737,7 +2748,7 @@ throughput measurements:
 | `lua/test/engine_catchup_test.lua` | a copy's catch-up passes (issue #184), on both engines: passes during a copy written to more keys than its capture holds, a threshold of 0, the final pass's bound, unique values that change hands across a pass, a row written since a pass's swap that held a reread row's value, a write in flight at a pass's swap and one left in the synchronous queue, a pass that fails after its swap, after its deletes and through another job's cut, with and without room for its keys, passes in PREPARE over more keys than a batch, a capture lost during and after a pass, writes that outpace the passes during the copy and before the fence (1205); BUILD and PREPARE in slices, the budget of passes across sliced calls, a takeover and an ABORT between slices, a call that waited for the serial lock longer than its slice; PREPARE's own budget of passes after BUILD's, and the copy's restarts counted until it reaches the end of the table | 54 checks with the native module and with native disabled; the copy never restarts for its capture's size, and is exact |
 | `lua/test/engine_resume_test.lua` | a copy's durable capture (issue #184), on both engines: a capture lost during the copy, during a pass after its swap, and behind the fence resumes, with the rows written before and after the loss and after the resume; a pass's settled generation bounds the capture rebuilt; a pass and the final pass clear only the keys the durable capture notes, so a key whose write rolled back keeps its copy; a copy the holder rule takes out is a hole, which a resume puts back (and PREPARE meets the source's duplicate, 1062); a write rolled back leaves no entry; a resume waits for a write in flight and orders after one left in the synchronous queue; a copy not marked durable starts over; one past its limits starts over with a durable capture of its own; publication and ABORT drop the durable capture; a resume that fails part way (a deadline, another job's cut) leaves the capture lost, and one whose capture is lost meanwhile fails the step for now (1213), and the step sent again resumes; a durable capture bound again takes the generation after the settled one; a pass prunes the entries it settled once there are many; a write that began during ABORT's cut is not aborted by the drop of the durable capture; a reset after a resume has a deadline of its own, and one that fails leaves the copy to start over | 56 checks with the native module and with native disabled; every copy is exact |
 | `lua/test/engine_drop_test.lua` | rebuilds that drop a global or a lazy index (issue #184), on both engines: writes and a duplicate through the dropped global index during the copy, PREPARE holding and fencing its space and not the kept one's, an APPLY interrupted before the catalog commit, publication keeping and renaming the other index, cleanup dropping the dropped one's space, a write naming it then (1412), the schema export, DROP TABLE; a dropped generation that takes the old space's writes until publication, which rebinds the kept one and retires it, and later writes; a lazy index renewed, dropped and made in one copy; ABORT; refused descriptors, malformed ones at every step | 74 checks with the native module and with native disabled; ABORT retires nothing |
-| `lua/test/engine_uix_build_test.lua` | the step of an online build of a global unique index that makes it enforcing as a copy (issue #292), on both engines: the building index takes the table's writes during the copy, from SQL servers that maintain it; PREPARE fences the table, and APPLY waits for the job's decision; once decided, no phase changes it; APPLY publishes the local unique index on the copy, keeps the entries renamed after it and drops the conflicts, after which writes need no mark and a duplicate of the shard is refused; a conflict left fails PREPARE with 1062 and its key, ABORT leaves the table building and taking writes, and the decision holds through the step that drops the index; two rows of the shard that share the key fail the copy with 1062 and the key; a copy that would check a space it keeps is refused | 22 checks with the native module and with native disabled |
+| `lua/test/engine_uix_build_test.lua` | the step of an online build of a global unique index that makes it enforcing as a copy (issue #292), on both engines: the building index takes the table's writes during the copy, from SQL servers that maintain it; PREPARE fences the table, and APPLY waits for the job's decision; once decided, no phase changes it; APPLY publishes the local unique index on the copy, keeps the entries renamed after it and drops the conflicts, after which writes need no mark and a duplicate of the shard is refused; a conflict left fails PREPARE with 1062 and its key, ABORT leaves the table building and taking writes, and the decision holds through the step that drops the index; two rows of the shard that share the key fail the copy with 1062 and the key; a PREPARE whose drain times out on a prepared transaction keeps its fence, and sent again by the server that took the job over (its next generation) resumes and prepares, the run before refused; a copy that would check a space it keeps is refused | 28 checks with the native module and with native disabled |
 | `lua/test/engine_checks_test.lua` | rebuilds that check rows against a narrower type or NOT NULL (issue #184), on both engines: a page's row that fails a range, NOT NULL, length or digits check, a pass's reread of a row made invalid during the copy, and the final pass's, each fail the change with the in-place error and the row's position; a row made invalid and valid again fails nothing; a check of an unknown kind is refused; ABORT leaves the table as it was | 32 checks with the native module and with native disabled |
 | `lua/test/engine_terminal_test.lua` | a detached shadow commit remains tracked after its caller ends; cleanup waits for the terminal/native queue cut; capture allocation failure cannot certify a lost tail | focused native-terminal fault gate, separate from process loss |
 | `lua/test/engine_replication.sh` | quorum-2/fsync replica sets: leader loss during copy resumes the copy from the durable capture, whose entry for a row written behind the cursor reached every replica with it (issue #184); a later leader loss preserves PREPARED and completes publication/cleanup | passes in both engine directions, with native enabled and disabled; eight owned leader terminations across four cohorts |

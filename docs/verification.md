@@ -2180,13 +2180,19 @@ which `EngineCutover.tla` takes as confirmed central state that does not
 change once made; `E.job_decision` maps an online build's phases to it,
 and `tarn_job_phase` refuses a phase that would change it.
 [A suite for that copy](../lua/test/engine_uix_build_test.lua) checks it on
-both engines, 22 checks with the native module and as many without: the
+both engines, 28 checks with the native module and as many without: the
 building index takes the writes during the copy; APPLY waits for the
 decision, which no later phase changes; publication keeps the entries,
 renamed after the copy, and drops the conflicts; a conflict left, and two
 rows of the shard with one key, fail it with 1062 and the key, and ABORT
-leaves the table building; a copy that would check a space it keeps is
-refused. Taking the conflicts check out of the copy's PREPARE fails it.
+leaves the table building; a PREPARE refused behind its fence keeps it,
+and sent again by the server that took the job over resumes the copy and
+prepares, while the run before is refused; a copy that would check a space
+it keeps is refused. Taking the conflicts check out of the copy's PREPARE fails it.
+CI also runs the MariaDB differential suite on a cluster whose
+`index_build` is `copy`, so that its `ALTER TABLE` cases, those that add
+unique keys without the shard key among them, build by copying the table
+and fail as MariaDB does.
 `tests/uniquebuild.sh` runs the build through SQL on 2 shards, on memtx and
 on vinyl (CI runs both, each with and without the copy), with
 `alter_check_rows` far below the table's rows per shard: while sessions write to the table and keep models of it, the

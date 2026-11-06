@@ -13,7 +13,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ([#292](https://github.com/cstheorist/tarn/issues/292)), with no row
   limit. On replicated shards, the step that makes the key enforcing copies
   the table, as other index builds do there, rather than build the key's
-  local index in place (#267). While
+  local index in place (#267); where it cannot (a replica without the
+  copy, or a lazy index of the table not ready), the limit of a fill
+  behind the fence stays. While
   it builds, a write that gives a row a key another row holds records a
   conflict instead of failing, and a backfill gives the rows from before
   their entries in transactions that validate them. The key is published
