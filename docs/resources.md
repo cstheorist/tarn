@@ -45,7 +45,11 @@ savepoints. Session variables and prepared definitions have a retained
 account limited by `query_bytes`. All these accounts share `server_bytes`;
 plan-cache entries, SQL connection input buffers and binary long parameters
 also reserve against that gateway-wide cap. `server_work` covers concurrent
-queries, rather than a replenishing per-second rate.
+queries, rather than a replenishing per-second rate. The backfill of an
+online build of a global unique index (issue #292) is not charged to its
+`ALTER TABLE`: each of its transactions has a query budget of its own,
+released as it commits, so that `query_bytes` does not limit the size of
+the table whose index it builds.
 
 Execution admission failures return **1041/HY000**, with a message starting
 `Tarn resource limit:`. The statement has not committed any DML. An explicit

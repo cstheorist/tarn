@@ -606,7 +606,12 @@ and its arguments hold the steps', the backfill's cursors and the error to
 report, so a server that takes the job over (§2.10) goes on from there. The
 job holds the table, and bucket moves wait for it throughout, so that no row
 escapes the cursors. Neither the backfill nor the check of the conflicts
-counts against `tarn.cfg.alter_check_rows`.
+counts against `tarn.cfg.alter_check_rows`. Each of the backfill's
+transactions has a query memory budget of its own (`query_bytes`,
+[resources](resources.md)), which it releases as it ends: the ALTER
+statement's would keep what every page read charged to it until the
+statement returned, and refuse the backfill (1041) after some tens of
+megabytes of rows.
 
 Otherwise (`global_index_build` is `fenced`, the change does more, or a
 replica cannot) the change fills the global index from the rows behind the
