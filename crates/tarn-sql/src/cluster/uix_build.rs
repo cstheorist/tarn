@@ -211,9 +211,9 @@ impl StepRetry {
 
 impl Cluster {
     /// ALTER TABLE change `ch` of `def`, which only adds unique keys without
-    /// the shard key (`alter::builds_globals_online`): their global indexes
-    /// built online. Ok(false): the table changed before the job began, and
-    /// the statement starts over.
+    /// the shard key, and maybe other indexes (`alter::builds_globals_online`):
+    /// their global indexes built online. Ok(false): the table changed
+    /// before the job began, and the statement starts over.
     pub(crate) async fn alter_globals_online(
         &self,
         def: &TableDef,
@@ -221,7 +221,10 @@ impl Cluster {
         deadline: Instant,
         lock_timeout: f64,
     ) -> SqlResult<bool> {
-        let n = ch.def.indexes.len() - def.indexes.len();
+        let n = ch.def.indexes[def.indexes.len()..]
+            .iter()
+            .filter(|i| i.global.is_some())
+            .count();
         let first = self.alloc_space_ids(2 * n as u64).await?;
         let ids: Vec<(u32, u32)> = (0..n as u32).map(|k| (first + 2 * k, first + 2 * k + 1)).collect();
         let vers = [

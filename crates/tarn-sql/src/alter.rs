@@ -1916,15 +1916,19 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
 }
 
 /// Whether change `ch` of `def` adds unique keys without the shard key, and
-/// changes nothing else, so that their global indexes are built online
-/// (`online_steps`, issue #292) rather than filled behind the fence, which
-/// refuses tables above `alter_check_rows` rows per shard.
+/// changes nothing else but add other indexes that are neither global nor
+/// lazy, so that their global indexes are built online (`online_steps`,
+/// issue #292) rather than filled behind the fence, which refuses tables
+/// above `alter_check_rows` rows per shard. The step that makes the keys
+/// enforcing builds the other indexes with the keys' local ones.
 pub fn builds_globals_online(def: &TableDef, ch: &Change) -> bool {
     let n = def.indexes.len();
     if ch.def.indexes.len() <= n || def.indexes.iter().any(|i| i.building.is_some()) {
         return false;
     }
     let new = &ch.def.indexes[n..];
+    let global = |i: &IndexDef| i.global == Some(0) && i.lazy.is_none() && ch.def.needs_global(i);
+    let local = |i: &IndexDef| i.global.is_none() && i.lazy.is_none();
     // (The rest of the definition as it was: its version aside, and the
     // fields of its columns and bucket, which `apply` writes out, compared
     // as laid out.)
@@ -1942,9 +1946,8 @@ pub fn builds_globals_online(def: &TableDef, ch: &Change) -> bool {
     };
     ch.changed
         && ch.engine_change.is_none()
-        && new
-            .iter()
-            .all(|i| i.global == Some(0) && i.lazy.is_none() && ch.def.needs_global(i))
+        && new.iter().any(global)
+        && new.iter().all(|i| global(i) || local(i))
         && rest(&ch.def) == rest(def)
         && ch.format.is_none()
         && ch.drop.is_empty()
@@ -1965,8 +1968,8 @@ pub fn builds_globals_online(def: &TableDef, ch: &Change) -> bool {
 /// makes them enforcing can copy the table (`online_steps`, issue #292):
 /// as `rebuild_eligible` takes a rebuild of a table whose other changes
 /// are settled, every lazy index of it ready. The copy keeps the table's
-/// global and lazy indexes, and only adds the new keys' local indexes
-/// (`builds_globals_online`).
+/// global and lazy indexes, and only adds the new keys' local indexes and
+/// the change's other new indexes (`builds_globals_online`).
 pub fn online_copy_eligible(def: &TableDef) -> bool {
     !def.indexes
         .iter()
@@ -1984,16 +1987,17 @@ pub struct OnlineCopy {
 
 /// The steps of an online build of the global indexes change `ch` of `def`
 /// adds (`builds_globals_online`; tla/GlobalUniqueBuild.tla), at versions
-/// `vers`, with the space ids of each new index's entries and conflicts
-/// (`ids`, in index order):
-/// 1. the building version: the indexes building, their spaces made, no
-///    local index yet;
-/// 2. the enforcing version: the local unique indexes built, the conflicts
-///    checked empty behind the fence and dropped. With `copy`, by a rebuild
-///    that copies the table into a new space whose indexes exist before its
-///    rows (issue #292, as `rebuild_eligible` takes one), rather than in
-///    place: it keeps the table's global indexes, the new ones' entries
-///    among them, renamed after the new space, and drops their conflicts;
+/// `vers`, with the space ids of each new global index's entries and
+/// conflicts (`ids`, in index order):
+/// 1. the building version: the global indexes building, their spaces
+///    made, no local index yet, and none of the change's other new indexes;
+/// 2. the enforcing version: the local unique indexes built, with the
+///    change's other new indexes, the conflicts checked empty behind the
+///    fence and dropped. With `copy`, by a rebuild that copies the table
+///    into a new space whose indexes exist before its rows (issue #292, as
+///    `rebuild_eligible` takes one), rather than in place: it keeps the
+///    table's global indexes, the new ones' entries among them, renamed
+///    after the new space, and drops their conflicts;
 /// 3. if the second fails: the original definition, the spaces dropped.
 pub fn online_steps(
     def: &TableDef,
@@ -2003,6 +2007,16 @@ pub fn online_steps(
     copy: Option<OnlineCopy>,
 ) -> SqlResult<[Change; 3]> {
     let n = def.indexes.len();
+    let globals: Vec<usize> = (n..ch.def.indexes.len())
+        .filter(|&p| ch.def.indexes[p].global.is_some())
+        .collect();
+    if globals.len() != ids.len() {
+        return Err(SqlError::internal(format!(
+            "an online build of {} global indexes given the spaces of {}",
+            globals.len(),
+            ids.len()
+        )));
+    }
     let mut building = ch.clone();
     building.def.ver = vers[0];
     building.builds = Vec::new();
@@ -2010,10 +2024,10 @@ pub fn online_steps(
     let mut enforcing = ch.clone();
     enforcing.def.ver = vers[1];
     enforcing.building = true;
-    for (k, &(entries, conflicts)) in ids.iter().enumerate() {
-        let declared = &mut enforcing.def.indexes[n + k];
+    for (&p, &(entries, conflicts)) in globals.iter().zip(ids) {
+        let declared = &mut enforcing.def.indexes[p];
         declared.global = Some(entries);
-        let ix = &mut building.def.indexes[n + k];
+        let ix = &mut building.def.indexes[p];
         ix.global = Some(entries);
         ix.building = Some(catalog::Building {
             conflicts,
@@ -2025,6 +2039,13 @@ pub fn online_steps(
         enforcing.uix_check.push(conflicts);
         enforcing.uix_drop.push(conflicts);
     }
+    // The change's other new indexes exist from the second step on, which
+    // builds them (the copy, before any row of its space).
+    let mut p = 0;
+    building.def.indexes.retain(|i| {
+        p += 1;
+        p <= n || i.global.is_some()
+    });
     if let Some(copy) = copy {
         // (The version the first step publishes is the one it copies.)
         enforcing.def.space_id = copy.space_id;
@@ -2734,7 +2755,7 @@ mod tests {
     }
 
     #[test]
-    fn new_global_indexes_alone_build_online() {
+    fn new_global_indexes_build_online() {
         let (def, cat) = table(
             "CREATE TABLE t (tenant_id INT, id INT, a INT, b INT, PRIMARY KEY (tenant_id, id)) \
              PARTITION BY KEY(tenant_id)",
@@ -2745,11 +2766,19 @@ mod tests {
         assert!(online(
             "ALTER TABLE t ADD UNIQUE INDEX ua (a), ADD UNIQUE INDEX ub (b, a)"
         ));
-        // A unique key with the shard key is local; other changes along
-        // with it fill the global index behind the fence.
+        // ... also with other new indexes, local ones: the step that makes
+        // the keys enforcing builds them.
+        assert!(online("ALTER TABLE t ADD UNIQUE INDEX ua (a), ADD INDEX kb (b)"));
+        assert!(online(
+            "ALTER TABLE t ADD INDEX kb (b), ADD UNIQUE INDEX ua (a), ADD UNIQUE INDEX ub (b, tenant_id)"
+        ));
+        // A unique key with the shard key is local; a lazy index, or other
+        // changes along with them, fill the global index behind the fence.
         assert!(!online("ALTER TABLE t ADD UNIQUE INDEX ua (a, tenant_id)"));
         assert!(!online("ALTER TABLE t ADD INDEX ka (a)"));
-        assert!(!online("ALTER TABLE t ADD UNIQUE INDEX ua (a), ADD INDEX kb (b)"));
+        assert!(!online(
+            "ALTER TABLE t ADD UNIQUE INDEX ua (a), ADD INDEX kb (b, id) COMMENT 'tarn:lazy'"
+        ));
         assert!(!online("ALTER TABLE t ADD COLUMN c INT, ADD UNIQUE INDEX ua (a)"));
         assert!(!online("ALTER TABLE t ADD UNIQUE INDEX ua (a), COMMENT 'x'"));
         assert!(!online("ALTER TABLE t ADD UNIQUE INDEX ua (a), RENAME TO t2"));
@@ -2814,6 +2843,52 @@ mod tests {
         // The building definition goes through the catalog's JSON intact.
         let back = catalog::parse_def_json(&building.def.lua_def().json).unwrap();
         assert_eq!(back.indexes[n].building, building.def.indexes[n].building);
+    }
+
+    #[test]
+    fn online_steps_build_the_other_new_indexes_as_they_enforce() {
+        let (def, cat) = table(
+            "CREATE TABLE t (tenant_id INT, id INT, a INT, b INT, PRIMARY KEY (tenant_id, id)) \
+             PARTITION BY KEY(tenant_id)",
+        );
+        let ch = alter(&def, &cat, "ALTER TABLE t ADD INDEX kb (b), ADD UNIQUE INDEX ua (a)").unwrap();
+        assert!(builds_globals_online(&def, &ch));
+        let [building, enforcing, dropped] = online_steps(&def, &ch, [11, 12, 13], &[(701, 702)], None).unwrap();
+        let n = def.indexes.len();
+        let names = |t: &TableDef| t.indexes[n..].iter().map(|i| i.name.clone()).collect::<Vec<_>>();
+        // 1. Building: the key building, with no local index, and no kb yet.
+        assert_eq!(names(&building.def), ["ua"]);
+        assert_eq!(building.def.indexes[n].global, Some(701));
+        assert!(building.builds.is_empty() && building.def.globals.len() == 1);
+        assert!(building
+            .def
+            .lua_def()
+            .indexes
+            .iter()
+            .all(|i| i.0 != "ua" && i.0 != "kb"));
+        // 2. Enforcing: both, as declared, built by the step.
+        assert_eq!(names(&enforcing.def), ["kb", "ua"]);
+        let (kb, ua) = (&enforcing.def.indexes[n], &enforcing.def.indexes[n + 1]);
+        assert_eq!(
+            (kb.global, kb.unique, ua.global, ua.unique),
+            (None, false, Some(701), true)
+        );
+        let mut built: Vec<u32> = enforcing.builds.iter().map(|b| b.id).collect();
+        built.sort_unstable();
+        let mut want = vec![kb.id, ua.id];
+        want.sort_unstable();
+        assert_eq!(built, want);
+        assert_eq!(
+            (enforcing.uix_check.clone(), enforcing.uix_drop.clone()),
+            (vec![702], vec![702])
+        );
+        // 3. Dropped: the table as it was, the key's spaces dropped.
+        assert_eq!(
+            (dropped.def.indexes.len(), dropped.uix_drop.clone()),
+            (n, vec![701, 702])
+        );
+        // (Spaces for as many global indexes as the change adds.)
+        assert!(online_steps(&def, &ch, [11, 12, 13], &[(701, 702), (703, 704)], None).is_err());
     }
 
     #[test]

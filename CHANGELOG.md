@@ -26,17 +26,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the table, as other index builds do there, rather than build the key's
   local index in place (#267); where it cannot (a replica without the
   copy, or a lazy index of the table not ready), the limit of a fill
-  behind the fence stays. While
-  it builds, a write that gives a row a key another row holds records a
-  conflict instead of failing, and a backfill gives the rows from before
-  their entries in transactions that validate them, each with a query
-  memory budget of its own (not the statement's, which would refuse a
-  table of more than some tens of megabytes), in pages of 64 rows or 1 MiB
-  of them. The key is published
-  only once no conflict is left behind the table's drained fence; else the
-  change fails with 1062, as in MariaDB, and leaves the table as it was. A
-  server that takes the job over goes on from the backfill's stored
-  cursors. `TLA+` models (`GlobalUniqueBuild`, `GlobalUniqueWrites`) and
+  behind the fence stays. The statement may add other indexes with the
+  keys (not lazy ones): the step that makes the keys enforcing builds them
+  too, the copy before any row of its space. While it builds, a write that
+  gives a row a key another row holds records a conflict instead of
+  failing, and a backfill gives the rows from before their entries in
+  transactions that validate them, each with a query memory budget of its
+  own (not the statement's, which would refuse a table of more than some
+  tens of megabytes), in pages of 64 rows or 1 MiB of them. The key is
+  published only once no conflict is left behind the table's drained
+  fence; else the change fails with 1062, as in MariaDB, and leaves the
+  table as it was. A server that takes the job over goes on from the
+  backfill's stored cursors. `TLA+` models (`GlobalUniqueBuild`, `GlobalUniqueWrites`) and
   Verus proofs (`uix::leave_key`, `uix::join_key`) cover the design, and
   `tests/uniquebuild.sh` runs it through SQL, on memtx and on vinyl, with a
   takeover, with and without the copy, `tests/indexcopy.sh` on 2 shards

@@ -717,7 +717,8 @@ def main():
             time.sleep(1)
             at, began = writes[0], time.monotonic()
             try:
-                q(c, f"ALTER TABLE {o} ADD UNIQUE KEY ou (u)")
+                # (with an index on another column, which the copy builds)
+                q(c, f"ALTER TABLE {o} ADD UNIQUE KEY ou (u), ADD INDEX ok (k)")
                 alter_error = None
             except pymysql.MySQLError as e:
                 alter_error = e.args
@@ -727,8 +728,8 @@ def main():
             time.sleep(1)
             stop.set()
             th.join(30)
-            check(f"{engine}: ADD UNIQUE KEY without the shard key, with alter_check_rows 1000 below the rows "
-                  f"per shard", alter_error is None, alter_error)
+            check(f"{engine}: ADD UNIQUE KEY without the shard key, and an index, with alter_check_rows 1000 below "
+                  f"the rows per shard", alter_error is None, alter_error)
             check(f"{engine}: writes went on during it, and none failed", during > 0 and not errors,
                   {"during": during, "errors": errors[:5]})
             check(f"{engine}: no replica changed its election term", terms() == before_terms,
@@ -752,6 +753,11 @@ def main():
                   {"spaces": {g["id"]: spaces[g["replicas"][0]] for g in groups}, "names": names})
             left = {node: leftovers(node) for node in nodes}
             check(f"{engine}: no copy is left on any replica", all(not v for v in left.values()), left)
+            counts = {node: ev(node, "local sp = box.space[...] "
+                                     "return {sp.index[0]:count(), sp.index.ok and sp.index.ok:count() or -1}",
+                               [ospace]) for node in nodes}
+            check(f"{engine}: every replica's copy has the statement's other index, with an entry per row",
+                  all(v[1] == v[0] for v in counts.values()), counts)
             sample = random.Random(f"o-{engine}").sample(sorted(model), 300)
             found = [q(c, f"SELECT tenant_id, id FROM {o} WHERE u = %s", (model[k],)) for k in sample]
             check(f"{engine}: the key finds rows by their value", all(f == (k,) for f, k in zip(found, sample)),
