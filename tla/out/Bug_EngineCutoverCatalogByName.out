@@ -1,13 +1,14 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=42099 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 119 and seed -7515539338203197225 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 10444] (Linux 6.18.44-fc-v230 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-drops/tla/EngineCutover.tla
-Parsing file /tmp/tlc-12745455591965512738/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-12745455591965512738/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-12745455591965512738/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-12745455591965512738/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-12745455591965512738/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-12745455591965512738/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-12745455591965512738/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 30 and seed 3896563811515845281 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 23280] (Linux 6.18.44-fc-v242 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/EngineCutover.tla
+Parsing file /tmp/tlc-6449891540497207389/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-6449891540497207389/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-6449891540497207389/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-6449891540497207389/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-6449891540497207389/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-6449891540497207389/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-6449891540497207389/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,14 +20,15 @@ Semantic processing of module EngineCutover
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCutover
-Starting... (2026-11-03 15:52:53)
+Starting... (2026-11-06 13:23:09)
 Computing initial states...
 Computed 2 initial states...
 Computed 4 initial states...
 Computed 8 initial states...
 Computed 16 initial states...
 Computed 32 initial states...
-Finished computing initial states: 36 distinct states generated at 2026-11-03 15:52:53.
+Computed 64 initial states...
+Finished computing initial states: 72 distinct states generated at 2026-11-06 13:23:09.
 Error: Invariant CatalogObservationBound is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -45,6 +47,7 @@ State 1: <Initial predicate>
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "absent", B |-> "absent"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -67,7 +70,7 @@ State 1: <Initial predicate>
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 2: <Prepared("A") line 110, col 5 to line 115, col 75 of module EngineCutover>
+State 2: <Prepared("A") line 126, col 5 to line 131, col 75 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "none"
@@ -83,6 +86,7 @@ State 2: <Prepared("A") line 110, col 5 to line 115, col 75 of module EngineCuto
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "building", B |-> "absent"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -105,7 +109,7 @@ State 2: <Prepared("A") line 110, col 5 to line 115, col 75 of module EngineCuto
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 3: <ReadyAux("A") line 120, col 5 to line 125, col 85 of module EngineCutover>
+State 3: <ReadyAux("A") line 136, col 5 to line 141, col 85 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "none"
@@ -121,6 +125,7 @@ State 3: <ReadyAux("A") line 120, col 5 to line 125, col 85 of module EngineCuto
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "building", B |-> "absent"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -143,7 +148,7 @@ State 3: <ReadyAux("A") line 120, col 5 to line 125, col 85 of module EngineCuto
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 4: <Prepared("B") line 110, col 5 to line 115, col 75 of module EngineCutover>
+State 4: <Prepared("B") line 126, col 5 to line 131, col 75 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "none"
@@ -159,6 +164,7 @@ State 4: <Prepared("B") line 110, col 5 to line 115, col 75 of module EngineCuto
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "building", B |-> "building"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -181,7 +187,7 @@ State 4: <Prepared("B") line 110, col 5 to line 115, col 75 of module EngineCuto
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 5: <ReadyAux("B") line 120, col 5 to line 125, col 85 of module EngineCutover>
+State 5: <ReadyAux("B") line 136, col 5 to line 141, col 85 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "none"
@@ -197,6 +203,7 @@ State 5: <ReadyAux("B") line 120, col 5 to line 125, col 85 of module EngineCuto
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "building", B |-> "building"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -219,7 +226,7 @@ State 5: <ReadyAux("B") line 120, col 5 to line 125, col 85 of module EngineCuto
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 6: <DecideApply line 128, col 5 to line 132, col 102 of module EngineCutover>
+State 6: <DecideApply line 144, col 5 to line 148, col 111 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "apply"
@@ -235,6 +242,7 @@ State 6: <DecideApply line 128, col 5 to line 132, col 102 of module EngineCutov
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "building", B |-> "building"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -257,7 +265,7 @@ State 6: <DecideApply line 128, col 5 to line 132, col 102 of module EngineCutov
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 7: <Unname("A") line 139, col 5 to line 144, col 26 of module EngineCutover>
+State 7: <Unname("A") line 155, col 5 to line 160, col 26 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "apply"
@@ -273,6 +281,7 @@ State 7: <Unname("A") line 139, col 5 to line 144, col 26 of module EngineCutove
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "building", B |-> "building"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -295,7 +304,7 @@ State 7: <Unname("A") line 139, col 5 to line 144, col 26 of module EngineCutove
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 8: <ObserveCatalog("A") line 252, col 5 to line 258, col 26 of module EngineCutover>
+State 8: <ObserveCatalog("A") line 284, col 5 to line 290, col 26 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "apply"
@@ -311,6 +320,7 @@ State 8: <ObserveCatalog("A") line 252, col 5 to line 258, col 26 of module Engi
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "building", B |-> "building"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -333,7 +343,7 @@ State 8: <ObserveCatalog("A") line 252, col 5 to line 258, col 26 of module Engi
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 0, def_id |-> 1, json_version |-> 0]
 
-70057 states generated, 15782 distinct states found, 6080 states left on queue.
+139822 states generated, 31499 distinct states found, 12135 states left on queue.
 The depth of the complete state graph search is 8.
-Finished in 01s at (2026-11-03 15:52:54)
-Trace exploration spec path: ./EngineCutover_TTrace_1793739172.tla
+Finished in 02s at (2026-11-06 13:23:11)
+Trace exploration spec path: ./EngineCutover_TTrace_1793989388.tla

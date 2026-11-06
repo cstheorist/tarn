@@ -8279,6 +8279,7 @@ BK.production_functions = {
         'tarn_engine_rebuild_format_capabilities',
         'tarn_engine_rebuild_lazy_capabilities',
         'tarn_engine_rebuild_lazy_made_capabilities',
+        'tarn_engine_rebuild_rename_capabilities',
         'tarn_estimate',
         'tarn_fence',
         'tarn_info',
@@ -8441,6 +8442,10 @@ function tarn_engine_rebuild_drops_capabilities() return {'ok', 1} end
 -- #184): every leader must note its writes there. The SQL server asks for
 -- it only when every replica answers.
 function tarn_engine_durable_capabilities() return {'ok', 1} end
+-- A rebuild that also renames the table (issue #292): it publishes the copy
+-- under the new name. The SQL server copies such a change only when every
+-- replica answers; storage from before refuses it.
+function tarn_engine_rebuild_rename_capabilities() return {'ok', 1} end
 -- Building global indexes (issue #292): ALTER steps with a.building and
 -- a.uix_check, catalog entries with def.building, and the fence pair that
 -- says a write maintains building indexes. The SQL server builds a global

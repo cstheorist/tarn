@@ -2334,10 +2334,11 @@ impl Cluster {
     /// `alter::rebuild_eligible` takes, and every replica of every shard
     /// must know the rebuild, since any of them may take over the job; a
     /// rebuild that changes the stored layout, checks rows, keeps, makes or
-    /// drops global or lazy indexes, needs the replicas to know that too
-    /// (`alter::rebuild_changes_layout`, `alter::rebuild_checks_rows`,
-    /// `alter::rebuild_keeps_globals`, `alter::rebuild_keeps_lazy`,
-    /// `alter::rebuild_makes_lazy`, `alter::rebuild_drops_indexes`). A
+    /// drops global or lazy indexes, or renames the table, needs the
+    /// replicas to know that too (`alter::rebuild_changes_layout`,
+    /// `alter::rebuild_checks_rows`, `alter::rebuild_keeps_globals`,
+    /// `alter::rebuild_keeps_lazy`, `alter::rebuild_makes_lazy`,
+    /// `alter::rebuild_drops_indexes`, `alter::rebuild_renames`). A
     /// replica that does not answer, or predates what the change needs,
     /// leaves the change to build in place.
     async fn copy_index_builds(&self, def: &TableDef, ch: &crate::alter::Change) -> bool {
@@ -2368,6 +2369,9 @@ impl Cluster {
         }
         if crate::alter::rebuild_drops_indexes(ch) {
             needed.push("tarn_engine_rebuild_drops_capabilities");
+        }
+        if crate::alter::rebuild_renames(ch) {
+            needed.push("tarn_engine_rebuild_rename_capabilities");
         }
         for shard in self.live_shards() {
             for addr in self.shards[shard].replicas() {

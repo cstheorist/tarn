@@ -1413,15 +1413,28 @@ primary keys, which the copy keeps, and both definitions write them, so
 publication neither dooms their readers nor retires them. Their writes
 carry the table's definition fence, which refuses the old definition's
 from PREPARE on. They are named after the space with the table's name,
-and APPLY renames them after the new space once it has that name, before
-the catalog names it, repeatably by ID. In between a lookup by name
-(`UIX.spaces`) misses them, so it also takes the spaces that the catalog
-entry of the table lists, found by the name of the space it is given.
-`KeptFound` says that a lookup through the space with the table's name
-finds them throughout publication, `KeptNamedAfterCatalog` that they are
-named after the space the catalog names once it names the new one, and
-`KeptAlive` that cleanup never drops them; `BugKeptByNameOnly`,
-`BugPublishBeforeKeptRename` and `BugRetireKept` each break one.
+and APPLY renames them after the new space once the old one has given the
+table's name up, before the catalog names the new one, repeatably by ID.
+Until then a lookup by name (`UIX.spaces`) misses them through the new
+space, so it also takes the spaces that the catalog entry of the table
+lists, found by the name of the space it is given. `KeptFound` says that a
+lookup through a space with the table's name finds them throughout
+publication, `KeptNamedAfterCatalog` that they are named after the space
+the catalog names once it names the new one, and `KeptAlive` that cleanup
+never drops them; `BugKeptByNameOnly`, `BugPublishBeforeKeptRename` and
+`BugRetireKept` each break one.
+
+Such a rebuild may also rename the table (issue #292), which the model
+takes on every run as one of its two starting states (`renames`). APPLY
+then gives the new space the new name, and the catalog's transaction
+moves the table's entry from the old name to the new one. Until that
+transaction, no catalog entry is under the new name, so a lookup through
+the new space finds the kept spaces only by their own names: APPLY renames
+them before the new space takes the new name. `BugRenameBeforeKept`
+renames them after it, and breaks `KeptFound`. `AbortedUnderOldName` says
+that an aborted copy leaves the table, and its catalog entry, under the
+old name; `BugAbortAfterDecision` and `BugPublishBeforeDecision` now break
+it first.
 
 Such a rebuild keeps the table's lazy generations too (`rebuild = 'lazy'`):
 their targets, entries, outbox and deliveries name the generation, but
@@ -1882,7 +1895,7 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
   Bug_EngineCutoverAbortKeepsMade Bug_EngineCutoverAbortSkipsMissing \
   Bug_EngineCutoverPendingOnlyKept Bug_EngineCutoverReadyUnscanned \
   Bug_EngineCutoverPublishUnready Bug_EngineCutoverAbortRetiresDropped \
-  Bug_EngineCutoverRetireBeforePublish
+  Bug_EngineCutoverRetireBeforePublish Bug_EngineCutoverRenameBeforeKept
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
@@ -1915,37 +1928,53 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 | `Bug_EngineCopyPageUnchecked` | 65,975 | 13 | violates `CheckedImage`: a page writes a row the change's checks refuse, and no later write of it comes |
 | `Bug_EngineCopyPassUnchecked` | 406,406 | 17 | violates `CheckedImage`: a pass rereads a row a write made invalid during the copy and writes it unchecked |
 | `Bug_EngineCopyTailUnchecked` | 137,124 | 14 | violates `CheckedImage`: the final pass rereads a row made invalid and writes it unchecked |
-| `EngineCutover` | 70,982 | 26 | passes |
-| `Bug_EngineCutoverAbortAfterDecision` | 43,487 | 12 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverApplyAfterAbort` | 49,386 | 13 | violates `CatalogHasSpace` |
-| `Bug_EngineCutoverDropBeforePublish` | 38 | 2 | violates `CatalogHasSpace` |
-| `Bug_EngineCutoverForgetOldObligations` | 39 | 2 | violates `OldObligationsRetained` |
-| `Bug_EngineCutoverOldStreamValidates` | 41,228 | 12 | violates `OldStreamsRejected` |
-| `Bug_EngineCutoverPublishBeforeAuxReady` | 26,144 | 9 | violates `PublishedReady` |
-| `Bug_EngineCutoverPublishBeforeDecision` | 40,207 | 11 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 46,886 | 14 | violates `CatalogHasSpace` |
-| `Bug_EngineCutoverResetCounterIdentity` | 41,231 | 12 | violates `CounterNeverReuses` |
-| `Bug_EngineCutoverCatalogByName` | 15,782 | 8 | violates `CatalogObservationBound` |
-| `Bug_EngineCutoverAuxStreamOmitted` | 41,228 | 12 | violates `OldStreamsRejected` |
-| `Bug_EngineCutoverKeptByNameOnly` | 15,780 | 8 | violates `KeptFound`: the copy has the table's name, and a lookup by name finds the kept index under neither |
-| `Bug_EngineCutoverPublishBeforeKeptRename` | 30,339 | 10 | violates `KeptNamedAfterCatalog`: the catalog names the copy while the kept index is still named after the old space |
-| `Bug_EngineCutoverRetireKept` | 41,225 | 12 | violates `KeptAlive`: cleanup drops the kept index with the old space |
-| `Bug_EngineCutoverRebindAfterPublish` | 36,605 | 11 | violates `KeptLazyBound`: the catalog names the copy while the kept lazy generation is still bound to the old space |
-| `Bug_EngineCutoverAbortRetiresKept` | 288 | 3 | violates `KeptLazyAlive`: ABORT retires the generation the table keeps |
-| `Bug_EngineCutoverNoPendingNew` | 18,236 | 13 | violates `KeptLazyCaptured`: a lazy registry read while the catalog's transaction waits for its quorum, used once it is confirmed, takes a write to the new space uncaptured |
-| `Bug_EngineCutoverMadeUnbound` | 36,605 | 11 | violates `MadeBound`: the catalog names the copy while the generation the copy made is still bound to the old space |
-| `Bug_EngineCutoverAbortKeepsMade` | 1,200 | 4 | violates `AbortedMadeRetired`: ABORT leaves the generation the copy made building on the old space |
-| `Bug_EngineCutoverAbortSkipsMissing` | 5,450 | 6 | violates `AbortedMadeRetired`: ABORT writes no retired descriptor for a generation never started, and a late start of its build, once a later job replaced the record, starts it |
-| `Bug_EngineCutoverPendingOnlyKept` | 31,211 | 13 | violates `KeptLazyCaptured`: for a copy that keeps no generation, a registry read before the catalog commit does not know the new space, and the new space takes a write uncaptured |
-| `Bug_EngineCutoverReadyUnscanned` | 41,875 | 11 | violates `MadePublished`: READY marks the made generation ready before its scan has ended, and publication follows |
-| `Bug_EngineCutoverPublishUnready` | 36,605 | 11 | violates `MadePublished`: with a coordinator that sends no READY, APPLY publishes the made generation still building |
-| `Bug_EngineCutoverAbortRetiresDropped` | 1,008 | 4 | violates `RetiredOnlyUnnamed`: ABORT retires what the copy would have dropped, which the table's definition still names |
-| `Bug_EngineCutoverRetireBeforePublish` | 268 | 3 | violates `RetiredOnlyUnnamed`: what the copy drops is retired once the shard has prepared, before the catalog names the copy |
+| `EngineCutover` | 147,394 | 26 | passes |
+| `Bug_EngineCutoverAbortAfterDecision` | 31,500 | 8 | violates `AbortedUnderOldName`: the decision changes after a shard gave up the old name |
+| `Bug_EngineCutoverApplyAfterAbort` | 100,481 | 13 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverDropBeforePublish` | 74 | 2 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverForgetOldObligations` | 75 | 2 | violates `OldObligationsRetained` |
+| `Bug_EngineCutoverOldStreamValidates` | 83,009 | 12 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverPublishBeforeAuxReady` | 52,804 | 9 | violates `PublishedReady` |
+| `Bug_EngineCutoverPublishBeforeDecision` | 19,408 | 7 | violates `AbortedUnderOldName`: the decision changes after a shard gave up the old name |
+| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 94,752 | 14 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverResetCounterIdentity` | 83,012 | 12 | violates `CounterNeverReuses` |
+| `Bug_EngineCutoverCatalogByName` | 31,499 | 8 | violates `CatalogObservationBound` |
+| `Bug_EngineCutoverAuxStreamOmitted` | 83,009 | 12 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverKeptByNameOnly` | 31,496 | 8 | violates `KeptFound`: the copy has the table's name, and a lookup by name finds the kept index under neither |
+| `Bug_EngineCutoverPublishBeforeKeptRename` | 60,663 | 10 | violates `KeptNamedAfterCatalog`: the catalog names the copy while the kept index is still named after the old space |
+| `Bug_EngineCutoverRetireKept` | 83,006 | 12 | violates `KeptAlive`: cleanup drops the kept index with the old space |
+| `Bug_EngineCutoverRebindAfterPublish` | 73,433 | 11 | violates `KeptLazyBound`: the catalog names the copy while the kept lazy generation is still bound to the old space |
+| `Bug_EngineCutoverAbortRetiresKept` | 552 | 3 | violates `KeptLazyAlive`: ABORT retires the generation the table keeps |
+| `Bug_EngineCutoverNoPendingNew` | 36,882 | 13 | violates `KeptLazyCaptured`: a lazy registry read while the catalog's transaction waits for its quorum, used once it is confirmed, takes a write to the new space uncaptured |
+| `Bug_EngineCutoverMadeUnbound` | 73,433 | 11 | violates `MadeBound`: the catalog names the copy while the generation the copy made is still bound to the old space |
+| `Bug_EngineCutoverAbortKeepsMade` | 2,364 | 4 | violates `AbortedMadeRetired`: ABORT leaves the generation the copy made building on the old space |
+| `Bug_EngineCutoverAbortSkipsMissing` | 10,712 | 6 | violates `AbortedMadeRetired`: ABORT writes no retired descriptor for a generation never started, and a late start of its build, once a later job replaced the record, starts it |
+| `Bug_EngineCutoverPendingOnlyKept` | 63,097 | 13 | violates `KeptLazyCaptured`: for a copy that keeps no generation, a registry read before the catalog commit does not know the new space, and the new space takes a write uncaptured |
+| `Bug_EngineCutoverReadyUnscanned` | 84,203 | 11 | violates `MadePublished`: READY marks the made generation ready before its scan has ended, and publication follows |
+| `Bug_EngineCutoverPublishUnready` | 73,433 | 11 | violates `MadePublished`: with a coordinator that sends no READY, APPLY publishes the made generation still building |
+| `Bug_EngineCutoverAbortRetiresDropped` | 1,960 | 4 | violates `RetiredOnlyUnnamed`: ABORT retires what the copy would have dropped, which the table's definition still names |
+| `Bug_EngineCutoverRetireBeforePublish` | 532 | 3 | violates `RetiredOnlyUnnamed`: what the copy drops is retired once the shard has prepared, before the catalog names the copy |
+| `Bug_EngineCutoverRenameBeforeKept` | 31,864 | 8 | violates `KeptFound`: a copy that renames the table gives the new space the new name before renaming the kept index after it, and no catalog entry is under that name yet |
 
 The three configurations for kept global index spaces are generated by
 `gen_cfgs.sh` and bring the default check list from 337 to 340, the three
 for kept lazy generations to 343, the six for made ones to 349, and the five
 for catch-up passes (three in `EngineCopy`, two in `ShadowUnique`) to 354.
+`Bug_EngineCutoverRenameBeforeKept`, for a copy that renames its table
+(issue #292), adds one more.
+
+[A suite for copies that rename their table](../lua/test/engine_rename_test.lua)
+(issue #292) runs them on both engines, 22 checks with the native module and
+as many without: the kept global index spaces are named after the copy by
+the time it has the new name, while the catalog still lists the table under
+the old one; an APPLY interrupted there, or before the catalog commit, goes
+on when sent again; publication moves the catalog entry to the new name;
+ABORT leaves the table under its old name; a rename to another table's name
+is refused (1050), and so is one that would also make a lazy index; kept
+lazy generations are rebound to the copy. Renaming the kept spaces after
+the copy takes the new name, as `BugRenameBeforeKept` does, fails it. The
+MariaDB differential suite renames a table with global unique keys along
+with an index build, by default and, in CI, with `index_build` `copy`.
 
 ### Unique indexes on an engine copy's shadow (issue #267)
 

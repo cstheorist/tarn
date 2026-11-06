@@ -163,10 +163,13 @@ every replica), and drops the global indexes (unique keys without the
 shard key) and lazy indexes the change drops, retiring them as it is
 published (with `tarn_engine_rebuild_drops_capabilities`); a lazy index
 whose key column is made nullable gets a new ID, and so a new generation,
-which the copy builds as it builds a new lazy index. A change that checks
-existing rows and builds no index, renames the table, makes a global
-index, or adds a lazy index on a column it adds or retypes, or together
-with an index on a column added with a non-NULL default, builds in place,
+which the copy builds as it builds a new lazy index. A change that also
+renames the table copies it too, and publishes it under the new name
+(with `tarn_engine_rebuild_rename_capabilities`), unless it adds a lazy
+index. A change that checks existing rows and builds no index, makes a
+global index, or adds a lazy index on a column it adds or retypes, or
+together with an index on a column added with a non-NULL default, builds in
+place,
 as does any change while a replica does not answer or runs a version
 without the copy (a change of the stored layout, a new format or rows
 padded with fills, needs `tarn_engine_rebuild_format_capabilities` on
@@ -744,13 +747,14 @@ indexes on a populated table: `auto` (the default) copies the table into a
 space that has its indexes before its rows when a shard has replicas,
 `copy` always does, and `in_place` builds them on the table's own space.
 Changes that build secondary indexes copy, also when they add, rename or
-drop columns, when the table has global or lazy indexes, which the copy
-keeps, and when they make a lazy index. They don't copy when they check
-rows against a new type, make a global index, drop a global or lazy index
-or change a lazy one, or make a lazy index on a column they add or retype,
-or along with fields to materialize. See [storage nodes](#storage-nodes)
-for what the copy costs and why a replicated shard needs it (issues #267
-and #184).
+drop columns, check rows against a new type, drop global or lazy indexes
+or rename the table, when the table has global or lazy indexes, which the
+copy keeps, and when they make a lazy index. They don't copy when they make
+a global index (but the online build's step that makes one enforcing, see
+`global_index_build`), or make a lazy index on a column they add or
+retype, along with fields to materialize, or along with a rename of the
+table. See [storage nodes](#storage-nodes) for what the copy costs and why
+a replicated shard needs it (issues #267, #184 and #292).
 
 `global_index_build` is how `ALTER TABLE` and `CREATE UNIQUE INDEX` build
 the global index of a new unique key without the shard key on a populated
