@@ -688,6 +688,7 @@ options:
   "deadlock_interval": 1.0,
   "ddl_job_stale": 30,
   "index_build": "auto",
+  "global_index_build": "online",
   "move_timeout": 10,
   "default_collation": "utf8mb4_bin"
 }
@@ -750,6 +751,23 @@ or change a lazy one, or make a lazy index on a column they add or retype,
 or along with fields to materialize. See [storage nodes](#storage-nodes)
 for what the copy costs and why a replicated shard needs it (issues #267
 and #184).
+
+`global_index_build` is how `ALTER TABLE` and `CREATE UNIQUE INDEX` build
+the global index of a new unique key without the shard key on a populated
+table: `online` (the default) while writes go on, with no row limit, in a
+job of three steps and a backfill that a server taking the job over
+continues (issue #292, [design §1.4](design.md#14-global-unique-indexes));
+`fenced` fills it from the rows behind the table's fence, while writes to
+the table wait, and refuses (1846) a table with more than
+`alter_check_rows` rows on a shard, as every build did before. A statement
+that changes more than its new unique keys, and one on a cluster with a
+replica that does not answer `tarn_uix_building_capabilities` (a storage
+node from before), builds `fenced`. On a cluster with replicated shards,
+the online build's last step builds the key's local index in place, so the
+change is refused above `alter_check_rows` rows per shard (1846) unless
+`index_build` is `in_place`, as a fill behind the fence is. While a build
+runs, the shards refuse (1412) writes to the table from SQL servers that
+predate it: upgrade the SQL servers before adding such keys.
 
 `ddl_step_slice` is how long, in seconds, one call of a copy's BUILD or
 PREPARE runs before it returns and the SQL server sends it again (issue

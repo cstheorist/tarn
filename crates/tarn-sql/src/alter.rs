@@ -30,6 +30,7 @@ use crate::types::{int_range, BaseType, SqlType};
 use sqlparser::ast as A;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser;
+use std::sync::Arc;
 use tarn_common::{SqlError, SqlResult, Value};
 
 /// Column position of ADD / MODIFY / CHANGE.
@@ -1051,6 +1052,16 @@ pub struct Change {
     pub uix_new: Vec<u32>,
     pub lazy_drop: Vec<u32>,
     pub lazy_new: Vec<u32>,
+    /// A step of an online build of global indexes (`online_steps`): the
+    /// shards store its fence, and fill none of its new spaces.
+    pub building: bool,
+    /// Conflicts spaces of building global indexes that must be empty on
+    /// each shard behind its fence (the step that makes them enforcing).
+    pub uix_check: Vec<u32>,
+    /// The first step of an online build whose last would build the keys'
+    /// local indexes in place on replicated shards: the shards refuse it
+    /// above `alter_check_rows` rows (1846), as they refuse such a fill.
+    pub building_limit: bool,
 }
 
 fn not_found_col(c: &str) -> SqlError {
@@ -1343,6 +1354,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         global: None,
                         lazy: None,
                         comment: String::new(),
+                        building: None,
                     });
                 }
                 changed = true;
@@ -1541,6 +1553,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         global: None,
                         lazy: None,
                         comment: String::new(),
+                        building: None,
                     });
                 }
                 changed = true;
@@ -1628,6 +1641,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                     global: None,
                     lazy: None,
                     comment: comment.clone(),
+                    building: None,
                 });
                 changed = true;
             }
@@ -1895,7 +1909,101 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
         uix_new: Vec::new(),
         lazy_drop,
         lazy_new: Vec::new(),
+        building: false,
+        uix_check: Vec::new(),
+        building_limit: false,
     })
+}
+
+/// Whether change `ch` of `def` adds unique keys without the shard key, and
+/// changes nothing else, so that their global indexes are built online
+/// (`online_steps`, issue #292) rather than filled behind the fence, which
+/// refuses tables above `alter_check_rows` rows per shard.
+pub fn builds_globals_online(def: &TableDef, ch: &Change) -> bool {
+    let n = def.indexes.len();
+    if ch.def.indexes.len() <= n || def.indexes.iter().any(|i| i.building.is_some()) {
+        return false;
+    }
+    let new = &ch.def.indexes[n..];
+    // (The rest of the definition as it was: its version aside, and the
+    // fields of its columns and bucket, which `apply` writes out, compared
+    // as laid out.)
+    let rest = |t: &TableDef| {
+        let mut t = t.clone();
+        t.indexes.truncate(n);
+        t.ver = 0;
+        let mut v = serde_json::to_value(&t).ok()?;
+        let o = v.as_object_mut()?;
+        o.remove("bucket");
+        for c in o.get_mut("columns")?.as_array_mut()? {
+            c.as_object_mut()?.remove("field");
+        }
+        Some((v, t.layout.col_field.clone(), t.layout.bucket))
+    };
+    ch.changed
+        && ch.engine_change.is_none()
+        && new
+            .iter()
+            .all(|i| i.global == Some(0) && i.lazy.is_none() && ch.def.needs_global(i))
+        && rest(&ch.def) == rest(def)
+        && ch.format.is_none()
+        && ch.drop.is_empty()
+        && ch.renames.is_empty()
+        && ch.checks.is_empty()
+        && !ch.materialize
+        && ch.pad.is_none()
+        && ch.rename.is_none()
+        && ch.auto_increment.is_none()
+        && ch.auto_inc_from.is_none()
+        && ch.uix_drop.is_empty()
+        && ch.lazy_drop.is_empty()
+        && ch.builds.len() == new.len()
+        && ch.builds.iter().all(|b| new.iter().any(|i| i.id == b.id))
+}
+
+/// The steps of an online build of the global indexes change `ch` of `def`
+/// adds (`builds_globals_online`; tla/GlobalUniqueBuild.tla), at versions
+/// `vers`, with the space ids of each new index's entries and conflicts
+/// (`ids`, in index order):
+/// 1. the building version: the indexes building, their spaces made, no
+///    local index yet;
+/// 2. the enforcing version: the local unique indexes built, the conflicts
+///    checked empty behind the fence and dropped;
+/// 3. if the second fails: the original definition, the spaces dropped.
+pub fn online_steps(def: &TableDef, ch: &Change, vers: [u64; 3], ids: &[(u32, u32)]) -> SqlResult<[Change; 3]> {
+    let n = def.indexes.len();
+    let mut building = ch.clone();
+    building.def.ver = vers[0];
+    building.builds = Vec::new();
+    building.building = true;
+    let mut enforcing = ch.clone();
+    enforcing.def.ver = vers[1];
+    enforcing.building = true;
+    for (k, &(entries, conflicts)) in ids.iter().enumerate() {
+        let declared = &mut enforcing.def.indexes[n + k];
+        declared.global = Some(entries);
+        let ix = &mut building.def.indexes[n + k];
+        ix.global = Some(entries);
+        ix.building = Some(catalog::Building {
+            conflicts,
+            invisible: ix.invisible,
+        });
+        ix.unique = false;
+        ix.invisible = true;
+        building.uix_new.extend([entries, conflicts]);
+        enforcing.uix_check.push(conflicts);
+        enforcing.uix_drop.push(conflicts);
+    }
+    building.def.resolve_globals()?;
+    enforcing.def.resolve_globals()?;
+    let mut dropped = ch.clone();
+    dropped.def = def.clone();
+    dropped.def.ver = vers[2];
+    dropped.builds = Vec::new();
+    dropped.building = true;
+    dropped.uix_drop = ids.iter().flat_map(|&(e, c)| [e, c]).collect();
+    dropped.def.resolve_globals()?;
+    Ok([building, enforcing, dropped])
 }
 
 /// Whether change `ch` of `def` can build its new indexes by rebuilding the
@@ -1928,11 +2036,12 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
 /// index that the change renews (a new generation for an index on a column
 /// made nullable, the old one dropped) is one it makes.
 pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
-    // A lazy index not ready (an unfinished change of the table's).
+    // A lazy index not ready, or a global index building (an unfinished
+    // change of the table's).
     let unsettled = |t: &TableDef| {
         t.indexes
             .iter()
-            .any(|i| i.lazy.as_ref().is_some_and(|l| l.space_id != 0 && !l.ready))
+            .any(|i| i.lazy.as_ref().is_some_and(|l| l.space_id != 0 && !l.ready) || i.building.is_some())
     };
     // Each lazy index the change makes (no generation yet) reads columns
     // the table has, stored as they were, in rows the change does not pad.
@@ -2155,7 +2264,29 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     // A rebuild names the lazy generations it makes, which it builds online
     // against the old space before its copy (`rebuild_makes_lazy`).
     let made = ch.engine_change.as_ref().is_some_and(|e| e.rebuild) && !ch.lazy_new.is_empty();
-    m.map(14 + !ch.lazy_drop.is_empty() as usize + ch.engine_change.is_some() as usize + made as usize);
+    m.map(
+        14 + !ch.lazy_drop.is_empty() as usize
+            + ch.engine_change.is_some() as usize
+            + made as usize
+            + ch.building as usize
+            + !ch.uix_check.is_empty() as usize
+            + ch.building_limit as usize,
+    );
+    // (Storage from before ignores them: the SQL server builds a global
+    // index online only when every replica answers
+    // tarn_uix_building_capabilities.)
+    if ch.building {
+        m.str("building").bool(true);
+    }
+    if ch.building_limit {
+        m.str("building_limit").bool(true);
+    }
+    if !ch.uix_check.is_empty() {
+        m.str("uix_check").arr(ch.uix_check.len());
+        for &id in &ch.uix_check {
+            m.uint(id as u64);
+        }
+    }
     if let Some(engine) = &ch.engine_change {
         m.str("engine_change")
             .map(4 + engine.rebuild as usize + engine.durable as usize)
@@ -2200,15 +2331,16 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     // Global indexes: the spaces of new ones (PREPARE creates them, the SQL
     // server fills them, `Cluster::fill_globals`) and the ids of dropped
     // ones (APPLY drops them).
-    let new_uix: Vec<&catalog::GlobalIndex> = ch
+    let new_uix: Vec<&Arc<TableDef>> = ch
         .def
         .globals
         .iter()
-        .filter(|g| ch.uix_new.contains(&g.table.space_id))
+        .flat_map(|g| std::iter::once(&g.table).chain(&g.conflicts))
+        .filter(|t| ch.uix_new.contains(&t.space_id))
         .collect();
     m.str("uix").arr(new_uix.len());
-    for g in &new_uix {
-        lua_def_entry(&mut m, &g.table.lua_def(), None);
+    for t in &new_uix {
+        lua_def_entry(&mut m, &t.lua_def(), None);
     }
     m.str("uix_drop").arr(ch.uix_drop.len());
     for id in &ch.uix_drop {
@@ -2315,7 +2447,7 @@ pub fn catalog_entry(m: &mut Mp, def: &TableDef, ver: u64) {
 /// `ld` as the storage takes it: name, id, engine, format, indexes, the
 /// global index spaces (`uix`, when there are any), json and `ver`.
 pub fn lua_def_entry(m: &mut Mp, ld: &crate::catalog::LuaDef, ver: Option<u64>) {
-    m.map(7 + ver.is_some() as usize + !ld.uix.is_empty() as usize);
+    m.map(7 + ver.is_some() as usize + !ld.uix.is_empty() as usize + ld.building as usize);
     m.str("name").str(&ld.name);
     m.str("id").uint(ld.id as u64);
     m.str("engine").str(ld.engine);
@@ -2367,6 +2499,9 @@ pub fn lua_def_entry(m: &mut Mp, ld: &crate::catalog::LuaDef, ver: Option<u64>) 
     m.str("json").str(&ld.json);
     if let Some(v) = ver {
         m.str("ver").uint(v);
+    }
+    if ld.building {
+        m.str("building").bool(true);
     }
 }
 
@@ -2527,6 +2662,102 @@ mod tests {
     }
 
     const T: &str = "CREATE TABLE t (id INT PRIMARY KEY, a INT, s VARCHAR(10), d DECIMAL(6,2), KEY ka (a))";
+
+    // (A map of a step's storage arguments, `lua_args`: the value of `key`.)
+    fn arg(args: &[u8], key: &str) -> Option<Vec<u8>> {
+        let mut rd = crate::mpw::Rd::new(args);
+        for _ in 0..rd.map().unwrap() {
+            let k = rd.string().unwrap();
+            let v = rd.raw_value().unwrap().to_vec();
+            if k == key {
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn new_global_indexes_alone_build_online() {
+        let (def, cat) = table(
+            "CREATE TABLE t (tenant_id INT, id INT, a INT, b INT, PRIMARY KEY (tenant_id, id)) \
+             PARTITION BY KEY(tenant_id)",
+        );
+        let online = |sql: &str| builds_globals_online(&def, &alter(&def, &cat, sql).unwrap());
+        assert!(online("ALTER TABLE t ADD UNIQUE INDEX ua (a)"));
+        assert!(online("CREATE UNIQUE INDEX ua ON t (a)"));
+        assert!(online(
+            "ALTER TABLE t ADD UNIQUE INDEX ua (a), ADD UNIQUE INDEX ub (b, a)"
+        ));
+        // A unique key with the shard key is local; other changes along
+        // with it fill the global index behind the fence.
+        assert!(!online("ALTER TABLE t ADD UNIQUE INDEX ua (a, tenant_id)"));
+        assert!(!online("ALTER TABLE t ADD INDEX ka (a)"));
+        assert!(!online("ALTER TABLE t ADD UNIQUE INDEX ua (a), ADD INDEX kb (b)"));
+        assert!(!online("ALTER TABLE t ADD COLUMN c INT, ADD UNIQUE INDEX ua (a)"));
+        assert!(!online("ALTER TABLE t ADD UNIQUE INDEX ua (a), COMMENT 'x'"));
+        assert!(!online("ALTER TABLE t ADD UNIQUE INDEX ua (a), RENAME TO t2"));
+    }
+
+    #[test]
+    fn online_steps_build_then_enforce_or_drop() {
+        let (def, cat) = table(
+            "CREATE TABLE t (tenant_id INT, id INT, a INT, b INT, PRIMARY KEY (tenant_id, id)) \
+             PARTITION BY KEY(tenant_id)",
+        );
+        let ch = alter(&def, &cat, "ALTER TABLE t ADD UNIQUE INDEX ua (a) INVISIBLE").unwrap();
+        let [building, enforcing, dropped] = online_steps(&def, &ch, [11, 12, 13], &[(701, 702)]).unwrap();
+        let n = def.indexes.len();
+        // 1. Building: neither unique nor visible to anything that would read
+        // or enforce it, with no local index, its spaces made.
+        let ix = &building.def.indexes[n];
+        assert_eq!((ix.unique, ix.invisible, ix.global), (false, true, Some(701)));
+        assert_eq!(
+            ix.building,
+            Some(catalog::Building {
+                conflicts: 702,
+                invisible: true
+            })
+        );
+        assert!(building.builds.is_empty() && building.building && building.def.ver == 11);
+        assert_eq!(building.uix_new, [701, 702]);
+        let g = &building.def.globals[0];
+        let c = g.conflicts.as_ref().expect("building");
+        assert!(g.building() && c.name == format!("{}c", g.table.name) && c.space_id == 702);
+        assert_eq!(c.indexes[0].cols, [0, 1, 2]);
+        assert_eq!((c.shard_key.clone(), c.base), (vec![0], Some((512, 11))));
+        let ld = building.def.lua_def();
+        assert!(ld.building && ld.indexes.iter().all(|i| i.0 != "ua"));
+        assert_eq!(ld.uix.iter().map(|u| u.id).collect::<Vec<_>>(), [701, 702]);
+        assert_eq!(building.def.shown_indexes().count(), n);
+        assert!(building.def.usable_indexes().all(|i| i.name != "ua"));
+        let args = lua_args(&building, 11, 5.0);
+        assert_eq!(arg(&args, "building"), Some(vec![0xc3]));
+        assert_eq!(Rd::new(&arg(&args, "uix").unwrap()).array().unwrap(), 2);
+        // 2. Enforcing, as declared: its local index built, its conflicts
+        // checked empty behind the fence and dropped.
+        let ix = &enforcing.def.indexes[n];
+        assert_eq!((ix.unique, ix.invisible, ix.global), (true, true, Some(701)));
+        assert!(ix.building.is_none() && !enforcing.def.lua_def().building);
+        assert_eq!(enforcing.builds.len(), 1);
+        assert_eq!(enforcing.builds[0].id, ix.id);
+        assert_eq!(
+            (enforcing.uix_check.clone(), enforcing.uix_drop.clone()),
+            (vec![702], vec![702])
+        );
+        assert!(enforcing.uix_new.is_empty() && enforcing.def.ver == 12);
+        let args = lua_args(&enforcing, 12, 5.0);
+        let check = arg(&args, "uix_check").unwrap();
+        let mut rd = Rd::new(&check);
+        assert_eq!(rd.array().unwrap(), 1);
+        assert_eq!(rd.value().unwrap().as_i64(), Some(702));
+        // 3. Dropped: the table as it was, both spaces dropped.
+        assert_eq!(dropped.def.indexes.len(), n);
+        assert_eq!(dropped.uix_drop, [701, 702]);
+        assert!(dropped.builds.is_empty() && dropped.uix_new.is_empty() && dropped.def.ver == 13);
+        // The building definition goes through the catalog's JSON intact.
+        let back = catalog::parse_def_json(&building.def.lua_def().json).unwrap();
+        assert_eq!(back.indexes[n].building, building.def.indexes[n].building);
+    }
 
     #[test]
     fn rebuild_takes_secondary_index_changes_alone() {

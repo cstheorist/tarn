@@ -32,6 +32,16 @@
 //! protocol keeps them exact and the entry's primary key enforces the
 //! constraint across shards. The table keeps its own unique index too, which
 //! is unique within each shard.
+//!
+//! A global index added to a populated table is built online (issue #292,
+//! tla/GlobalUniqueBuild.tla): it is first *building* (`IndexDef::building`).
+//! Writes then maintain its entries, but a row whose key another row's entry
+//! holds is recorded in a second hidden space, its *conflicts*
+//! (`_tarn_uix_<table space id>_<index id>c`, keyed by the key and the row's
+//! primary key, on the key's shard), rather than refused; when the holder
+//! leaves the key, a conflicting row takes the entry over
+//! (tla/GlobalUniqueRules.tla). Nothing reads or enforces a building index,
+//! and the table has no local index for it yet.
 
 use crate::collation::Collation;
 use crate::mpw::Mp;
@@ -193,6 +203,22 @@ pub struct IndexDef {
     /// The index's COMMENT.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub comment: String,
+    /// A unique key whose global index is building (see the module
+    /// comment). Until the build publishes it, the index is neither unique
+    /// nor visible here (`unique`, `invisible`), so that nothing enforces or
+    /// reads it, also on SQL servers from before building indexes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub building: Option<Building>,
+}
+
+/// The state of a building global index (`IndexDef::building`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Building {
+    /// The space id of its conflicts.
+    pub conflicts: u32,
+    /// Declared INVISIBLE (the index is invisible while it builds).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub invisible: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,9 +275,16 @@ pub struct GlobalIndex {
     pub table: Arc<TableDef>,
     /// The table's column held by each entry column.
     pub src: Vec<usize>,
+    /// A building index's conflicts, as a table of the entries' columns
+    /// keyed by all of them: the key, then the row's primary key.
+    pub conflicts: Option<Arc<TableDef>>,
 }
 
 impl GlobalIndex {
+    /// Whether the index is building (`IndexDef::building`).
+    pub fn building(&self) -> bool {
+        self.conflicts.is_some()
+    }
     /// Number of key columns (the rest of an entry is the row's primary key).
     pub fn key_len(&self) -> usize {
         self.table.indexes[0].cols.len()
@@ -285,6 +318,10 @@ impl GlobalIndex {
 
 /// Name of a global index's hidden space (without the database).
 pub const GLOBAL_PREFIX: &str = "_tarn_uix_";
+
+/// Suffix of a building global index's conflicts space, after its entries
+/// space's name.
+pub const CONFLICTS_SUFFIX: &str = "c";
 
 /// A FOREIGN KEY constraint: recorded (SHOW CREATE TABLE, DROP FOREIGN
 /// KEY), not enforced.
@@ -496,6 +533,12 @@ impl TableDef {
     pub fn usable_indexes(&self) -> impl Iterator<Item = &IndexDef> {
         self.indexes.iter().filter(|i| !i.invisible)
     }
+    /// Indexes the table has for statements (SHOW CREATE TABLE, SHOW INDEX,
+    /// DESCRIBE): not those building, which the ALTER TABLE still adding
+    /// them shows once it ends.
+    pub fn shown_indexes(&self) -> impl Iterator<Item = &IndexDef> {
+        self.indexes.iter().filter(|i| i.building.is_none())
+    }
     /// The column a statement names (never the hidden row id).
     pub fn col_index(&self, name: &str) -> Option<usize> {
         self.columns
@@ -597,6 +640,7 @@ impl TableDef {
                 global: None,
                 lazy: None,
                 comment: String::new(),
+                building: None,
             }],
             shard_key: (0..k).collect(),
             auto_inc: None,
@@ -614,10 +658,24 @@ impl TableDef {
             base: Some((self.space_id, self.ver)),
         };
         t.resolve_types()?;
+        // A building index's conflicts: the entries' columns, keyed by all
+        // of them and sharded by the key, beside the key's entry.
+        let conflicts = match &idx.building {
+            Some(b) => {
+                let mut c = t.clone();
+                c.name = format!("{}{}", t.name, CONFLICTS_SUFFIX);
+                c.space_id = b.conflicts;
+                c.indexes[0].cols = (0..src.len()).collect();
+                c.resolve_types()?;
+                Some(Arc::new(c))
+            }
+            None => None,
+        };
         Ok(GlobalIndex {
             pos,
             table: Arc::new(t),
             src,
+            conflicts,
         })
     }
     /// Resolve column types and compute the layout; called on every
@@ -922,7 +980,9 @@ impl TableDef {
     pub fn lua_def(&self) -> LuaDef {
         let format = self.lua_format();
         let mut indexes = Vec::new();
-        for idx in &self.indexes {
+        // (A building global index has no local index yet: the build makes
+        // it as it publishes the index.)
+        for idx in self.indexes.iter().filter(|i| i.building.is_none()) {
             let parts = self.index_parts(idx);
             indexes.push((
                 // A global index's space names its primary key after the
@@ -953,8 +1013,14 @@ impl TableDef {
             format,
             indexes,
             json: serde_json::to_string(self).expect("table def serializes"),
-            uix: self.globals.iter().map(|g| g.table.lua_def()).collect(),
+            uix: self
+                .globals
+                .iter()
+                .flat_map(|g| std::iter::once(&g.table).chain(&g.conflicts))
+                .map(|t| t.lua_def())
+                .collect(),
             lazy: self.lazy_specs(),
+            building: self.globals.iter().any(|g| g.building()),
         }
     }
 
@@ -1002,6 +1068,10 @@ pub struct LuaDef {
     /// The hidden spaces of the global indexes (their `json` is unused).
     pub uix: Vec<LuaDef>,
     pub lazy: Vec<LazySpec>,
+    /// A global index of the table is building: the shards refuse the
+    /// table's writes from SQL servers that do not say they maintain
+    /// building indexes (`txn::BUILDING_FENCE`).
+    pub building: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1169,6 +1239,7 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
             global: None,
             lazy: None,
             comment: String::new(),
+            building: None,
         }],
         shard_key: key,
         auto_inc: None,

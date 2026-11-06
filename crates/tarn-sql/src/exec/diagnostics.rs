@@ -310,8 +310,10 @@ impl Context<'_, '_> {
     }
 
     fn globals(&self, t: &TableDef, values: Option<&[Vec<Option<Expr>>]>) -> Vec<Json> {
+        // (not a building index, which the table does not have yet)
         t.globals
             .iter()
+            .filter(|g| !g.building())
             .map(|g| {
                 let route = if let Some(rows) = values.filter(|r| r.len() <= MAX_KEYS) {
                     let mut keys = Vec::new();

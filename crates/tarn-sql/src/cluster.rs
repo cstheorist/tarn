@@ -118,6 +118,12 @@ pub struct ClusterConfig {
     /// `in_place` builds them on the table's own space (issue #267).
     #[serde(default)]
     pub index_build: IndexBuild,
+    /// How ALTER TABLE builds the global index of a new unique key without
+    /// the shard key: `online` (the default) while writes go on (issue
+    /// #292), `fenced` from the rows behind the table's fence, refused above
+    /// `alter_check_rows` rows per shard.
+    #[serde(default)]
+    pub global_index_build: GlobalIndexBuild,
     /// How long one call of a copy's BUILD or PREPARE copies before it
     /// returns, to be sent again (seconds; issue #184). A copy of a large
     /// table then takes many calls, each well within `rpc.timeout_secs`.
@@ -188,6 +194,15 @@ pub enum IndexBuild {
     InPlace,
 }
 
+/// `ClusterConfig::global_index_build`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GlobalIndexBuild {
+    #[default]
+    Online,
+    Fenced,
+}
+
 fn default_move_timeout() -> f64 {
     10.0
 }
@@ -215,6 +230,9 @@ pub(crate) enum JobKind {
     Move,
     /// A change of the cluster's shards (members.rs).
     Members,
+    /// An ALTER TABLE that builds global indexes online (`uix_build`): SQL
+    /// servers from before it do not know it, and leave it to the others.
+    UniqueBuild,
 }
 
 impl JobKind {
@@ -226,6 +244,7 @@ impl JobKind {
             JobKind::Truncate => "truncate",
             JobKind::Move => "move",
             JobKind::Members => "members",
+            JobKind::UniqueBuild => "unique_build",
         }
     }
 
@@ -237,6 +256,7 @@ impl JobKind {
             "truncate" => JobKind::Truncate,
             "move" => JobKind::Move,
             "members" => JobKind::Members,
+            "unique_build" => JobKind::UniqueBuild,
             _ => return None,
         })
     }
@@ -244,12 +264,17 @@ impl JobKind {
     /// The storage procedure of a step: build (ALTER TABLE only), prepare,
     /// apply or abort.
     fn proc(self, step: &str) -> String {
-        format!("tarn_{}_{}", self.name(), step)
+        let kind = if self == JobKind::UniqueBuild {
+            "alter"
+        } else {
+            self.name()
+        };
+        format!("tarn_{}_{}", kind, step)
     }
 
     fn statement(self) -> &'static str {
         match self {
-            JobKind::Alter => "ALTER TABLE",
+            JobKind::Alter | JobKind::UniqueBuild => "ALTER TABLE",
             JobKind::Create => "CREATE TABLE",
             JobKind::Drop => "DROP TABLE",
             JobKind::Truncate => "TRUNCATE",
@@ -828,7 +853,12 @@ pub struct Cluster {
     pub(crate) member_reads: AtomicU64,
     pub(crate) lazy_samples: Mutex<std::collections::BTreeMap<u32, Option<crate::lazy::StatsSample>>>,
     pub(crate) vinyl_samples: Mutex<std::collections::BTreeMap<u32, crate::vinyl::StatsSample>>,
+    /// This cluster, for work that outlives a borrow of it, such as a
+    /// global index's backfill transactions (`uix_build`).
+    me: std::sync::Weak<Cluster>,
 }
+
+mod uix_build;
 
 /// A row-lock request in flight (`Txn::lock`).
 struct LockRequest {
@@ -1215,8 +1245,9 @@ impl Cluster {
             cfg.bucket_count.unwrap_or(crate::buckets::LEGACY_BUCKETS),
             cfg.shards.len(),
         );
-        let c = Arc::new(Cluster {
-            resources: crate::budget::Pool::new(cfg.resources.clone())?,
+        let resources = crate::budget::Pool::new(cfg.resources.clone())?;
+        let c = Arc::new_cyclic(|me| Cluster {
+            resources,
             statistics: crate::statistics::Statistics::default(),
             rpc_global,
             connections,
@@ -1244,8 +1275,14 @@ impl Cluster {
             member_reads: AtomicU64::new(0),
             lazy_samples: Mutex::new(Default::default()),
             vinyl_samples: Mutex::new(Default::default()),
+            me: me.clone(),
         });
         Ok(c)
+    }
+
+    /// This cluster, as an `Arc` (it is alive while a method of it runs).
+    pub(crate) fn arc(&self) -> Arc<Cluster> {
+        self.me.upgrade().expect("the cluster is alive")
     }
 
     pub async fn connect(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
@@ -2167,6 +2204,31 @@ impl Cluster {
                 return self.alter_auto_inc(&def, &ch).await;
             }
             let rebuild = self.copy_index_builds(&def, &ch).await;
+            // New unique keys without the shard key, alone: their global
+            // indexes are built online (issue #292), when every replica can.
+            if !rebuild
+                && self.cfg.global_index_build == GlobalIndexBuild::Online
+                && crate::alter::builds_globals_online(&def, &ch)
+            {
+                match self.replica_not_answering("tarn_uix_building_capabilities").await {
+                    None => {
+                        // (boxed, its type erased: the statement's future
+                        // need not hold the build's)
+                        let online: futures::future::BoxFuture<'_, SqlResult<bool>> =
+                            Box::pin(self.alter_globals_online(&def, &ch, deadline, lock_timeout));
+                        if online.await? {
+                            return Ok(());
+                        }
+                        continue;
+                    }
+                    Some(addr) => tracing::info!(
+                        table = %def.space_name(),
+                        replica = %addr,
+                        "the new global unique index is filled behind the table's fence: a replica does not \
+                         answer tarn_uix_building_capabilities"
+                    ),
+                }
+            }
             if rebuild {
                 ch.engine_change = Some(crate::alter::EngineChange {
                     old_id: def.space_id,
@@ -2747,6 +2809,11 @@ impl Cluster {
 
     /// Run a job to its end, keeping it alive meanwhile.
     async fn run_job(&self, job: &Job) -> SqlResult<()> {
+        if job.kind == JobKind::UniqueBuild {
+            // (boxed, its type erased, as in alter_table)
+            let build: futures::future::BoxFuture<'_, SqlResult<()>> = Box::pin(self.run_uix_build(job));
+            return self.with_job_alive(&job.owner, build).await;
+        }
         self.with_job_alive(&job.owner, self.run_job_steps(job)).await
     }
 
@@ -2967,8 +3034,11 @@ impl Cluster {
         let mut nd = catalog::parse_def_json(&json)?;
         nd.space_id = sid;
         nd.resolve_globals()?;
-        let globals: Vec<&catalog::GlobalIndex> =
-            nd.globals.iter().filter(|g| ids.contains(&g.table.space_id)).collect();
+        let globals: Vec<&catalog::GlobalIndex> = nd
+            .globals
+            .iter()
+            .filter(|g| ids.contains(&g.table.space_id) && !g.building())
+            .collect();
         // (No emptying first: every fill of this change writes the same
         // entries, see tarn_uix_fill.)
         const PAGE: u32 = 1000;

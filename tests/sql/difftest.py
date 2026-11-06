@@ -489,6 +489,15 @@ CASES = [
     ("ALTER TABLE gu ADD UNIQUE KEY code (n)", "err"),
     ("DELETE FROM gu WHERE id = 22", "dml:gu"),
     ("ALTER TABLE gu DROP INDEX kh, ADD UNIQUE KEY code (n)", "ddl:gu"),
+    # ... one built while writes go on (issue #292), whose duplicates the
+    # collation decides, with NULLs
+    ("ALTER TABLE gci DROP INDEX ue", "ddl:gci"),
+    ("INSERT INTO gci VALUES (7, 'ANN@x'), (8, NULL)", "dml:gci"),
+    ("ALTER TABLE gci ADD UNIQUE KEY ue (email)", "err"),
+    ("UPDATE gci SET email = 'dan@x' WHERE id = 7", "dml:gci"),
+    ("ALTER TABLE gci ADD UNIQUE KEY ue (email)", "ddl:gci"),
+    ("INSERT INTO gci VALUES (9, 'DAN@X')", "err"),
+    ("SELECT id FROM gci WHERE email = 'Dan@x'", "q"),
     # session isolation level, lock wait timeout, locking reads (issue #17);
     # the rest of the cases run at READ COMMITTED on both servers
     ("SET SESSION tx_isolation = 'READ-COMMITTED'", "q"),

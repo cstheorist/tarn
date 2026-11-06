@@ -3203,6 +3203,7 @@ fn plan_create_table(
         global: None,
         lazy: None,
         comment: pk_comment,
+        building: None,
     }];
     for (n, cols, unique, comment) in secondary.into_iter() {
         let name = match n {
@@ -3226,6 +3227,7 @@ fn plan_create_table(
             global: None,
             lazy: None,
             comment,
+            building: None,
         });
     }
     let shard_key = match partition_key {
