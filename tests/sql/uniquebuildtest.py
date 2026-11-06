@@ -71,9 +71,18 @@ def connect(endpoint, db=DB, read_timeout=600):
 
 
 def q(c, sql, args=None):
-    with c.cursor() as cur:
-        cur.execute(sql, args)
-        return cur.fetchall() if cur.description else cur.rowcount
+    """Run a statement, sent again while a vinyl shard throttles it (1205,
+    refused while its dumps catch up: it took no effect), for up to a minute."""
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            with c.cursor() as cur:
+                cur.execute(sql, args)
+                return cur.fetchall() if cur.description else cur.rowcount
+        except pymysql.MySQLError as e:
+            if not (e.args[0] == 1205 and "throttled" in str(e.args[1])) or time.monotonic() > deadline:
+                raise
+            time.sleep(0.1)
 
 
 def attempt(c, sql, args=None):
@@ -169,14 +178,15 @@ class Writers:
     value to another row, sets values to NULL and back, inserts, deletes and
     moves rows to new primary keys, keeping the values unique. Another adds
     1 to k in the other rows. A statement that fails with an error in
-    `retry` (a known abort) took no effect: they go on, as a client would,
+    `retry` (a known abort), or that a vinyl shard throttled (1205, while
+    its dumps catch up), took no effect: they go on, as a client would,
     counting it."""
 
     def __init__(self, endpoint, name, n, seed, retry=()):
         self.endpoint, self.name, self.seed, self.retry = endpoint, name, seed, retry
         self.model = {(i % TENANTS, i): (None if i % 50 == 0 else i) for i in range(n) if owned(i)}
         self.others = [(i % TENANTS, i) for i in range(n) if not owned(i)]
-        self.incs, self.errors, self.writes, self.retried = {}, [], 0, 0
+        self.incs, self.errors, self.writes, self.retried, self.throttled = {}, [], 0, 0, 0
         self.fresh = {"id": FRESH_ID, "u": FRESH_U}
         self.stop = threading.Event()
         self.threads = [threading.Thread(target=self.modeler), threading.Thread(target=self.incrementer)]
@@ -246,7 +256,9 @@ class Writers:
                 self.failed("increment", e)
 
     def failed(self, what, e):
-        if e.args[0] in self.retry:
+        if e.args[0] == 1205 and "throttled" in str(e.args[1]):
+            self.throttled += 1
+        elif e.args[0] in self.retry:
             self.retried += 1
         else:
             self.errors.append(f"{what}: {e.args}")
@@ -268,7 +280,8 @@ def built(cl, c, w, name, key):
     """The checks after a change that added unique key `key` on u to table
     `name` while writers `w` wrote to it."""
     check(f"the writes go on meanwhile ({w.writes} of them), and none fails"
-          + (f" ({w.retried} sent again after a deadlock or lock wait timeout)" if w.retry else ""),
+          + (f" ({w.retried} sent again after a deadlock or lock wait timeout)" if w.retry else "")
+          + (f" ({w.throttled} throttled by vinyl and sent again)" if w.throttled else ""),
           w.writes > 0 and not w.errors, w.errors[:5])
     shown = q(c, f"SHOW CREATE TABLE {name}")[0][1]
     check("SHOW CREATE TABLE shows the key", f"UNIQUE KEY `{key}` (`u`)" in shown, shown)

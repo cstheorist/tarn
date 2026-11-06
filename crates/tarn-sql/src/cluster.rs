@@ -2212,7 +2212,11 @@ impl Cluster {
             {
                 match self.replica_not_answering("tarn_uix_building_capabilities").await {
                     None => {
-                        if self.alter_globals_online(&def, &ch, deadline, lock_timeout).await? {
+                        // (boxed, its type erased: the statement's future
+                        // need not hold the build's)
+                        let online: futures::future::BoxFuture<'_, SqlResult<bool>> =
+                            Box::pin(self.alter_globals_online(&def, &ch, deadline, lock_timeout));
+                        if online.await? {
                             return Ok(());
                         }
                         continue;
@@ -2806,7 +2810,9 @@ impl Cluster {
     /// Run a job to its end, keeping it alive meanwhile.
     async fn run_job(&self, job: &Job) -> SqlResult<()> {
         if job.kind == JobKind::UniqueBuild {
-            return self.with_job_alive(&job.owner, self.run_uix_build(job)).await;
+            // (boxed, its type erased, as in alter_table)
+            let build: futures::future::BoxFuture<'_, SqlResult<()>> = Box::pin(self.run_uix_build(job));
+            return self.with_job_alive(&job.owner, build).await;
         }
         self.with_job_alive(&job.owner, self.run_job_steps(job)).await
     }

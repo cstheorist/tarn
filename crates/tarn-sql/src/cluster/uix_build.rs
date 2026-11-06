@@ -583,7 +583,9 @@ impl Cluster {
         loop {
             let s = Session::new(c.clone(), 0);
             let mut txn = Txn::with_mode(&c, true, mode, lock_timeout);
-            let r = match s.building_backfill(&mut txn, t, pks.clone()).await {
+            let page: futures::future::BoxFuture<'_, SqlResult<()>> =
+                Box::pin(s.building_backfill(&mut txn, t, pks.clone()));
+            let r = match page.await {
                 Ok(()) => txn.commit(&c).await.map(|_| ()),
                 Err(e) => {
                     txn.rollback(&c);

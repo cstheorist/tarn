@@ -2451,7 +2451,11 @@ impl Session {
             let new = if w.op == WOp::Delete { None } else { w.row.as_deref() };
             let (before, after) = (old.and_then(|r| g.entry(&t, r)), new.and_then(|r| g.entry(&t, r)));
             if g.building() {
-                self.stage_building(txn, g, before, after).await?;
+                // (boxed, its type erased: a statement's future need not hold
+                // the building decisions', which most writes never reach)
+                let building: futures::future::BoxFuture<'_, SqlResult<()>> =
+                    Box::pin(self.stage_building(txn, g, before, after));
+                building.await?;
                 continue;
             }
             let d = tarn_verified::uix::index_delta(
