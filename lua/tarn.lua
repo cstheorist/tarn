@@ -1810,6 +1810,19 @@ function UIX.conflict_dup(c, tuple)
     return string.format("Duplicate entry '%s' for key '%s'", table.concat(parts, '-'), c.index[0].name)
 end
 
+-- The first conflict left in the conflicts spaces `ids` of building global
+-- indexes (issue #292), as MySQL's message for the key two rows share; nil
+-- when none is left. (A space that is gone was dropped by the step that
+-- checked it: the check had passed.)
+function UIX.conflicts_left(ids)
+    for _, id in ipairs(type(ids) == 'table' and ids or {}) do
+        local cs = box.space[id]
+        local t = cs ~= nil and cs:select({}, {limit = 1})[1] or nil
+        if t ~= nil then return UIX.conflict_dup(cs, t) end
+    end
+    return nil
+end
+
 -- MySQL's message for row `tuple` (as a TUPLE_FOUND error carries it) that
 -- unique index build `b` ({id, name, unique, parts}) could not take: with
 -- its key, unless a part is a weight field, which is not the column's value.
@@ -6150,11 +6163,8 @@ function tarn_alter_prepare(name, a, gen)
     -- or two rows share a key and the change fails. (A conflicts space that
     -- is gone was dropped by this step's APPLY, which runs this again after
     -- a restart: the check had passed.)
-    for _, id in ipairs(a.uix_check or {}) do
-        local c = box.space[id]
-        local t = c ~= nil and c:select({}, {limit = 1})[1] or nil
-        if t ~= nil then return undo({'duplicate', 1062, UIX.conflict_dup(c, t)}) end
-    end
+    local dup = UIX.conflicts_left(a.uix_check)
+    if dup ~= nil then return undo({'duplicate', 1062, dup}) end
     if fills then
         -- The steps above may yield for long: a later run of the job may have
         -- prepared meanwhile, or the change been aborted.
@@ -6787,9 +6797,11 @@ local function job_change(owner, ops, phase)
         box.begin(RW)
         local keys = job_keys(owner)
         for _, k in ipairs(keys) do
+            -- (An engine change's decision, once the job made it, stands:
+            -- the shards publish or abort the copy by it. E.job_decision.)
             local v = phase and job_value(k)
-            if v and type(v.a) == 'table' and type(v.a.engine_change) == 'table'
-               and (v.phase == 'apply' or v.phase == 'abort') and phase ~= v.phase then
+            local decided = v and M.engine.job_decision(v, v.phase)
+            if decided ~= nil and M.engine.job_decision(v, phase) ~= decided then
                 error(box.error.new{code = 1412, reason = 'Engine job decision is immutable'})
             end
             if ops == nil then box.space._tarn_meta:delete{k} else box.space._tarn_meta:update(k, ops) end
@@ -8316,6 +8328,7 @@ BK.production_functions = {
         'tarn_txn_statuses',
         'tarn_uix_backfill_page',
         'tarn_uix_building_capabilities',
+        'tarn_uix_building_copy_capabilities',
         'tarn_uix_fill',
         'tarn_unlock',
         'tarn_validate',
@@ -8382,6 +8395,7 @@ M.engine = require('tarn_engine').new{
     lazy = M.lazy, create_space = create_space, create_index = build_native_index,
     lazy_start = function(...) return UIX.lazy_start(...) end,
     uix_spaces = UIX.spaces, uix_prefix = UIX.prefix, call = on_shard, hook = yield_point,
+    uix_conflicts = function(ids) return UIX.conflicts_left(ids) end,
     doom = doom_readers, exclude = BK.ns_engine, invalidate_defs = invalidate_key_defs,
     refresh = function() M.stale_fences(); fence_fresh() end,
     mark = function() return {lua = INFLIGHT_SEQ, native = BK.ns ~= nil and BK.ns.commit_seq or nil} end,
@@ -8432,6 +8446,9 @@ function tarn_engine_durable_capabilities() return {'ok', 1} end
 -- says a write maintains building indexes. The SQL server builds a global
 -- index online only when every replica answers.
 function tarn_uix_building_capabilities() return {'ok', 1} end
+-- (and copies the table for the step that makes them enforcing: the engine
+-- copy's PREPARE checks their conflicts, a.uix_check)
+function tarn_uix_building_copy_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()
     return M.engine.decision(name, old_id, new_id, ver, gen)

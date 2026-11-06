@@ -2171,10 +2171,25 @@ its fence (`a.building` in `tarn_alter_prepare`), the second checks that no
 conflict is left behind it (`a.uix_check`), and `stale_definition` refuses
 writes without `txn::BUILDING_FENCE` while a building version is published.
 The issue #292 block of `lua/test/storage_test.lua` checks those steps on
-a memtx and on a vinyl table.
+a memtx and on a vinyl table. On a cluster that copies its index builds,
+the second step is a copy (`lua/tarn_engine.lua`, as `EngineCopy.tla` and
+`EngineCutover.tla` model it), whose PREPARE checks the conflicts after its
+final pass behind its durable, drained fence: the model's `Decide` at the
+step to version 2 is that check, behind the same fence and drain. The copy's decision is the job's phase,
+which `EngineCutover.tla` takes as confirmed central state that does not
+change once made; `E.job_decision` maps an online build's phases to it,
+and `tarn_job_phase` refuses a phase that would change it.
+[A suite for that copy](../lua/test/engine_uix_build_test.lua) checks it on
+both engines, 22 checks with the native module and as many without: the
+building index takes the writes during the copy; APPLY waits for the
+decision, which no later phase changes; publication keeps the entries,
+renamed after the copy, and drops the conflicts; a conflict left, and two
+rows of the shard with one key, fail it with 1062 and the key, and ABORT
+leaves the table building; a copy that would check a space it keeps is
+refused. Taking the conflicts check out of the copy's PREPARE fails it.
 `tests/uniquebuild.sh` runs the build through SQL on 2 shards, on memtx and
-on vinyl (CI runs both), with `alter_check_rows` far below the table's rows
-per shard: while sessions write to the table and keep models of it, the
+on vinyl (CI runs both, each with and without the copy), with
+`alter_check_rows` far below the table's rows per shard: while sessions write to the table and keep models of it, the
 change succeeds, no write fails, and the index then holds exactly the rows'
 keys; values two rows share, before the change and written during it, fail
 it with 1062 and leave the table as it was; and when the SQL server that

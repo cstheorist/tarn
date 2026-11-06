@@ -10,10 +10,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `ALTER TABLE ... ADD UNIQUE` (and `CREATE UNIQUE INDEX`) of a key without
   the shard key builds the key's global index while writes go on
-  ([#292](https://github.com/cstheorist/tarn/issues/292)), with no row limit
-  on unreplicated shards; on replicated ones, where its last step still
-  builds the key's local index in place (#267), the limit of a fill behind
-  the fence stays. While
+  ([#292](https://github.com/cstheorist/tarn/issues/292)), with no row
+  limit. On replicated shards, the step that makes the key enforcing copies
+  the table, as other index builds do there, rather than build the key's
+  local index in place (#267). While
   it builds, a write that gives a row a key another row holds records a
   conflict instead of failing, and a backfill gives the rows from before
   their entries in transactions that validate them. The key is published
@@ -23,7 +23,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cursors. `TLA+` models (`GlobalUniqueBuild`, `GlobalUniqueWrites`) and
   Verus proofs (`uix::leave_key`, `uix::join_key`) cover the design, and
   `tests/uniquebuild.sh` runs it through SQL, on memtx and on vinyl, with a
-  takeover. `global_index_build = "fenced"` in `cluster.json` keeps the
+  takeover, with and without the copy, and `tests/indexcopy.sh` on 2 shards
+  × 3 replicas. `global_index_build = "fenced"` in `cluster.json` keeps the
   earlier fill behind the fence, which a change that does more also uses.
   A unique index whose build finds two rows with one key now names the key
   in its 1062, as MySQL does.

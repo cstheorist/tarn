@@ -39,7 +39,13 @@ shard, above which filling the index behind the table's fence is refused
     passed some rows, and the writes to the second, which takes the change
     over after ddl_job_stale and finishes it.
 
-    uniquebuildtest.py --tarn HOST:PORT[,HOST:PORT] --cluster-dir DIR [--rows N]
+With --copy, the cluster copies its index builds (index_build copy, as on
+replicated shards): the step that makes the index enforcing copies the
+table into a new space whose indexes exist before its rows. A change that
+succeeds replaces the table's space on every shard; one that fails keeps
+it; and no copy is left on any node.
+
+    uniquebuildtest.py --tarn HOST:PORT[,HOST:PORT] --cluster-dir DIR [--rows N] [--copy]
 """
 import argparse
 import json
@@ -124,11 +130,43 @@ def owned(i):
 
 
 class Cluster:
-    def __init__(self, cluster_dir):
+    def __init__(self, cluster_dir, copy):
         self.dir = Path(cluster_dir)
         self.groups = json.loads((self.dir / "cluster.json").read_text())["shards"]
         self.nodes = [n for g in self.groups for n in g["replicas"]]
+        self.copy = copy
         assert len(self.groups) == 2, self.groups
+
+    def space_ids(self, space):
+        """The table's space on each shard, by its leader: {shard id: space id}."""
+        return {g["id"]: ev(self.leader(g), "return box.space[...].id", [space]) for g in self.groups}
+
+    def copies_left(self):
+        """A copy's spaces left on any node: {node: names}."""
+        out = {}
+        for node in self.nodes:
+            names = ev(node, """
+                local out = {}
+                for _, s in box.space._space:pairs() do
+                    if s.name:find('^_tarn_engine_') then out[#out + 1] = s.name end
+                end
+                return out
+            """)
+            if names:
+                out[node] = names
+        return out
+
+    def replaced(self, space, before, failed=False):
+        """Check how the change that ended left the table's space: replaced
+        by its copy on every shard when the cluster copies and the change
+        succeeded, else kept; and no copy left on any node."""
+        after = self.space_ids(space)
+        moved = {s: after[s] != before[s] for s in after}
+        want = self.copy and not failed
+        check(("the table's space is replaced by its copy on every shard" if want else
+               "the table keeps its space on every shard") + ", and no copy is left on any node",
+              all(m == want for m in moved.values()) and not self.copies_left(),
+              {"before": before, "after": after, "left": self.copies_left()})
 
     def leader(self, group):
         def probe():
@@ -316,6 +354,7 @@ def built(cl, c, w, name, key):
 def online(cl, c, endpoint, n):
     print("online, while writes go on")
     populate(c, "t", n)
+    before = cl.space_ids(f"{DB}.t")
     with Writers(endpoint, "t", n, "online") as w:
         time.sleep(1)
         t0 = time.monotonic()
@@ -325,18 +364,21 @@ def online(cl, c, endpoint, n):
     check(f"the change succeeds, with alter_check_rows {LIMIT} below the rows per shard ({took:.1f} s)",
           failed is None, failed)
     built(cl, c, w, "t", "tu")
+    cl.replaced(f"{DB}.t", before)
 
 
 def duplicates_before(cl, c):
     print("a value two rows share before the change")
     populate(c, "d", 2000, k=False)
     q(c, "INSERT INTO d VALUES (1, 5000, 7), (2, 5001, 8)")
+    before = cl.space_ids(f"{DB}.d")
     failed = attempt(c, "ALTER TABLE d ADD UNIQUE KEY du (u)")
     check("the change fails with MariaDB's 1062", failed is not None and failed[0] == 1062
           and failed[1] in ("Duplicate entry '7' for key 'du'", "Duplicate entry '8' for key 'du'"), failed)
     shown = q(c, "SHOW CREATE TABLE d")[0][1]
     left = {node: s for node, s in cl.hidden(f"{DB}.d").items() if s}
     check("the table keeps no key, and no node an index space", "`du`" not in shown and not left, [shown, left])
+    cl.replaced(f"{DB}.d", before, failed=True)
     q(c, "INSERT INTO d VALUES (3, 5002, %s)", (FRESH_U,))
     q(c, "UPDATE d SET u = %s WHERE tenant_id = 1 AND id = 5000", (FRESH_U + 1,))
     q(c, "UPDATE d SET u = %s WHERE tenant_id = 2 AND id = 5001", (FRESH_U + 2,))
@@ -347,6 +389,7 @@ def duplicates_before(cl, c):
 def duplicate_during(cl, c, endpoint, n):
     print("a value a row holds, written during the change")
     populate(c, "w", n, k=False)
+    before = cl.space_ids(f"{DB}.w")
     outcome = {}
 
     def change():
@@ -367,6 +410,7 @@ def duplicate_during(cl, c, endpoint, n):
     shown = q(c, "SHOW CREATE TABLE w")[0][1]
     left = {node: s for node, s in cl.hidden(f"{DB}.w").items() if s}
     check("... leaving the table as it was", "`wu`" not in shown and not left, [shown, left])
+    cl.replaced(f"{DB}.w", before, failed=True)
     check("with both rows", q(c, "SELECT tenant_id, id FROM w WHERE u = 6 ORDER BY id")
           == ((6, 6), (5, 2 * FRESH_ID)))
 
@@ -428,6 +472,7 @@ def taken_over(cl, endpoints, n):
     pid = int((cl.dir / "tarn1.pid").read_text())
     c2 = connect(endpoints[1])
     populate(c2, "k", n)
+    before = cl.space_ids(f"{DB}.k")
     outcome = {}
 
     def change():
@@ -461,6 +506,7 @@ def taken_over(cl, endpoints, n):
         time.sleep(1)
     check(f"the second server takes the change over and finishes it ({took:.1f} s)", True)
     built(cl, c2, w, "k", "ku")
+    cl.replaced(f"{DB}.k", before)
     subprocess.run([str(ROOT / "scripts/cluster.sh"), "restart", "-d", str(cl.dir), "tarn1"], check=True,
                    stdin=subprocess.DEVNULL)
 
@@ -470,9 +516,11 @@ def main():
     ap.add_argument("--tarn", required=True, help="SQL servers, comma separated; with two, the takeover too")
     ap.add_argument("--cluster-dir", required=True)
     ap.add_argument("--rows", type=int, default=20000)
+    ap.add_argument("--copy", action="store_true",
+                    help="the cluster copies its index builds: the enforcing step copies the table")
     args = ap.parse_args()
     endpoints = args.tarn.split(",")
-    cl = Cluster(args.cluster_dir)
+    cl = Cluster(args.cluster_dir, args.copy)
     c = connect(endpoints[0], db=None)
     q(c, f"DROP DATABASE IF EXISTS {DB}")
     q(c, f"CREATE DATABASE {DB}")

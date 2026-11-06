@@ -341,10 +341,13 @@ jobs:
         run: ci/annotate.sh vinylbuild tests/vinylbuild.sh
       - name: Index builds that copy the table on replicated shards (2 shards x 3 replicas)
         run: ci/annotate.sh indexcopy tests/indexcopy.sh
-      - name: Online builds of global unique indexes (2 shards, two SQL servers)
+      - name: Online builds of global unique indexes (2 shards, two SQL servers; in place and by copy)
         run: |
           ci/annotate.sh uniquebuild tests/uniquebuild.sh
           ENGINE=vinyl TARN_VINYL_CACHE_MB=0 TARN_DUMP_EVERY=2 ci/annotate.sh vinyl-uniquebuild tests/uniquebuild.sh
+          TARN_INDEX_BUILD=copy ci/annotate.sh uniquebuild-copy tests/uniquebuild.sh
+          ENGINE=vinyl TARN_VINYL_CACHE_MB=0 TARN_DUMP_EVERY=2 TARN_INDEX_BUILD=copy \
+            ci/annotate.sh vinyl-uniquebuild-copy tests/uniquebuild.sh
       - name: Bind failover inputs and enable cores on this isolated runner
         id: failover-evidence
         run: |
