@@ -404,7 +404,7 @@ def main():
         "each shard must exceed alter_check_rows", before_state)
     replicas = ev(nodes[0], "local n = 0 for _ in pairs(box.info.replication) do n = n + 1 end return n", [])
 
-    samples, other, errors, stop = [], [], [], threading.Event()
+    samples, other, errors, other_errors, stop = [], [], [], [], threading.Event()
     alter_error = None
     ids = [ev(n, "return box.space[...].id", [f"{DB}.t"]) for n in nodes]
     timeline, stalls, polled, jobs = [[] for _ in nodes], [], threading.Event(), []
@@ -420,8 +420,9 @@ def main():
                 try:
                     q(w, "INSERT INTO u VALUES (%s,%s,0)", (i % 997, i))
                     ok = True
-                except pymysql.MySQLError:
+                except pymysql.MySQLError as e:
                     ok = False
+                    other_errors.append(f"{e.args[0]}: {e.args[1]}"[:200])
                 t1 = time.monotonic()
                 other.append((t0, (t1 - t0) * 1000, ok))
                 nxt = max(nxt + period, t1)
@@ -491,7 +492,7 @@ def main():
         wait_empty(nodes, timeout=600)
     after_state = nodes_state(nodes)
     common = {"alter_error": alter_error, "published_s": published_s, "timeline": timeline, "stalls": stalls,
-              "errors": errors, "settle_s": settle_s}
+              "errors": errors, "other_errors": other_errors, "settle_s": settle_s}
 
     if args.index == "plain":
         return finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
@@ -591,7 +592,7 @@ return {rows = sp.index[0]:count(), entries = idx and idx:count() or box.NULL}
 def finish(args, nodes, shards, before_state, after_state, load_s, refusals, alter_s, total,
            samples, other, alter_begin, alter_end, replicas, checked=None, mismatched=None,
            alter_error=None, published_s=None, timeline=None, stalls=None, errors=None, extra=None,
-           settle_s=None):
+           settle_s=None, other_errors=None):
     if mismatched is None:
         counts = [ev(n, PLAIN_COUNT, [f"{DB}.t"]) for n in nodes]
         mismatched = [c for c in counts if c["entries"] != c["rows"]]
@@ -626,7 +627,7 @@ def finish(args, nodes, shards, before_state, after_state, load_s, refusals, alt
         "other_writes": phases(other) if args.other_rate else None,
         "nodes_before": before_state, "nodes_after": after_state,
         "copy_phases": timeline, "slow_probes": (stalls or [])[:40],
-        "write_errors": (errors or [])[:20],
+        "write_errors": (errors or [])[:20], "other_write_errors": (other_errors or [])[:20],
         "checked_rows": checked, "mismatched_keys": mismatched,
     }
     result.update(extra or {})
