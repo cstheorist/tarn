@@ -391,7 +391,10 @@ def main():
                             refused[0] += 1
                     writes[0] += 1
                 except pymysql.MySQLError as e:
-                    errors.append(f"global: {e.args}")
+                    # (vinyl admission's refusal wrote nothing: the next
+                    # write comes after a pause)
+                    if not vinyl_refusal(e):
+                        errors.append(f"global: {e.args}")
                     time.sleep(0.05)
                 time.sleep(0.003)
 
@@ -969,7 +972,10 @@ def main():
                         model[a][1] = v
                     writes[0] += 1
                 except pymysql.MySQLError as e:
-                    errors.append(f"lazy: {e.args}")
+                    # (vinyl admission's refusal wrote nothing: the next
+                    # write comes after a pause)
+                    if not vinyl_refusal(e):
+                        errors.append(f"lazy: {e.args}")
                     time.sleep(0.05)
                 time.sleep(0.003)
 
@@ -1164,7 +1170,10 @@ def main():
                         model[(a[0], fresh["id"])] = model.pop(a)
                     writes[0] += 1
                 except pymysql.MySQLError as e:
-                    errors.append(f"made: {e.args}")
+                    # (vinyl admission's refusal wrote nothing: the next
+                    # write comes after a pause)
+                    if not vinyl_refusal(e):
+                        errors.append(f"made: {e.args}")
                     time.sleep(0.05)
                 time.sleep(0.003)
 
@@ -1312,7 +1321,10 @@ def main():
                     bumps[0] += timed("table", conn, f"UPDATE {t} SET k = k + 1 WHERE tenant_id = %s AND id = %s",
                                       (i % TENANTS, i))
                 except pymysql.MySQLError as e:
-                    errors.append(f"table: {e.args}")
+                    # (vinyl admission's refusal wrote nothing: the next
+                    # write comes after a pause)
+                    if not vinyl_refusal(e):
+                        errors.append(f"table: {e.args}")
                     time.sleep(0.05)
                 time.sleep(0.005)
 
@@ -1360,7 +1372,10 @@ def main():
                         ids[tn].discard(i)
                         ids[tn].add(j)
                 except pymysql.MySQLError as e:
-                    errors.append(f"model: {e.args}")
+                    # (vinyl admission's refusal wrote nothing: the next
+                    # write comes after a pause)
+                    if not vinyl_refusal(e):
+                        errors.append(f"model: {e.args}")
                     time.sleep(0.05)
                 time.sleep(0.005)
 
@@ -1371,7 +1386,10 @@ def main():
                 try:
                     timed("other", conn, "INSERT INTO w VALUES (%s, %s)", (n, n % 1000))
                 except pymysql.MySQLError as e:
-                    errors.append(f"other: {e.args}")
+                    # (vinyl admission's refusal wrote nothing: the next
+                    # write comes after a pause)
+                    if not vinyl_refusal(e):
+                        errors.append(f"other: {e.args}")
                     time.sleep(0.05)
                 time.sleep(0.005)
 
