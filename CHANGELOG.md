@@ -36,9 +36,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cursors. `TLA+` models (`GlobalUniqueBuild`, `GlobalUniqueWrites`) and
   Verus proofs (`uix::leave_key`, `uix::join_key`) cover the design, and
   `tests/uniquebuild.sh` runs it through SQL, on memtx and on vinyl, with a
-  takeover, with and without the copy, and `tests/indexcopy.sh` on 2 shards
-  × 3 replicas. `global_index_build = "fenced"` in `cluster.json` keeps the
-  earlier fill behind the fence, which a change that does more also uses.
+  takeover, with and without the copy, `tests/indexcopy.sh` on 2 shards
+  × 3 replicas, and `tests/uniquefaults.sh` there through a leader crash
+  during the copy, a lost PREPARE reply during the backfill, and a
+  duplicate that another shard's row writes during it.
+  `global_index_build = "fenced"` in `cluster.json` keeps the earlier fill
+  behind the fence, which a change that does more also uses.
   A unique index whose build finds two rows with one key now names the key
   in its 1062, as MySQL does.
 
