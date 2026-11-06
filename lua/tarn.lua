@@ -1841,7 +1841,9 @@ end
 -- rebuild keeps a table's global index spaces and renames them after its
 -- new space as it publishes (lua/tarn_engine.lua E.apply): after the new
 -- space took the table's name, and before the catalog names it, only the
--- catalog finds them.
+-- catalog finds them. A rebuild that renames the table renames them first:
+-- no catalog entry is under the new name until it publishes, so only their
+-- names find them then.
 function UIX.spaces(sid)
     local out, seen, tag = {}, {}, UIX.prefix .. sid .. '_'
     for _, s in box.space._space.index.name:pairs({tag}, {iterator = 'GE'}) do

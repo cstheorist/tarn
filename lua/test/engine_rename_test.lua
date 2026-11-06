@@ -370,11 +370,16 @@ local function exercise_lazy(engine)
         a.def.lazy[#a.def.lazy + 1] = s
         a.lazy_made = {made}
     end, 2)
+    local started = tarn_lazy_start(r.name, r.args, r.gen)
     local res = call('build', r)
+    -- (ABORT then retires the generation, writing it a retired descriptor.)
+    local unbuilt = defs(made)
     decide(r, 'abort'); ok(call('abort', r)); end_job(r)
-    check(label('a copy that would rename the table and make a lazy index is refused'),
+    check(label('a copy that would rename the table and make a lazy index is refused, its online start too, '
+        .. 'before any build of it'),
         res[1] ~= 'ok' and res[2] == 1210 and tostring(res[3]):find('makes no lazy index', 1, true) ~= nil
-        and box.space[to].id == t.sid and bound(t.gv, t.sid), res)
+        and started[1] ~= 'ok' and started[2] == 1210 and unbuilt == false
+        and box.space[to].id == t.sid and bound(t.gv, t.sid), {started, res, unbuilt})
 end
 
 local function cleanup()

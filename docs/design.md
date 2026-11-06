@@ -2166,9 +2166,11 @@ one). The descriptor of such a rebuild says so (`rebuild = 'layout'`
 rather than `true`): storage from before layouts refuses it at every step
 (1210) rather than copy the old layout under the new definition, and the
 job stays until a node that knows layouts ends it. An engine change keeps
-the stored layout and the table's name; a descriptor that asks otherwise
-is refused before any copy begins. ABORT checks none of that, so a refused
-job still ends: it leaves a tombstone, which a late BUILD of the job meets.
+the stored layout and the table's name: a descriptor that asks for another
+layout or a rename is refused before any copy begins. ABORT checks none of
+that, so a refused job still ends: it leaves a tombstone, which a late
+BUILD of the job meets. (A definition named after neither the table nor a
+rebuild's new name is malformed, and refused at every step.)
 
 A rebuild may rename the table (issue #292), as `ALTER TABLE ... RENAME
 TO ..., ADD INDEX ...` asks: its descriptor's `rename` is the new name,
@@ -2178,9 +2180,11 @@ the table's entry from the old name to the new one; until then the table
 is the old space's, under the old name, and ABORT leaves it so. The SQL
 servers find it under the new name once they read the new catalog, as
 after a rename in place, and a statement on the old name then fails with
-1146. Storage from before such rebuilds refuses the descriptor before its
-copy begins (1210), so the SQL server copies only when every replica
-answers `tarn_engine_rebuild_rename_capabilities`. A rename along with a
+1146. Storage from before such rebuilds takes the descriptor for a
+malformed one, its definition named otherwise than the table, and refuses
+it at every step (1210), ABORT too, as it does a layout it does not know:
+so the SQL server copies only when every replica answers
+`tarn_engine_rebuild_rename_capabilities`. A rename along with a
 new lazy index builds in place: the lazy index's online build binds the
 old space by the table's name.
 

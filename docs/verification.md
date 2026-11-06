@@ -1433,8 +1433,10 @@ the new space finds the kept spaces only by their own names: APPLY renames
 them before the new space takes the new name. `BugRenameBeforeKept`
 renames them after it, and breaks `KeptFound`. `AbortedUnderOldName` says
 that an aborted copy leaves the table, and its catalog entry, under the
-old name; `BugAbortAfterDecision` and `BugPublishBeforeDecision` now break
-it first.
+old name. It implies `NoAbortPublished`, since a shard publishes only after
+its old space gave the name up, and fails earlier: `BugAbortAfterDecision`
+and `BugPublishBeforeDecision` now break it first, at the abort that
+follows a shard's rename, before any shard publishes.
 
 Such a rebuild keeps the table's lazy generations too (`rebuild = 'lazy'`):
 their targets, entries, outbox and deliveries name the generation, but

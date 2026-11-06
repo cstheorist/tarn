@@ -77,7 +77,7 @@ function M.new(c)
            or (x.rebuild ~= nil and x.rebuild ~= true and x.rebuild ~= 'layout' and x.rebuild ~= 'aux'
                and x.rebuild ~= 'lazy')
            or (x.old_engine == a.def.engine) ~= (x.rebuild ~= nil)
-           or (a.def.name ~= x.old_name and a.def.name ~= renamed_to(a, x))
+           or type(a.def.name) ~= 'string' or (a.def.name ~= x.old_name and a.def.name ~= renamed_to(a, x))
            or (x.durable ~= nil and type(x.durable) ~= 'boolean')
            or (not nilish(a.lazy_made) and (x.rebuild ~= 'lazy' or type(a.lazy_made) ~= 'table'
                                              or a.materialize == true)) then
@@ -165,8 +165,10 @@ function M.new(c)
     -- starts its copy (not at ABORT, which must end a job however it was
     -- refused): only a 'layout', 'aux' or 'lazy' rebuild changes the stored
     -- layout (format and padding). A rebuild may check rows (row_checks),
-    -- renames no table, and makes no global index. Only an 'aux' or 'lazy'
-    -- rebuild has global indexes, which it keeps or drops (kept_globals),
+    -- and rename the table (renamed_to, unless it makes a lazy index), and
+    -- makes no global index; an engine change keeps the table's name. Only
+    -- an 'aux' or 'lazy' rebuild has global indexes, which it keeps or
+    -- drops (kept_globals),
     -- and only a 'lazy' one lazy indexes, which it keeps, makes or drops
     -- (keep_lazy). (Storage from before drops refuses a rebuild that drops
     -- one here, and the SQL server asks it first.)
@@ -175,6 +177,7 @@ function M.new(c)
             fail(1210, x.rebuild and 'A rebuild that changes the stored layout must say so'
                 or 'An engine change keeps the stored layout')
         end
+        if x.rebuild == nil and not nilish(a.rename) then fail(1210, "An engine change keeps the table's name") end
         if x.rebuild ~= nil then
             row_checks(a)
             -- (A rebuild may rename the table, to a name no table has.)
@@ -1628,7 +1631,9 @@ function M.new(c)
                 fail(1412, 'A different engine job owns the source')
             end
             -- (The descriptor as the copy will take it, before anything
-            -- starts: a generation it would refuse is never built.)
+            -- starts: a generation it would refuse is never built, nor one
+            -- of a copy that renames the table, which admissible refuses.)
+            if renamed_to(a, x) ~= nil then fail(1210, 'A rebuild that renames the table makes no lazy index') end
             keep_lazy(a, x)
             local m = made_args(a, x)
             if op == 'bootstrap' then return c.lazy.bootstrap(name, m, gen) end
