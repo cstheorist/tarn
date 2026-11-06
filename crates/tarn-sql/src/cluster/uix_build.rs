@@ -50,7 +50,8 @@ use std::collections::BTreeMap;
 /// again while it fails for a transient reason, such as a conflict with the
 /// table's writes or a shard between leaders.
 const BACKFILL_RETRY: Duration = Duration::from_secs(300);
-/// Rows per backfill transaction.
+/// Rows per backfill transaction, at most: a page also stops before its
+/// rows pass 1 MiB (`tarn_uix_backfill_page`).
 const BACKFILL_PAGE: u32 = 64;
 /// How often the backfill stores its cursors at most (and once a shard is
 /// done): a server that takes the job over passes again the rows of at most
@@ -655,7 +656,11 @@ impl Cluster {
     }
 
     /// A transaction of the backfill for rows `pks` of `t`, sent again for
-    /// up to `retry` while it fails for a transient reason.
+    /// up to `retry` while it fails for a transient reason. Each try has a
+    /// query memory budget of its own (`budget::Query`), which it releases
+    /// as it ends: the statement's would keep what every page read charged
+    /// to it until the ALTER returned, and refuse the backfill (1041) once
+    /// the rows it read passed some tens of megabytes.
     async fn uix_backfill_rows(
         &self,
         t: &Arc<TableDef>,
@@ -667,17 +672,20 @@ impl Cluster {
         let lock_timeout = self.globals.lock().lock_wait_timeout;
         let (mut since, mut wait) = (None::<Instant>, Duration::from_millis(20));
         loop {
-            let s = Session::new(c.clone(), 0);
-            let mut txn = Txn::with_mode(&c, true, mode, lock_timeout);
-            let page: futures::future::BoxFuture<'_, SqlResult<()>> =
-                Box::pin(s.building_backfill(&mut txn, t, pks.clone()));
-            let r = match page.await {
-                Ok(()) => txn.commit(&c).await.map(|_| ()),
-                Err(e) => {
-                    txn.rollback(&c);
-                    Err(e)
+            let r = crate::budget::scope(self.resources.query(), async {
+                let s = Session::new(c.clone(), 0);
+                let mut txn = Txn::with_mode(&c, true, mode, lock_timeout);
+                let page: futures::future::BoxFuture<'_, SqlResult<()>> =
+                    Box::pin(s.building_backfill(&mut txn, t, pks.clone()));
+                match page.await {
+                    Ok(()) => txn.commit(&c).await.map(|_| ()),
+                    Err(e) => {
+                        txn.rollback(&c);
+                        Err(e)
+                    }
                 }
-            };
+            })
+            .await;
             match r {
                 Ok(()) => return Ok(()),
                 Err(e) if backfill_transient(&e) && since.get_or_insert_with(Instant::now).elapsed() < retry => {

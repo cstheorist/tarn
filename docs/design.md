@@ -521,19 +521,20 @@ PREPARE and APPLY as in §2.10, and a backfill:
    written itself. So a value many rows share costs each of their writes
    no more than another.
 2. **Backfill.** The rows written before the first step get their
-   entries, or are recorded as conflicts, a page of 64 rows at a time, each
-   shard's in primary-key order (`tarn_uix_backfill_page`), up to the last
-   key the shard had when its backfill began: a row after it was written
-   since, and has its entry or conflict already. Each page goes through a
-   serializable transaction whose commit validates the rows, entries and
-   conflicts it read; a row whose entry or conflict is there already is
-   passed. A page that fails for a transient reason goes on a row at a
-   time, in READ COMMITTED transactions that lock the row, then its key's
-   entry, and read them under the locks, so that a row its writers keep
-   busy is waited for rather than starved. The job stores the shards'
-   cursors past the pages that committed, at most every second: a server
-   that takes the job over passes those rows again, which have their
-   entries.
+   entries, or are recorded as conflicts, a page of 64 rows at a time (fewer
+   when they pass 1 MiB: a SQL server takes storage replies of up to
+   8 MiB), each shard's in primary-key order (`tarn_uix_backfill_page`),
+   up to the last key the shard had when its backfill began: a row after
+   it was written since, and has its entry or conflict already. Each page
+   goes through a serializable transaction whose commit validates the
+   rows, entries and conflicts it read; a row whose entry or conflict is
+   there already is passed. A page that fails for a transient reason goes
+   on a row at a time, in READ COMMITTED transactions that lock the row,
+   then its key's entry, and read them under the locks, so that a row its
+   writers keep busy is waited for rather than starved. The job stores the
+   shards' cursors past the pages that committed, at most every second: a
+   server that takes the job over passes those rows again, which have
+   their entries.
 3. **Enforcing.** The second step builds the key's index on the table's
    own space, and its PREPARE checks, behind the table's fence, that the
    shard holds no conflict. APPLY publishes the key as an ordinary global
@@ -606,7 +607,12 @@ and its arguments hold the steps', the backfill's cursors and the error to
 report, so a server that takes the job over (§2.10) goes on from there. The
 job holds the table, and bucket moves wait for it throughout, so that no row
 escapes the cursors. Neither the backfill nor the check of the conflicts
-counts against `tarn.cfg.alter_check_rows`.
+counts against `tarn.cfg.alter_check_rows`. Each of the backfill's
+transactions has a query memory budget of its own (`query_bytes`,
+[resources](resources.md)), which it releases as it ends: the ALTER
+statement's would keep what every page read charged to it until the
+statement returned, and refuse the backfill (1041) after some tens of
+megabytes of rows.
 
 Otherwise (`global_index_build` is `fenced`, the change does more, or a
 replica cannot) the change fills the global index from the rows behind the

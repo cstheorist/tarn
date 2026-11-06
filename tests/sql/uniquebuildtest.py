@@ -20,6 +20,13 @@ shard, above which filling the index behind the table's fence is refused
         and no conflicts space is left on any node;
       - every row is found by its value (a sample);
       - a duplicate in another tenant is refused (1062).
+  * A large table: `--large-rows` rows (40,000) of about 1 KB, more than
+    one statement's query memory budget (64 MiB) holds of what its
+    backfill reads. The change succeeds, and the index holds one entry per
+    row.
+  * Wide rows: 300 rows of 200 KB, 64 of which, a backfill page's rows at
+    most, would make a reply larger than a SQL server takes from storage
+    (8 MiB). The change succeeds, and the key finds every row.
   * Duplicates from before: two rows in different tenants share a value.
     The change fails with MariaDB's 1062, the table keeps no key and no
     index space, and once the values differ, the same change succeeds.
@@ -367,6 +374,71 @@ def online(cl, c, endpoint, n):
     cl.replaced(f"{DB}.t", before)
 
 
+def large(cl, c, n):
+    """A table whose backfill reads more than one statement's memory budget
+    would hold (rows of about 1 KB): each of its transactions has a budget
+    of its own."""
+    print(f"a table of {n} rows of about 1 KB, whose backfill reads more than a statement's memory budget")
+    q(c, "CREATE TABLE b (tenant_id INT, id INT, u INT, pad VARCHAR(1100), PRIMARY KEY (tenant_id, id)) "
+         "PARTITION BY KEY(tenant_id)")
+    pad = "x" * 1000
+    for first in range(0, n, 500):
+        q(c, "INSERT INTO b VALUES " + ",".join(f"({i % TENANTS},{i},{i},'{pad}')"
+                                                for i in range(first, min(n, first + 500))))
+    space = f"{DB}.b"
+    before = cl.space_ids(space)
+    t0 = time.monotonic()
+    failed = attempt(c, "ALTER TABLE b ADD UNIQUE KEY bu (u)")
+    took = time.monotonic() - t0
+    check(f"the change succeeds ({took:.1f} s)", failed is None, failed)
+    # (counted on each shard's leader: an entry's space is the key's shard's)
+    counts = [ev(cl.leader(g), """
+        require('fiber').set_slice({warn = 30, err = 120})
+        local sp, out = box.space[...], {}
+        local tag = '_tarn_uix_' .. sp.id .. '_'
+        for _, s in box.space._space.index.name:pairs({tag}, {iterator = 'GE'}) do
+            if s.name:sub(1, #tag) ~= tag then break end
+            out[s.name] = box.space[s.id].index[0]:count()
+        end
+        return out
+    """, [space]) for g in cl.groups]
+    counts = [x if isinstance(x, dict) else {} for x in counts]   # (an empty table encodes as [])
+    names = sorted({name for x in counts for name in x})
+    check(f"its global index has one space, and holds one entry per row ({n})",
+          len(names) == 1 and not names[0].endswith("c") and sum(x.get(names[0], 0) for x in counts) == n,
+          counts)
+    sample = random.Random("large").sample(range(n), 200)
+    lost = [u for u in sample if q(c, "SELECT tenant_id, id FROM b WHERE u = %s", (u,)) != ((u % TENANTS, u),)]
+    check("every row is found by its value (a sample of 200)", not lost, lost[:5])
+    cl.replaced(space, before)
+    q(c, "DROP TABLE b")
+
+
+def wide(cl, c, n=300):
+    """A table of rows of 200 KB: 64 of them, a backfill page's rows at most,
+    would make a storage reply larger than a SQL server takes (8 MiB). A
+    page stops at 1 MiB of rows instead."""
+    print(f"a table of {n} rows of 200 KB, whose backfill pages hold fewer rows")
+    q(c, "CREATE TABLE w (tenant_id INT, id INT, u INT, body TEXT, PRIMARY KEY (tenant_id, id)) "
+         "PARTITION BY KEY(tenant_id)")
+    body = "y" * (200 * 1024)
+    for i in range(n):
+        q(c, "INSERT INTO w VALUES (%s, %s, %s, %s)", (i % TENANTS, i, i, body))
+    space = f"{DB}.w"
+    before = cl.space_ids(space)
+    t0 = time.monotonic()
+    failed = attempt(c, "ALTER TABLE w ADD UNIQUE KEY wu (u)")
+    took = time.monotonic() - t0
+    check(f"the change succeeds ({took:.1f} s)", failed is None, failed)
+    found = [q(c, "SELECT tenant_id, id FROM w WHERE u = %s", (u,)) for u in range(n)]
+    check("every row is found by its value", all(f == ((u % TENANTS, u),) for u, f in enumerate(found)),
+          [(u, f) for u, f in enumerate(found) if f != ((u % TENANTS, u),)][:5])
+    shown = q(c, "SHOW CREATE TABLE w")[0][1]
+    check("SHOW CREATE TABLE shows the key", "UNIQUE KEY `wu` (`u`)" in shown, shown)
+    cl.replaced(space, before)
+    q(c, "DROP TABLE w")
+
+
 def duplicates_before(cl, c):
     print("a value two rows share before the change")
     populate(c, "d", 2000, k=False)
@@ -516,6 +588,9 @@ def main():
     ap.add_argument("--tarn", required=True, help="SQL servers, comma separated; with two, the takeover too")
     ap.add_argument("--cluster-dir", required=True)
     ap.add_argument("--rows", type=int, default=20000)
+    ap.add_argument("--large-rows", type=int, default=40000,
+                    help="rows (of about 1 KB) of the table whose backfill reads more than a statement's "
+                         "memory budget")
     ap.add_argument("--copy", action="store_true",
                     help="the cluster copies its index builds: the enforcing step copies the table")
     args = ap.parse_args()
@@ -529,6 +604,8 @@ def main():
                        [LIMIT]) for node in cl.nodes}
     try:
         online(cl, c, endpoints[0], args.rows)
+        large(cl, c, args.large_rows)
+        wide(cl, c)
         duplicates_before(cl, c)
         duplicate_during(cl, c, endpoints[0], args.rows)
         resolved_during(cl, c, endpoints[0], args.rows)

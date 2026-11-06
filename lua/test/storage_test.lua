@@ -1606,6 +1606,23 @@ check('a backfill page reads rows from the first, and the last key now, past whi
 check('... and the next page ends at that key: a row written since is not read', w100[1] == 'ok'
       and p2[1] == 'ok' and #p2[2] == 2 and p2[2][1][1] == 3 and p2[2][2][1] == 4 and p2[3][1] == 4
       and p2[4] == 1 and p2[5][1] == 4, p2)
+-- A page stops before its rows pass 1 MiB (one row at least): a SQL
+-- server's storage connection takes replies of up to 8 MiB.
+local wide = c[1]:eval([[
+    local sp = box.schema.space.create('uix_wide_rows')
+    sp:create_index('pk')
+    local s = string.rep('x', 400 * 1024)
+    for i = 1, 4 do sp:replace{i, s} end
+    return sp.id
+]])
+local b1 = c[1]:call('tarn_uix_backfill_page', {wide, box.NULL, box.NULL, 64})
+local b2 = c[1]:call('tarn_uix_backfill_page', {wide, b1[3], b1[5], 64})
+c[1]:eval("box.space.uix_wide_rows:drop()")
+local function rows_of(p) return type(p[2]) == 'table' and #p[2] or p[2] end
+check('a page of rows of 400 KB stops at two of them, and the next takes the other two',
+      b1[1] == 'ok' and #b1[2] == 2 and b1[3][1] == 2 and b1[4] == 0
+      and b2[1] == 'ok' and #b2[2] == 2 and b2[2][1][1] == 3 and b2[4] == 1,
+      {rows_of(b1), b1[4], rows_of(b2), b2[4]})
 -- Rows 1 and 2 share a key: one holds the entry, the other is a conflict.
 rw = c[1]:call('tarn_autocommit', {{{'replace', sid + 1, {'a', 1, 1}}, {'replace', sid + 2, {'a', 2, 1}}},
                                    {fence = {sid, 15, 0, MARK}}})
