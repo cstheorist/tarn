@@ -20,7 +20,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   conflict instead of failing, and a backfill gives the rows from before
   their entries in transactions that validate them, each with a query
   memory budget of its own (not the statement's, which would refuse a
-  table of more than some tens of megabytes). The key is published
+  table of more than some tens of megabytes), in pages of 64 rows or 1 MiB
+  of them. The key is published
   only once no conflict is left behind the table's drained fence; else the
   change fails with 1062, as in MariaDB, and leaves the table as it was. A
   server that takes the job over goes on from the backfill's stored

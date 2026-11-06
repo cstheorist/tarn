@@ -521,19 +521,20 @@ PREPARE and APPLY as in §2.10, and a backfill:
    written itself. So a value many rows share costs each of their writes
    no more than another.
 2. **Backfill.** The rows written before the first step get their
-   entries, or are recorded as conflicts, a page of 64 rows at a time, each
-   shard's in primary-key order (`tarn_uix_backfill_page`), up to the last
-   key the shard had when its backfill began: a row after it was written
-   since, and has its entry or conflict already. Each page goes through a
-   serializable transaction whose commit validates the rows, entries and
-   conflicts it read; a row whose entry or conflict is there already is
-   passed. A page that fails for a transient reason goes on a row at a
-   time, in READ COMMITTED transactions that lock the row, then its key's
-   entry, and read them under the locks, so that a row its writers keep
-   busy is waited for rather than starved. The job stores the shards'
-   cursors past the pages that committed, at most every second: a server
-   that takes the job over passes those rows again, which have their
-   entries.
+   entries, or are recorded as conflicts, a page of 64 rows at a time (fewer
+   when they pass 1 MiB: a SQL server takes storage replies of up to
+   8 MiB), each shard's in primary-key order (`tarn_uix_backfill_page`),
+   up to the last key the shard had when its backfill began: a row after
+   it was written since, and has its entry or conflict already. Each page
+   goes through a serializable transaction whose commit validates the
+   rows, entries and conflicts it read; a row whose entry or conflict is
+   there already is passed. A page that fails for a transient reason goes
+   on a row at a time, in READ COMMITTED transactions that lock the row,
+   then its key's entry, and read them under the locks, so that a row its
+   writers keep busy is waited for rather than starved. The job stores the
+   shards' cursors past the pages that committed, at most every second: a
+   server that takes the job over passes those rows again, which have
+   their entries.
 3. **Enforcing.** The second step builds the key's index on the table's
    own space, and its PREPARE checks, behind the table's fence, that the
    shard holds no conflict. APPLY publishes the key as an ordinary global

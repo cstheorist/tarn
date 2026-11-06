@@ -24,6 +24,9 @@ shard, above which filling the index behind the table's fence is refused
     one statement's query memory budget (64 MiB) holds of what its
     backfill reads. The change succeeds, and the index holds one entry per
     row.
+  * Wide rows: 300 rows of 200 KB, 64 of which, a backfill page's rows at
+    most, would make a reply larger than a SQL server takes from storage
+    (8 MiB). The change succeeds, and the key finds every row.
   * Duplicates from before: two rows in different tenants share a value.
     The change fails with MariaDB's 1062, the table keeps no key and no
     index space, and once the values differ, the same change succeeds.
@@ -411,6 +414,31 @@ def large(cl, c, n):
     q(c, "DROP TABLE b")
 
 
+def wide(cl, c, n=300):
+    """A table of rows of 200 KB: 64 of them, a backfill page's rows at most,
+    would make a storage reply larger than a SQL server takes (8 MiB). A
+    page stops at 1 MiB of rows instead."""
+    print(f"a table of {n} rows of 200 KB, whose backfill pages hold fewer rows")
+    q(c, "CREATE TABLE w (tenant_id INT, id INT, u INT, body TEXT, PRIMARY KEY (tenant_id, id)) "
+         "PARTITION BY KEY(tenant_id)")
+    body = "y" * (200 * 1024)
+    for i in range(n):
+        q(c, "INSERT INTO w VALUES (%s, %s, %s, %s)", (i % TENANTS, i, i, body))
+    space = f"{DB}.w"
+    before = cl.space_ids(space)
+    t0 = time.monotonic()
+    failed = attempt(c, "ALTER TABLE w ADD UNIQUE KEY wu (u)")
+    took = time.monotonic() - t0
+    check(f"the change succeeds ({took:.1f} s)", failed is None, failed)
+    found = [q(c, "SELECT tenant_id, id FROM w WHERE u = %s", (u,)) for u in range(n)]
+    check("every row is found by its value", all(f == ((u % TENANTS, u),) for u, f in enumerate(found)),
+          [(u, f) for u, f in enumerate(found) if f != ((u % TENANTS, u),)][:5])
+    shown = q(c, "SHOW CREATE TABLE w")[0][1]
+    check("SHOW CREATE TABLE shows the key", "UNIQUE KEY `wu` (`u`)" in shown, shown)
+    cl.replaced(space, before)
+    q(c, "DROP TABLE w")
+
+
 def duplicates_before(cl, c):
     print("a value two rows share before the change")
     populate(c, "d", 2000, k=False)
@@ -577,6 +605,7 @@ def main():
     try:
         online(cl, c, endpoints[0], args.rows)
         large(cl, c, args.large_rows)
+        wide(cl, c)
         duplicates_before(cl, c)
         duplicate_during(cl, c, endpoints[0], args.rows)
         resolved_during(cl, c, endpoints[0], args.rows)

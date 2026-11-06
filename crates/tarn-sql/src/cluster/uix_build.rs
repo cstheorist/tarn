@@ -50,7 +50,8 @@ use std::collections::BTreeMap;
 /// again while it fails for a transient reason, such as a conflict with the
 /// table's writes or a shard between leaders.
 const BACKFILL_RETRY: Duration = Duration::from_secs(300);
-/// Rows per backfill transaction.
+/// Rows per backfill transaction, at most: a page also stops before its
+/// rows pass 1 MiB (`tarn_uix_backfill_page`).
 const BACKFILL_PAGE: u32 = 64;
 /// How often the backfill stores its cursors at most (and once a shard is
 /// done): a server that takes the job over passes again the rows of at most

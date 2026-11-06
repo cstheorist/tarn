@@ -6233,8 +6233,12 @@ end
 -- or is recorded as a conflict, already: the backfill stops at the rows that
 -- were there when it began). Keys are the index's own (a case-insensitive
 -- part is its weight), which the SQL server passes back as they are. Read
--- on the leader, as the backfill's transactions then read the rows.
+-- on the leader, as the backfill's transactions then read the rows. A page
+-- also stops before its rows pass UIX.page_bytes, with one row at least: a
+-- reply larger than a SQL server takes from storage (8 MiB) would close its
+-- connection, and the page's transaction reads the same rows again.
 -- {OK, rows, the last row's key (the next `after`), done (1 or 0), bound}.
+UIX.page_bytes = 1024 * 1024
 function tarn_uix_backfill_page(sid, after, bound, limit)
     writable()
     local sp = box.space[sid]
@@ -6247,11 +6251,11 @@ function tarn_uix_backfill_page(sid, after, bound, limit)
     end
     local rows, from, it = {}, {}, 'GE'
     if after ~= nil and after ~= box.NULL then from, it = after, 'GT' end
-    local done = 1
+    local done, bytes = 1, 0
     for _, t in pk:pairs(from, {iterator = it}) do
         if kd:compare_with_key(t, bound) > 0 then break end
-        if #rows >= limit then done = 0; break end
-        rows[#rows + 1] = t
+        if #rows >= limit or (#rows > 0 and bytes + t:bsize() > UIX.page_bytes) then done = 0; break end
+        rows[#rows + 1], bytes = t, bytes + t:bsize()
     end
     local last = #rows > 0 and kd:extract_key(rows[#rows]):totable() or after
     return {OK, rows, last == nil and box.NULL or last, done, bound}
