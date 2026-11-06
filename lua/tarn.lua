@@ -1841,7 +1841,9 @@ end
 -- rebuild keeps a table's global index spaces and renames them after its
 -- new space as it publishes (lua/tarn_engine.lua E.apply): after the new
 -- space took the table's name, and before the catalog names it, only the
--- catalog finds them.
+-- catalog finds them. A rebuild that renames the table renames them first:
+-- no catalog entry is under the new name until it publishes, so only their
+-- names find them then.
 function UIX.spaces(sid)
     local out, seen, tag = {}, {}, UIX.prefix .. sid .. '_'
     for _, s in box.space._space.index.name:pairs({tag}, {iterator = 'GE'}) do
@@ -8279,6 +8281,7 @@ BK.production_functions = {
         'tarn_engine_rebuild_format_capabilities',
         'tarn_engine_rebuild_lazy_capabilities',
         'tarn_engine_rebuild_lazy_made_capabilities',
+        'tarn_engine_rebuild_rename_capabilities',
         'tarn_estimate',
         'tarn_fence',
         'tarn_info',
@@ -8441,6 +8444,10 @@ function tarn_engine_rebuild_drops_capabilities() return {'ok', 1} end
 -- #184): every leader must note its writes there. The SQL server asks for
 -- it only when every replica answers.
 function tarn_engine_durable_capabilities() return {'ok', 1} end
+-- A rebuild that also renames the table (issue #292): it publishes the copy
+-- under the new name. The SQL server copies such a change only when every
+-- replica answers; storage from before refuses it.
+function tarn_engine_rebuild_rename_capabilities() return {'ok', 1} end
 -- Building global indexes (issue #292): ALTER steps with a.building and
 -- a.uix_check, catalog entries with def.building, and the fence pair that
 -- says a write maintains building indexes. The SQL server builds a global

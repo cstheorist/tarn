@@ -686,9 +686,12 @@ local function exercise_layout(engine)
         and box.space[checked.new_id] == nil and box.space[checked.name].id == checked.old_id
         and mp.encode(rows(checked.old_id)) == checked.original_bytes and phase(checked).phase == 'aborted',
         {failed_check, checked_aborted})
+    -- (A rebuild that renames the table names the new name in its
+    -- definition too: engine_rename_test.lua.)
     local moved = rebuild_layout(engine, 'layout_moved', 4, 7)
     moved.args.rename = moved.name .. '_2'
-    refused_then_aborted(moved, label('a rebuild that would rename the table is refused, and aborts'))
+    refused_then_aborted(moved, label('a rebuild that would rename the table to a name its definition does not '
+        .. 'have is refused, and aborts'))
     local stale = call('build', moved)
     check(label('a BUILD after that ABORT meets its tombstone'), stale[1] ~= 'ok' and stale[2] == 1412, stale)
 end

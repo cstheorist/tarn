@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `ALTER TABLE ... RENAME TO ...` along with index builds copies the table
+  on replicated shards too, as other index builds do there (#267), and
+  publishes the copy under the new name
+  ([#292](https://github.com/cstheorist/tarn/issues/292)); it used to build
+  the indexes in place. The table's global unique indexes are kept, their
+  spaces renamed after the copy before it takes the new name, and its lazy
+  ones rebound to it; ABORT leaves the table under its old name.
+  `tla/EngineCutover.tla` takes such a copy on every run, with a control
+  that renames the kept spaces too late (`BugRenameBeforeKept`). A rename
+  along with a new lazy index still builds in place.
+
 - `ALTER TABLE ... ADD UNIQUE` (and `CREATE UNIQUE INDEX`) of a key without
   the shard key builds the key's global index while writes go on
   ([#292](https://github.com/cstheorist/tarn/issues/292)), with no row

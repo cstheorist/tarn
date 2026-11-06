@@ -2064,7 +2064,9 @@ pub fn online_steps(
 /// It also takes a change that checks rows against a narrower type or NOT
 /// NULL: the copy checks every row it writes (`rebuild_checks_rows`, issue
 /// #184), with no row limit, rather than PREPARE behind the fence. It keeps
-/// the primary key and the table's name. A
+/// the primary key. It may rename the table too (`rebuild_renames`, issue
+/// #292), which it publishes under the new name, unless it makes a lazy
+/// index, whose online build binds the table's old space by its name. A
 /// table's global unique indexes are kept as they are
 /// (`rebuild_keeps_globals`), when the change adds and changes none of
 /// them, and so are its lazy indexes (`rebuild_keeps_lazy`), when the
@@ -2138,7 +2140,7 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         && ch.builds.iter().all(|b| b.id != 0)
         && !ch.drop.contains(&0)
         && ch.materialize == ch.pad.is_some()
-        && ch.rename.is_none()
+        && (ch.rename.is_none() || !ch.def.indexes.iter().any(made))
         && ch.def.engine == def.engine
         && ch.def.space_id == def.space_id
         && !unsettled(def)
@@ -2150,6 +2152,17 @@ pub fn rebuild_eligible(def: &TableDef, ch: &Change) -> bool {
         && !globals(&ch.def, &[]).contains(&0)
         && ch.uix_drop.iter().all(|g| globals(def, &[]).contains(g))
         && globals(def, &ch.uix_drop) == globals(&ch.def, &[])
+}
+
+/// Whether a rebuild of change `ch` also renames the table (issue #292): it
+/// publishes the copy under the new name, the catalog's entry moved to it
+/// in the transaction that publishes the copy, and the global index spaces
+/// it keeps renamed after the copy before the copy takes the new name
+/// (tla/EngineCutover.tla). The storage must know such rebuilds
+/// (`tarn_engine_rebuild_rename_capabilities`); one from before refuses
+/// them.
+pub fn rebuild_renames(ch: &Change) -> bool {
+    ch.rename.is_some()
 }
 
 /// Whether a rebuild of change `ch` drops global or lazy indexes of its
@@ -2938,8 +2951,22 @@ mod tests {
         assert!(!checks("ALTER TABLE t ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)"));
         // Nothing to build: rows checked alone stay in place.
         assert!(!eligible("ALTER TABLE t MODIFY a SMALLINT"));
-        // A renamed table, and a unique key needing a global index.
-        assert!(!eligible("ALTER TABLE t ADD INDEX ks (s), RENAME TO t2"));
+        // A renamed table copies too (issue #292), but not when the change
+        // makes a lazy index; a unique key needing a global index does not.
+        assert!(eligible("ALTER TABLE t ADD INDEX ks (s), RENAME TO t2"));
+        assert!(eligible(
+            "ALTER TABLE t RENAME TO t2, ADD COLUMN n INT DEFAULT 3, ADD INDEX kn (n)"
+        ));
+        assert!(rebuild_renames(
+            &alter(&def, &cat, "ALTER TABLE t ADD INDEX ks (s), RENAME TO t2").unwrap()
+        ));
+        assert!(!rebuild_renames(
+            &alter(&def, &cat, "ALTER TABLE t ADD INDEX ks (s)").unwrap()
+        ));
+        assert!(!eligible(
+            "ALTER TABLE t ADD INDEX ks (s) COMMENT 'tarn:lazy', RENAME TO t2"
+        ));
+        assert!(!eligible("ALTER TABLE t RENAME TO t2"));
         let (sharded, scat) = table(
             "CREATE TABLE t (tenant_id INT, id INT, a INT, PRIMARY KEY (tenant_id, id)) PARTITION BY KEY(tenant_id)",
         );

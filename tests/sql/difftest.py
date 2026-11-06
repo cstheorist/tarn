@@ -498,6 +498,18 @@ CASES = [
     ("ALTER TABLE gci ADD UNIQUE KEY ue (email)", "ddl:gci"),
     ("INSERT INTO gci VALUES (9, 'DAN@X')", "err"),
     ("SELECT id FROM gci WHERE email = 'Dan@x'", "q"),
+    # ... renamed along with an index build, which copies the table on
+    # replicated shards (issue #292): its global unique keys go with it
+    ("ALTER TABLE gu RENAME TO gr, ADD INDEX kh2 (h)", "err"),
+    ("ALTER TABLE gu RENAME TO gu2, ADD INDEX kh2 (h)", "ddl:gu2"),
+    ("SELECT * FROM gu", "err"),
+    ("SELECT id FROM gu2 WHERE n = 500 ORDER BY id", "q"),
+    ("SELECT id FROM gu2 WHERE h = 'b' ORDER BY id", "q"),
+    ("INSERT INTO gu2 VALUES (23, 9, 'z', 1, 500)", "err"),
+    ("INSERT INTO gu2 VALUES (23, 9, 'z', 1, 600)", "dml:gu2"),
+    ("SELECT id FROM gu2 WHERE n = 600", "q"),
+    ("ALTER TABLE gu2 DROP INDEX kh2, RENAME TO gu", "ddl:gu"),
+    ("DELETE FROM gu WHERE id = 23", "dml:gu"),
     # session isolation level, lock wait timeout, locking reads (issue #17);
     # the rest of the cases run at READ COMMITTED on both servers
     ("SET SESSION tx_isolation = 'READ-COMMITTED'", "q"),

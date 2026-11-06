@@ -1,13 +1,14 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=42099 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 25 and seed 4277521451334933480 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 10483] (Linux 6.18.44-fc-v230 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-drops/tla/EngineCutover.tla
-Parsing file /tmp/tlc-9704912595064215253/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-9704912595064215253/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-9704912595064215253/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-9704912595064215253/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-9704912595064215253/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-9704912595064215253/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-9704912595064215253/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 84 and seed -6306746988923985950 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 23320] (Linux 6.18.44-fc-v242 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/EngineCutover.tla
+Parsing file /tmp/tlc-2118205741342405546/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-2118205741342405546/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-2118205741342405546/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-2118205741342405546/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-2118205741342405546/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-2118205741342405546/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-2118205741342405546/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-ren/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,14 +20,15 @@ Semantic processing of module EngineCutover
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCutover
-Starting... (2026-11-03 15:52:55)
+Starting... (2026-11-06 13:23:12)
 Computing initial states...
 Computed 2 initial states...
 Computed 4 initial states...
 Computed 8 initial states...
 Computed 16 initial states...
 Computed 32 initial states...
-Finished computing initial states: 36 distinct states generated at 2026-11-03 15:52:55.
+Computed 64 initial states...
+Finished computing initial states: 72 distinct states generated at 2026-11-06 13:23:12.
 Error: Invariant CatalogHasSpace is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -45,6 +47,7 @@ State 1: <Initial predicate>
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "absent", B |-> "absent"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -67,7 +70,7 @@ State 1: <Initial predicate>
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 2: <DropOriginal("A") line 195, col 5 to line 201, col 26 of module EngineCutover>
+State 2: <DropOriginal("A") line 227, col 5 to line 233, col 26 of module EngineCutover>
 /\ lazyBase = [A |-> 1, B |-> 1]
 /\ keeps = FALSE
 /\ decision = "none"
@@ -83,6 +86,7 @@ State 2: <DropOriginal("A") line 195, col 5 to line 201, col 26 of module Engine
 /\ streamCommitted = {}
 /\ coordReady = FALSE
 /\ madePhase = [A |-> "absent", B |-> "absent"]
+/\ renames = FALSE
 /\ auxDoomed = {}
 /\ auxStreamCommitted = {}
 /\ keptName = [A |-> 1, B |-> 1]
@@ -105,7 +109,7 @@ State 2: <DropOriginal("A") line 195, col 5 to line 201, col 26 of module Engine
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-38 states generated, 38 distinct states found, 36 states left on queue.
+74 states generated, 74 distinct states found, 72 states left on queue.
 The depth of the complete state graph search is 2.
-Finished in 00s at (2026-11-03 15:52:55)
-Trace exploration spec path: ./EngineCutover_TTrace_1793739174.tla
+Finished in 00s at (2026-11-06 13:23:12)
+Trace exploration spec path: ./EngineCutover_TTrace_1793989391.tla
