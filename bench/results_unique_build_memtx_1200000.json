@@ -1,0 +1,182 @@
+{
+  "issue": 292,
+  "date": "2026-11-06T22:03:43+00:00",
+  "source": "c0990763b4b6d807544d9e3dd8c36d4b71171462",
+  "dirty": false,
+  "tarn_server_sha256": "36ad2c67b09ba0226d3d660846797859cbad7c97c9b1bca63f423563de07a602",
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f5",
+  "host": {
+    "cpus": 2,
+    "machine": "x86_64",
+    "kernel": "6.18.44-fc-v242"
+  },
+  "engine": "memtx",
+  "index": "unique",
+  "shards": 2,
+  "replicas_per_shard": 1,
+  "rows_per_shard": 1200000,
+  "alter_check_rows": 1000000,
+  "writer_rate": 200,
+  "other_rate": 100.0,
+  "load_s": 94.5,
+  "load_vinyl_refusals": 0,
+  "settle_s": 6.2,
+  "alter_s": 288.3,
+  "alter_error": null,
+  "published_s": null,
+  "leader_changes": [
+    0,
+    0
+  ],
+  "build_rows_per_s": 8325,
+  "writes": {
+    "before": {
+      "writes": 2000,
+      "errors": 0,
+      "p50_ms": 0.4628530004993081,
+      "p99_ms": 0.9326310027972795,
+      "max_ms": 7.627887000126066
+    },
+    "during": {
+      "writes": 42422,
+      "errors": 0,
+      "p50_ms": 5.7340210005349945,
+      "p99_ms": 14.535832000547089,
+      "max_ms": 2326.6285399986373,
+      "slow": [
+        [
+          286.05,
+          2327
+        ]
+      ]
+    },
+    "after": {
+      "writes": 972,
+      "errors": 0,
+      "p50_ms": 1.5386759987450205,
+      "p99_ms": 6.6594019990589,
+      "max_ms": 15.306609002436744
+    }
+  },
+  "other_writes": {
+    "before": {
+      "writes": 1000,
+      "errors": 0,
+      "p50_ms": 0.41221500214305706,
+      "p99_ms": 0.7585269995615818,
+      "max_ms": 6.850829002360115
+    },
+    "during": {
+      "writes": 28759,
+      "errors": 0,
+      "p50_ms": 1.1934780013689306,
+      "p99_ms": 6.564331997651607,
+      "max_ms": 390.29954599755,
+      "slow": [
+        [
+          287.72,
+          390
+        ]
+      ]
+    },
+    "after": {
+      "writes": 500,
+      "errors": 0,
+      "p50_ms": 0.4240220005158335,
+      "p99_ms": 3.3487560031062458,
+      "max_ms": 7.9207339986169245
+    }
+  },
+  "nodes_before": [
+    {
+      "check_rows": 1000000,
+      "rows": 1237327,
+      "term": 1,
+      "rss": 169398272,
+      "ro": false,
+      "wal_bytes": 76946361,
+      "engine": "memtx"
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1162673,
+      "term": 1,
+      "rss": 163426304,
+      "ro": false,
+      "wal_bytes": 71504172,
+      "engine": "memtx"
+    }
+  ],
+  "nodes_after": [
+    {
+      "check_rows": 1000000,
+      "rows": 1237327,
+      "term": 1,
+      "rss": 902602752,
+      "uix_entries": 1199973,
+      "ro": false,
+      "wal_bytes": 191681587,
+      "engine": "memtx"
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1162673,
+      "term": 1,
+      "rss": 860655616,
+      "uix_entries": 1200027,
+      "ro": false,
+      "wal_bytes": 184957546,
+      "engine": "memtx"
+    }
+  ],
+  "copy_phases": [
+    [],
+    []
+  ],
+  "slow_probes": [
+    [
+      287.78,
+      2,
+      331
+    ]
+  ],
+  "write_errors": [],
+  "checked_rows": 2400000,
+  "mismatched_keys": [],
+  "job_phases": [
+    [
+      0.1,
+      "backfill"
+    ],
+    [
+      286.1,
+      "enforcing:prepare"
+    ],
+    [
+      288.39,
+      null
+    ]
+  ],
+  "job_steps": [
+    [
+      "backfill",
+      286.0
+    ],
+    [
+      "enforcing:prepare",
+      2.29
+    ]
+  ],
+  "fill_s": 286.0,
+  "fill_rows_per_s": 8392,
+  "index_spaces": [
+    [
+      "_tarn_uix_10001_2"
+    ],
+    [
+      "_tarn_uix_10001_2"
+    ]
+  ],
+  "lookups_checked": 300,
+  "duplicate_refused": true
+}

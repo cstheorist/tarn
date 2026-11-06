@@ -1,0 +1,172 @@
+{
+  "issue": 292,
+  "date": "2026-11-06T22:23:22+00:00",
+  "source": "6a59aa0e670766bff91a30afaf380a14cd10fbbd",
+  "dirty": false,
+  "tarn_server_sha256": "36ad2c67b09ba0226d3d660846797859cbad7c97c9b1bca63f423563de07a602",
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f5",
+  "host": {
+    "cpus": 2,
+    "machine": "x86_64",
+    "kernel": "6.18.44-fc-v242"
+  },
+  "engine": "vinyl",
+  "index": "unique",
+  "shards": 2,
+  "replicas_per_shard": 1,
+  "rows_per_shard": 1200000,
+  "alter_check_rows": 1000000,
+  "writer_rate": 200,
+  "other_rate": 100.0,
+  "load_s": 118.5,
+  "load_vinyl_refusals": 17,
+  "settle_s": 5.2,
+  "alter_s": 393.57,
+  "alter_error": null,
+  "published_s": null,
+  "leader_changes": [
+    0,
+    0
+  ],
+  "build_rows_per_s": 6098,
+  "writes": {
+    "before": {
+      "writes": 2001,
+      "errors": 0,
+      "p50_ms": 0.7152139987738337,
+      "p99_ms": 1.3840979991073254,
+      "max_ms": 3.9047400023264345
+    },
+    "during": {
+      "writes": 51279,
+      "errors": 0,
+      "p50_ms": 6.697153999994043,
+      "p99_ms": 17.250242999580223,
+      "max_ms": 157.43514899804723,
+      "slow": []
+    },
+    "after": {
+      "writes": 974,
+      "errors": 0,
+      "p50_ms": 1.9949669986090157,
+      "p99_ms": 8.052508001128444,
+      "max_ms": 20.455198999115964
+    }
+  },
+  "other_writes": {
+    "before": {
+      "writes": 1001,
+      "errors": 0,
+      "p50_ms": 0.6871639998280443,
+      "p99_ms": 1.3698090006073471,
+      "max_ms": 4.325327998230932
+    },
+    "during": {
+      "writes": 39198,
+      "errors": 0,
+      "p50_ms": 1.4506949992210139,
+      "p99_ms": 7.735658000456169,
+      "max_ms": 222.59556900098687,
+      "slow": [
+        [
+          389.13,
+          223
+        ]
+      ]
+    },
+    "after": {
+      "writes": 499,
+      "errors": 0,
+      "p50_ms": 0.5972790022497065,
+      "p99_ms": 6.169329997646855,
+      "max_ms": 15.92238499870291
+    }
+  },
+  "nodes_before": [
+    {
+      "check_rows": 1000000,
+      "rows": 1237327,
+      "term": 1,
+      "rss": 190251008,
+      "ro": false,
+      "wal_bytes": 76910069,
+      "engine": "vinyl"
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1162673,
+      "term": 1,
+      "rss": 190984192,
+      "ro": false,
+      "wal_bytes": 71484538,
+      "engine": "vinyl"
+    }
+  ],
+  "nodes_after": [
+    {
+      "check_rows": 1000000,
+      "rows": 1264990,
+      "term": 1,
+      "rss": 421072896,
+      "uix_entries": 1201691,
+      "ro": false,
+      "wal_bytes": 197426129,
+      "engine": "vinyl"
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1188690,
+      "term": 1,
+      "rss": 421818368,
+      "uix_entries": 1201881,
+      "ro": false,
+      "wal_bytes": 190718403,
+      "engine": "vinyl"
+    }
+  ],
+  "copy_phases": [
+    [],
+    []
+  ],
+  "slow_probes": [],
+  "write_errors": [],
+  "other_write_errors": [],
+  "checked_rows": 2400000,
+  "mismatched_keys": [],
+  "job_phases": [
+    [
+      0.1,
+      "backfill"
+    ],
+    [
+      387.06,
+      "enforcing:prepare"
+    ],
+    [
+      393.59,
+      null
+    ]
+  ],
+  "job_steps": [
+    [
+      "backfill",
+      386.96
+    ],
+    [
+      "enforcing:prepare",
+      6.53
+    ]
+  ],
+  "fill_s": 387.0,
+  "fill_rows_per_s": 6202,
+  "index_spaces": [
+    [
+      "_tarn_uix_10001_2"
+    ],
+    [
+      "_tarn_uix_10001_2"
+    ]
+  ],
+  "lookups_checked": 300,
+  "duplicate_refused": true
+}
