@@ -32,6 +32,8 @@ shard, above which filling the index behind the table's fence is refused
     moves on, so the conflict takes the entry over; under READ COMMITTED,
     a conflict's row is deleted. The change succeeds, and the key finds
     each value's row.
+  * A primary key with a case-insensitive part: the backfill's pages follow
+    the shards' own key order (its weights), and every row gets its entry.
   * Taken over (with two SQL servers): the first case on another table, the
     change sent to the first server, which is killed once the backfill has
     passed some rows, and the writes to the second, which takes the change
@@ -393,6 +395,21 @@ def resolved_during(cl, c, endpoint, n):
     check("no conflicts space is left", len(left) == 1 and not left[0].endswith("c"), left)
 
 
+def collated_primary_key(cl, c):
+    print("a table whose primary key has a case-insensitive part")
+    q(c, "CREATE TABLE cp (tenant_id INT, name VARCHAR(20) COLLATE utf8mb4_general_ci, u INT, "
+         "PRIMARY KEY (tenant_id, name)) PARTITION BY KEY(tenant_id)")
+    q(c, "INSERT INTO cp VALUES " + ",".join(
+        f"({i % 8},'{'Nm' if i % 2 else 'nM'}{i:05d}',{i})" for i in range(3000)))
+    failed = attempt(c, "ALTER TABLE cp ADD UNIQUE KEY cpu (u)")
+    check("the change succeeds, the backfill's pages following the shards' own key order", failed is None, failed)
+    entries = sum(len(rows) for node in {cl.leader(g) for g in cl.groups}
+                  for name, rows in cl.hidden(f"{DB}.cp")[node].items() if not name.endswith("c"))
+    found = q(c, "SELECT name FROM cp WHERE u = 2999")
+    check("the index holds one entry per row, and finds them", entries == 3000 and found == (("Nm02999",),),
+          [entries, found])
+
+
 def taken_over(cl, endpoints, n):
     print("taken over by the second SQL server when the first stops")
     pid = int((cl.dir / "tarn1.pid").read_text())
@@ -454,6 +471,7 @@ def main():
         duplicates_before(cl, c)
         duplicate_during(cl, c, endpoints[0], args.rows)
         resolved_during(cl, c, endpoints[0], args.rows)
+        collated_primary_key(cl, c)
         if len(endpoints) > 1:
             taken_over(cl, endpoints, args.rows)
     finally:

@@ -762,9 +762,12 @@ the table wait, and refuses (1846) a table with more than
 `alter_check_rows` rows on a shard, as every build did before. A statement
 that changes more than its new unique keys, and one on a cluster with a
 replica that does not answer `tarn_uix_building_capabilities` (a storage
-node from before), builds `fenced`. While a build runs, the shards refuse
-(1412) writes to the table from SQL servers that predate it: upgrade the SQL
-servers before adding such keys.
+node from before), builds `fenced`. On a cluster with replicated shards,
+the online build's last step builds the key's local index in place, so the
+change is refused above `alter_check_rows` rows per shard (1846) unless
+`index_build` is `in_place`, as a fill behind the fence is. While a build
+runs, the shards refuse (1412) writes to the table from SQL servers that
+predate it: upgrade the SQL servers before adding such keys.
 
 `ddl_step_slice` is how long, in seconds, one call of a copy's BUILD or
 PREPARE runs before it returns and the SQL server sends it again (issue

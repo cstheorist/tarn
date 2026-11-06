@@ -561,6 +561,13 @@ local success, exception = xpcall(function()
             and json.decode(changed.definition_json).columns[2].name == 'amount', changed)
         present(engine .. ' caller may explicitly resubmit compatible keys under new handle',
             public(reader, 'get', request(changed, {1})), 1, 12)
+        -- A global index of the table building (issue #292): only writes
+        -- must say they maintain it, so reads go on.
+        local building_def = copy(next_def); building_def.building = true
+        box.space._tarn_catalog:replace{def.name, building_def}; tarn.stale_fences()
+        present(engine .. ' reads go on while a global index of the table builds',
+            public(reader, 'get', request(meta(reader, name), {1})), 1, 12)
+        box.space._tarn_catalog:replace{def.name, next_def}; tarn.stale_fences()
 
         -- STORAGE-UNIT drop/recreate ABA: identical public name/schema shape,
         -- a different physical identity, and different actual row data.

@@ -485,9 +485,13 @@ end
 local FENCE = {}
 local FENCE_STALE = true   -- rebuilt from _tarn_catalog before the next check
 -- M.uix_building[space_id]: a global index of the table is building (issue
--- #292, `building` in its _tarn_catalog entry): its writes must come from
--- SQL servers that maintain building indexes, which say so with the pair
--- {0, 2^64 - 1} in their fence list (stale_definition). Rebuilt with FENCE.
+-- #292, `building` in its _tarn_catalog entry), or the step that publishes
+-- it building has prepared here (`building` in its stored fence): writes to
+-- the table must come from SQL servers that maintain building indexes,
+-- which say so with the pair {0, 2^64 - 1} in their fence list
+-- (stale_definition). From PREPARE on, since a SQL server from before may
+-- already have read the building definition from a shard that applied it.
+-- Rebuilt with FENCE.
 M.uix_building = {}
 
 -- Tables held by a TRUNCATE or DROP TABLE (see "CREATE TABLE, DROP TABLE and
@@ -562,6 +566,7 @@ local function fence_rebuild()
         if sid ~= nil and (box.space[sid] ~= nil or (type(v) == 'table' and v.engine_retired))
            and type(v) == 'table' and not v.aborted
            and (f[sid] or 0) < v.ver then f[sid] = v.ver end
+        if sid ~= nil and type(v) == 'table' and not v.aborted and v.building == true then building[sid] = true end
     end
     DDL_GEN = {}
     FENCE, FENCE_STALE = f, false
@@ -659,8 +664,10 @@ end
 -- were encoded with: fence = {space_id, ver, space_id, ver, ...}. Returns
 -- the 1412 status if one of them is older than the table's fence. Call
 -- fence_fresh() first: it may yield; this does not, so nothing can raise a
--- fence between this check and the writes that follow it.
-local function stale_definition(fence)
+-- fence between this check and the writes that follow it. `reads`: the
+-- fence of a request that only reads (strong KV), which a building index
+-- does not concern.
+local function stale_definition(fence, reads)
     if fence == nil or fence == box.NULL then return nil end
     local building = false   -- (the pair {0, 2^64 - 1}: see M.uix_building)
     for i = 1, #fence, 2 do
@@ -674,7 +681,7 @@ local function stale_definition(fence)
                      tostring(fence[i]), tostring(cur), tostring(fence[i + 1]))
             return {'error', 1412, STALE_DEF_MSG}
         end
-        if not building and M.uix_building[fence[i]] then
+        if not building and not reads and M.uix_building[fence[i]] then
             M.stats.stale_defs = M.stats.stale_defs + 1
             log.info('a write to space %s refused (1412): a global index of the table is building, '
                      .. 'and the SQL server that made the write does not maintain building indexes',
@@ -6054,6 +6061,20 @@ function tarn_alter_prepare(name, a, gen)
     local uix_fill = not building and a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0
     local lazy_fill = M.lazy.needs_scan(a.def)
     local fills = uix_fill or lazy_fill
+    -- (The SQL server asks for a limit when the online build's last step
+    -- would build the key's local index in place on a replicated shard,
+    -- where the followers' builds hold the shard's other writes: #267.)
+    if building and a.building_limit == true then
+        local rows = sp.index[0]:len()
+        if rows > M.cfg.alter_check_rows then
+            return {'error', 1846, string.format(
+                "Building a global unique index on the existing rows of '%s' is not supported. Reason: a "
+                .. "shard holds about %d rows of it (limit %d, tarn.cfg.alter_check_rows), and its replicated "
+                .. "shards would build the key's local index in place, behind the table's fence. Include the "
+                .. "shard key in the unique key, or set index_build to in_place",
+                sp.name, rows, M.cfg.alter_check_rows)}
+        end
+    end
     if (a.checks ~= nil and a.checks ~= box.NULL and #a.checks > 0) or fills then
         -- Writes to the table wait while the rows are checked, or read to
         -- fill a new global or lazy index; vinyl's count is an estimate,
@@ -6089,10 +6110,15 @@ function tarn_alter_prepare(name, a, gen)
             return {'error', 1412, STALE_DEF_MSG}
         end
         if had == nil or had.ver < a.ver or not had.aborted then
-            box.space._tarn_meta:replace{'fence:' .. sp.id, {ver = a.ver, gen = gen}}
+            -- (The step that publishes an index building: writes need the
+            -- building pair from now on, see M.uix_building.)
+            local publishes = building and type(a.def) == 'table' and a.def.building == true or nil
+            box.space._tarn_meta:replace{'fence:' .. sp.id, {ver = a.ver, gen = gen, building = publishes}}
+            if publishes then M.uix_building[sp.id] = true end
         end
     end
-    if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver; BK.ns_fence(sp.id) end
+    if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
+    BK.ns_fence(sp.id)
     local function undo(res)
         drop_built(sp, a.builds)
         -- Only while the fence is still this run's: a later run of the job
@@ -6103,7 +6129,11 @@ function tarn_alter_prepare(name, a, gen)
             mine = r ~= nil and r.ver == a.ver and r.gen == gen and not r.aborted
             if mine then box.space._tarn_meta:delete{'fence:' .. sp.id} end
         end
-        if mine then FENCE[sp.id] = cur > 0 and cur or nil; BK.ns_fence(sp.id) end
+        if mine then
+            FENCE[sp.id] = cur > 0 and cur or nil
+            M.uix_building[sp.id] = UIX.catalog_building(sp.name)
+            BK.ns_fence(sp.id)
+        end
         return res
     end
     local deadline = clock.monotonic() + (a.timeout or 50)
@@ -6117,7 +6147,9 @@ function tarn_alter_prepare(name, a, gen)
     if bad then return undo(bad) end
     -- The step that publishes building indexes as enforcing (issue #292):
     -- behind the drained fence, their conflicts on this shard must be gone,
-    -- or two rows share a key and the change fails.
+    -- or two rows share a key and the change fails. (A conflicts space that
+    -- is gone was dropped by this step's APPLY, which runs this again after
+    -- a restart: the check had passed.)
     for _, id in ipairs(a.uix_check or {}) do
         local c = box.space[id]
         local t = c ~= nil and c:select({}, {limit = 1})[1] or nil
@@ -6144,6 +6176,13 @@ function tarn_alter_prepare(name, a, gen)
         end
     end
     return {OK}
+end
+
+-- Whether the published definition of table `name` has a building global
+-- index (true or nil, for M.uix_building).
+function UIX.catalog_building(name)
+    local t = box.space._tarn_catalog:get{name}
+    return t ~= nil and type(t.def) == 'table' and t.def.building == true or nil
 end
 
 -- The stored fence of table space `sid` (see tarn_alter_prepare):
@@ -6177,6 +6216,37 @@ end
 -- every fill writes the same entries: a call sent again after a lost
 -- connection, and the fill of a server that took the job over. A space is
 -- never emptied for a new fill (ABORT drops it, and PREPARE makes a new one).
+-- A page of an online build's backfill (issue #292): up to `limit` rows of
+-- table space `sid` after the primary key `after` (nil: from the first), in
+-- the primary index's order, and none past key `bound`, which is the table's
+-- last key now when nil (a row written once the index builds has its entry,
+-- or is recorded as a conflict, already: the backfill stops at the rows that
+-- were there when it began). Keys are the index's own (a case-insensitive
+-- part is its weight), which the SQL server passes back as they are. Read
+-- on the leader, as the backfill's transactions then read the rows.
+-- {OK, rows, the last row's key (the next `after`), done (1 or 0), bound}.
+function tarn_uix_backfill_page(sid, after, bound, limit)
+    writable()
+    local sp = box.space[sid]
+    if sp == nil then return {'error', 1146, 'no such space ' .. tostring(sid)} end
+    local pk, kd = sp.index[0], index_key_def(sid, 0)
+    if bound == nil or bound == box.NULL then
+        local last = pk:max()
+        if last == nil then return {OK, {}, box.NULL, 1, box.NULL} end
+        bound = kd:extract_key(last):totable()
+    end
+    local rows, from, it = {}, {}, 'GE'
+    if after ~= nil and after ~= box.NULL then from, it = after, 'GT' end
+    local done = 1
+    for _, t in pk:pairs(from, {iterator = it}) do
+        if kd:compare_with_key(t, bound) > 0 then break end
+        if #rows >= limit then done = 0; break end
+        rows[#rows + 1] = t
+    end
+    local last = #rows > 0 and kd:extract_key(rows[#rows]):totable() or after
+    return {OK, rows, last == nil and box.NULL or last, done, bound}
+end
+
 function tarn_uix_fill(id, tuples, sid, ver, gen)
     writable()
     local ok, res = pcall(function()
@@ -6342,6 +6412,8 @@ function tarn_alter_abort(name, a, gen)
     else
         FENCE[sp.id] = cur > 0 and cur or nil
     end
+    M.uix_building[sp.id] = UIX.catalog_building(sp.name)
+        or (later and not r.aborted and r.building == true) or nil
     BK.ns_fence(sp.id)
     return {OK}
 end
@@ -8242,6 +8314,7 @@ BK.production_functions = {
         'tarn_txn_cas',
         'tarn_txn_status',
         'tarn_txn_statuses',
+        'tarn_uix_backfill_page',
         'tarn_uix_building_capabilities',
         'tarn_uix_fill',
         'tarn_unlock',
@@ -8505,7 +8578,7 @@ M.kv = require('tarn_kv').new{
             error(box.error.new{code = box.error.TRANSACTION_CONFLICT,
                                 reason = 'Strong KV metadata became stale during the read'})
         end
-        local stale = stale_definition({sid, ver})
+        local stale = stale_definition({sid, ver}, true)
         if stale or DDL_HELD[sid] ~= nil then
             error({kv_v1 = true, kind = 'schema_changed', domain = 'contract', code = 1412,
                    message = 'Table definition is fenced; explicitly open a new table handle'}, 0)

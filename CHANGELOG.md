@@ -9,8 +9,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - `ALTER TABLE ... ADD UNIQUE` (and `CREATE UNIQUE INDEX`) of a key without
-  the shard key builds the key's global index while writes go on, with no
-  row limit ([#292](https://github.com/cstheorist/tarn/issues/292)). While
+  the shard key builds the key's global index while writes go on
+  ([#292](https://github.com/cstheorist/tarn/issues/292)), with no row limit
+  on unreplicated shards; on replicated ones, where its last step still
+  builds the key's local index in place (#267), the limit of a fill behind
+  the fence stays. While
   it builds, a write that gives a row a key another row holds records a
   conflict instead of failing, and a backfill gives the rows from before
   their entries in transactions that validate them. The key is published

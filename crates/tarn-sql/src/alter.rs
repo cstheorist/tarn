@@ -1058,6 +1058,10 @@ pub struct Change {
     /// Conflicts spaces of building global indexes that must be empty on
     /// each shard behind its fence (the step that makes them enforcing).
     pub uix_check: Vec<u32>,
+    /// The first step of an online build whose last would build the keys'
+    /// local indexes in place on replicated shards: the shards refuse it
+    /// above `alter_check_rows` rows (1846), as they refuse such a fill.
+    pub building_limit: bool,
 }
 
 fn not_found_col(c: &str) -> SqlError {
@@ -1907,6 +1911,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
         lazy_new: Vec::new(),
         building: false,
         uix_check: Vec::new(),
+        building_limit: false,
     })
 }
 
@@ -2264,13 +2269,17 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
             + ch.engine_change.is_some() as usize
             + made as usize
             + ch.building as usize
-            + !ch.uix_check.is_empty() as usize,
+            + !ch.uix_check.is_empty() as usize
+            + ch.building_limit as usize,
     );
     // (Storage from before ignores them: the SQL server builds a global
     // index online only when every replica answers
     // tarn_uix_building_capabilities.)
     if ch.building {
         m.str("building").bool(true);
+    }
+    if ch.building_limit {
+        m.str("building_limit").bool(true);
     }
     if !ch.uix_check.is_empty() {
         m.str("uix_check").arr(ch.uix_check.len());

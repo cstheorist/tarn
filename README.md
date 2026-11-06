@@ -42,7 +42,7 @@ read them as **key/value**.
   one at a time meanwhile (#263, #254); the followers then build the index
   again, and a build that takes them more than about a second makes the
   leader resign. A new unique key without the shard key gets its global
-  index while writes go on, with no row limit (#292). Indexed instant
+  index while writes go on (#292). Indexed instant
   defaults and lazy-index bootstrap use bounded write fences while reads
   remain available.
   [Online engine changes](docs/operations.md#online-engine-changes) copy a

@@ -395,14 +395,14 @@ fn failed_lock_gen(d: &[u8]) -> Option<String> {
     rd.string().ok()
 }
 
-/// msgpack bytes of a key: the canonical identity of a row in the buffer
-/// (identical to Lua's msgpack.encode of the key array on the shard).
 /// The pair a commit's fence list ends with when it writes a table whose
 /// global indexes include a building one (`Txn::encode_fence`): no space has
 /// id 0, and no definition fence is above `u64::MAX`, so storage from before
 /// building indexes passes it.
 pub const BUILDING_FENCE: (u32, u64) = (0, u64::MAX);
 
+/// msgpack bytes of a key: the canonical identity of a row in the buffer
+/// (identical to Lua's msgpack.encode of the key array on the shard).
 pub fn key_bytes(key: &[Value]) -> Bytes {
     let mut m = Mp::new();
     m.vals(key);
@@ -992,6 +992,14 @@ impl Txn {
     /// Apply this transaction's writes to rows read from storage for table
     /// `t`: drop rows it overwrote/deleted, add every live row it wrote.
     /// Callers re-check predicates, so including extra rows is harmless.
+    /// The buffered writes to table `space`, in key order.
+    pub fn buffered_in(&self, space: u32) -> impl Iterator<Item = &BufWrite> + '_ {
+        self.writes
+            .range((space, Bytes::new())..)
+            .take_while(move |((s, _), _)| *s == space)
+            .map(|(_, w)| w)
+    }
+
     pub fn overlay(&self, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {
         let lo = (t.space_id, Bytes::new());
         let mine: Vec<&BufWrite> = self

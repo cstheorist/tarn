@@ -147,7 +147,12 @@ than equivalent index membership. See [the full contract and supported identitie
   rows while writes to the table go on, with no row limit (issue #292). A
   value two rows hold, before the change or written during it, fails it
   with 1062, as in MariaDB, whose online `ADD UNIQUE` also lets such a write
-  in; until it is published, the key refuses no write. When the statement
+  in. Until it is published, the key refuses no write, except, on an
+  unreplicated shard's vinyl table, once its local index is built just
+  before the end: a write that duplicates a key on its own shard then fails
+  with 1062, as during other vinyl builds. On a cluster with replicated
+  shards, the change is refused above a million rows per shard (1846), as
+  its last step builds the key's local index in place. When the statement
   changes more than its unique keys (or with `global_index_build` set to
   `fenced`), the index is filled behind the table's fence instead: writes
   to the table wait meanwhile, and above a million rows per shard the change

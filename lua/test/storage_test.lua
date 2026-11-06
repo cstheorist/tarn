@@ -1564,6 +1564,11 @@ local function bw(ver, op, mark)
 end
 local function exists(id) return c[1]:eval('return box.space[...] ~= nil', {id}) end
 local limit = c[1]:eval('local o = tarn.cfg.alter_check_rows; tarn.cfg.alter_check_rows = 1; return o')
+r = c[1]:call('tarn_alter_prepare', {tname, bargs(15, {uix = {entries, conflicts}, building_limit = true},
+                                                  {entries, conflicts}, true), 1})
+check('a building step the SQL server limits (its last would build in place on replicated shards) '
+      .. 'is refused above alter_check_rows, before it fences (1846)', r[1] == 'error' and r[2] == 1846
+      and not exists(sid + 1) and c[1]:eval('return box.space._tarn_meta:get{"fence:" .. ...} == nil', {sid}), r)
 local a1 = bargs(15, {uix = {entries, conflicts}}, {entries, conflicts}, true)
 r = c[1]:call('tarn_alter_prepare', {tname, a1, 1})
 check('a building step makes both spaces, with no row limit, and stores its fence', r[1] == 'ok'
@@ -1572,6 +1577,10 @@ check('a building step makes both spaces, with no row limit, and stores its fenc
 c[1]:eval('tarn.stale_fences()')
 local rw = bw(0, {'replace', sid, {3, 'b', 1}})
 check('... which outlives a rebuild from storage (a restart, a new leader)', rw[1] == 'error' and rw[2] == 1412, rw)
+rw = bw(15, {'replace', sid, {3, 'b', 1}})
+check('... and, from PREPARE on, so does the refusal of a write of the building version that does not '
+      .. 'say it maintains building indexes (a SQL server from before reads it from a shard that applied it)',
+      rw[1] == 'error' and rw[2] == 1412, rw)
 r = c[1]:call('tarn_alter_apply', {tname, a1, 1})
 check('APPLY publishes the index building', r[1] == 'ok'
       and c[1]:eval('return box.space._tarn_catalog:get{...}.def.building', {tname}) == true, r)
@@ -1585,6 +1594,18 @@ c[1]:eval('tarn.stale_fences()')
 rw = bw(15, {'replace', sid, {4, 'c', 1}})
 local rm = bw(15, {'replace', sid, {4, 'c', 1}}, true)
 check('... also after a rebuild from storage', rw[1] == 'error' and rw[2] == 1412 and rm[1] == 'ok', {rw, rm})
+-- The backfill's pages: rows in primary-key order, up to the last key the
+-- table had when it began (rows 1 to 4), whatever is written since.
+local p1 = c[1]:call('tarn_uix_backfill_page', {sid, box.NULL, box.NULL, 2})
+local w100 = bw(15, {'replace', sid, {100, 'z', 1}}, true)
+local p2 = c[1]:call('tarn_uix_backfill_page', {sid, p1[3], p1[5], 64})
+bw(15, {'delete', sid, {100}}, true)
+check('a backfill page reads rows from the first, and the last key now, past which it stops',
+      p1[1] == 'ok' and #p1[2] == 2 and p1[2][1][1] == 1 and p1[2][2][1] == 2 and p1[3][1] == 2 and p1[4] == 0
+      and p1[5][1] == 4, p1)
+check('... and the next page ends at that key: a row written since is not read', w100[1] == 'ok'
+      and p2[1] == 'ok' and #p2[2] == 2 and p2[2][1][1] == 3 and p2[2][2][1] == 4 and p2[3][1] == 4
+      and p2[4] == 1 and p2[5][1] == 4, p2)
 -- Rows 1 and 2 share a key: one holds the entry, the other is a conflict.
 rw = c[1]:call('tarn_autocommit', {{{'replace', sid + 1, {'a', 1, 1}}, {'replace', sid + 2, {'a', 2, 1}}},
                                    {fence = {sid, 15, 0, MARK}}})
@@ -1601,8 +1622,19 @@ check('its ABORT leaves a tombstone: a late PREPARE of it is refused, and the wr
       and r[1] == 'error' and r[2] == 1412 and rw[1] == 'ok' and exists(sid + 2), {r, rw})
 rw = c[1]:call('tarn_autocommit', {{{'delete', sid + 2, {'a', 2}}}, {fence = {sid, 15, 0, MARK}}})
 local a3 = bargs(17, {uix_check = {sid + 2}, uix_drop = {sid + 2}}, {entries})
+-- A PREPARE whose drain times out on a prepared transaction undoes itself,
+-- so that the online build may send it again rather than abort it (an
+-- ABORT's tombstone would refuse it for good).
+local held = prepare(1, 'UB' .. sid, {{'replace', sid, {9, 'x', 1}}})
+local refused = c[1]:call('tarn_alter_prepare', {tname, a3, 1})
+local between = bw(15, {'replace', sid, {10, 'y', 1}}, true)
+local stored = c[1]:eval('return box.space._tarn_meta:get{"fence:" .. ...} == nil', {sid})
+c[1]:call('tarn_apply', {'UB' .. sid})
+check('a step whose drain times out on a prepared transaction undoes itself (1205), and writes go on',
+      held[1] == 'yes' and refused[1] == 'timeout' and refused[2] == 1205 and between[1] == 'ok' and stored,
+      {held, refused, between, stored})
 r = {c[1]:call('tarn_alter_prepare', {tname, a3, 1}), c[1]:call('tarn_alter_apply', {tname, a3, 1})}
-check('with no conflict left it publishes the index enforcing, and drops the conflicts',
+check('... and sent again, with no conflict left, it publishes the index enforcing, and drops the conflicts',
       rw[1] == 'ok' and r[1][1] == 'ok' and r[2][1] == 'ok' and not exists(sid + 2) and exists(sid + 1)
       and c[1]:eval('return box.space._tarn_catalog:get{...}.def.building', {tname}) == nil, r)
 rw = bw(17, {'replace', sid, {6, 'e', 1}})
@@ -1611,8 +1643,11 @@ check('then the writes need no mark again', rw[1] == 'ok', rw)
 local a4 = bargs(18, {uix = {table.deepcopy(conflicts)}}, {entries, conflicts}, true)
 a4.uix[1].name, a4.uix[1].id = '_tarn_uix_' .. sid .. '_2c', sid + 3
 r = c[1]:call('tarn_alter_prepare', {tname, a4, 1})
+rw = bw(18, {'replace', sid, {7, 'g', 1}})
 c[1]:call('tarn_alter_abort', {tname, a4, 1})
-check("an aborted building step drops its spaces", r[1] == 'ok' and not exists(sid + 3), r)
+local after = bw(17, {'replace', sid, {7, 'g', 1}})
+check("an aborted building step drops its spaces, and writes need no mark again",
+      r[1] == 'ok' and rw[2] == 1412 and not exists(sid + 3) and after[1] == 'ok', {r, rw, after})
 local a5 = bargs(19, {uix_drop = {sid + 1}})
 r = {c[1]:call('tarn_alter_prepare', {tname, a5, 1}), c[1]:call('tarn_alter_apply', {tname, a5, 1})}
 check('the step that drops the index drops its entries', r[1][1] == 'ok' and r[2][1] == 'ok'

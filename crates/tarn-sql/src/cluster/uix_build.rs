@@ -8,16 +8,23 @@
 //!    row's entry holds as a conflict (`session::building`).
 //! 2. `backfill`: the rows written before get their entries, or are
 //!    recorded as conflicts, unless they already are: a page at a time,
-//!    each shard's rows in primary-key order, through transactions whose
-//!    commit validates the rows (`Session::building_backfill`). Once a
-//!    page commits, the job stores the shard's cursor past it.
+//!    each shard's rows in primary-key order up to the last one it had when
+//!    the backfill began there, through transactions whose commit validates
+//!    the rows (`Session::building_backfill`). The job stores the shards'
+//!    cursors as the pages commit, at most every `BACKFILL_SAVE`.
 //! 3. `enforcing`: the table's local unique index is built; behind the
 //!    drained fence each shard checks that no conflict of its is left
 //!    (tarn_alter_prepare, `a.uix_check`); the index is published
-//!    enforcing, its conflicts space dropped.
+//!    enforcing, its conflicts space dropped. A PREPARE refused for a
+//!    transient reason (a lock wait, a shard between leaders) is sent again
+//!    for up to `JOB_STEP_RETRY` before the step is aborted.
 //! 4. `dropping`, if the third step fails (two rows share a key: 1062, or
 //!    another error): the table is published as it was and the index's
-//!    spaces dropped; the statement fails with the third step's error.
+//!    spaces dropped; the statement fails with the third step's error. This
+//!    step only goes forward: it is never aborted (an ABORT would refuse its
+//!    PREPARE for good), and its PREPARE is sent again until every shard has
+//!    prepared, by this server for up to `JOB_STEP_RETRY`, then by whichever
+//!    server finds the job abandoned.
 //!
 //! Each step fences every shard, durably (`a.building`), and drains it
 //! before any shard publishes. The job's phase names its stage and the
@@ -31,11 +38,16 @@ use crate::session::Session;
 use crate::txn::{Mode as TxnMode, Txn};
 use std::collections::BTreeMap;
 
-/// How long the backfill sends a page's transaction again while it fails
-/// for a transient reason, such as a conflict with the table's writes.
+/// How long the backfill sends a page's transaction, or its read of a page,
+/// again while it fails for a transient reason, such as a conflict with the
+/// table's writes or a shard between leaders.
 const BACKFILL_RETRY: Duration = Duration::from_secs(300);
 /// Rows per backfill transaction.
 const BACKFILL_PAGE: u32 = 64;
+/// How often the backfill stores its cursors at most (and once a shard is
+/// done): a server that takes the job over passes again the rows of at most
+/// this long, which have their entries.
+const BACKFILL_SAVE: Duration = Duration::from_secs(1);
 
 /// The state of an online build (its job's arguments).
 pub(crate) struct UixBuild {
@@ -45,11 +57,23 @@ pub(crate) struct UixBuild {
     pub(crate) steps: [Vec<u8>; 3],
     /// The building version (the first step's).
     pub(crate) ver: u64,
-    /// By shard id: the backfill's cursor, the primary key of the last row
-    /// it passed (None: none yet), and whether it is done there.
-    pub(crate) cursors: BTreeMap<u32, (Option<Vec<Value>>, bool)>,
+    /// The backfill's cursor on each shard, by shard id.
+    pub(crate) cursors: BTreeMap<u32, Cursor>,
     /// The error the statement fails with, once the third step failed.
     pub(crate) error: Option<SqlError>,
+}
+
+/// Where the backfill is on a shard (tarn_uix_backfill_page). Keys are the
+/// shard's primary-index keys as it encodes them, kept as they are.
+#[derive(Clone, Default)]
+pub(crate) struct Cursor {
+    /// The key of the last row passed (None: none yet).
+    after: Option<Vec<u8>>,
+    /// The shard's last key when the backfill began there (None: not yet
+    /// read). The rows after it were written since the index began
+    /// building.
+    bound: Option<Vec<u8>>,
+    done: bool,
 }
 
 impl UixBuild {
@@ -64,11 +88,16 @@ impl UixBuild {
             m.raw(s);
         }
         m.str("cursors").arr(self.cursors.len());
-        for (id, (after, done)) in &self.cursors {
-            m.arr(3).uint(*id as u64).uint(*done as u64);
-            m.opt_vals(after);
+        for (id, c) in &self.cursors {
+            m.arr(4).uint(*id as u64).uint(c.done as u64);
+            for k in [&c.after, &c.bound] {
+                match k {
+                    Some(k) => m.raw(k),
+                    None => m.nil(),
+                };
+            }
         }
-        m.str("version").uint(1);
+        m.str("version").uint(2);
         if let Some(e) = &self.error {
             m.str("error")
                 .arr(3)
@@ -85,6 +114,14 @@ impl UixBuild {
         let mut steps: Vec<Vec<u8>> = Vec::new();
         let mut cursors = BTreeMap::new();
         let mut error = None;
+        let raw_or_nil = |rd: &mut Rd| -> SqlResult<Option<Vec<u8>>> {
+            if rd.is_nil() {
+                rd.skip()?;
+                Ok(None)
+            } else {
+                Ok(Some(rd.raw_value()?.to_vec()))
+            }
+        };
         for _ in 0..rd.map()? {
             match rd.string()?.as_str() {
                 "db" => db = rd.string()?,
@@ -97,17 +134,15 @@ impl UixBuild {
                 }
                 "cursors" => {
                     for _ in 0..rd.array()? {
-                        rd.array()?;
+                        let n = rd.array()?;
                         let id = rd.value()?.as_i64().unwrap_or(0) as u32;
                         let done = rd.value()?.as_i64() == Some(1);
-                        let after = if rd.is_nil() {
+                        let after = raw_or_nil(&mut rd)?;
+                        let bound = if n > 3 { raw_or_nil(&mut rd)? } else { None };
+                        for _ in 4..n {
                             rd.skip()?;
-                            None
-                        } else {
-                            let n = rd.array()?;
-                            Some((0..n).map(|_| rd.value()).collect::<SqlResult<Vec<Value>>>()?)
-                        };
-                        cursors.insert(id, (after, done));
+                        }
+                        cursors.insert(id, Cursor { after, bound, done });
                     }
                 }
                 "error" => {
@@ -134,6 +169,34 @@ impl UixBuild {
     }
 }
 
+/// Sends a refused step again, with a growing pause, until `limit` has
+/// passed since the first refusal.
+struct StepRetry {
+    since: Instant,
+    wait: Duration,
+    limit: Duration,
+}
+
+impl StepRetry {
+    fn new(limit: Duration) -> StepRetry {
+        StepRetry {
+            since: Instant::now(),
+            wait: Duration::from_millis(200),
+            limit,
+        }
+    }
+
+    /// Wait before the next try, or false once `limit` has passed.
+    async fn wait(&mut self) -> bool {
+        if self.since.elapsed() >= self.limit {
+            return false;
+        }
+        tokio::time::sleep(self.wait).await;
+        self.wait = (self.wait * 2).min(Duration::from_secs(5));
+        true
+    }
+}
+
 impl Cluster {
     /// ALTER TABLE change `ch` of `def`, which only adds unique keys without
     /// the shard key (`alter::builds_globals_online`): their global indexes
@@ -154,7 +217,12 @@ impl Cluster {
             self.next_catalog_version().await?,
             self.next_catalog_version().await?,
         ];
-        let steps = crate::alter::online_steps(def, ch, vers, &ids)?;
+        let mut steps = crate::alter::online_steps(def, ch, vers, &ids)?;
+        // The third step builds the keys' local indexes in place: on a
+        // replicated shard, as copy_index_builds would not, within the
+        // limit of a fill behind the fence (#267).
+        steps[0].building_limit = self.cfg.index_build != IndexBuild::InPlace
+            && self.live_shards().any(|i| self.shards[i].replicas().len() > 1);
         let st = UixBuild {
             db: def.db.clone(),
             table: def.name.clone(),
@@ -192,53 +260,98 @@ impl Cluster {
             "prepare" => "building:prepare".to_string(),
             p => p.to_string(),
         };
+        let rolled_back = || SqlError::new(1213, "40001", format!("ALTER TABLE of {} was rolled back", job.space));
         loop {
-            let (stage, step) = phase.split_once(':').unwrap_or((phase.as_str(), ""));
-            let (stage, step) = (stage.to_string(), step.to_string());
-            match stage.as_str() {
-                "building" => match self.uix_step(job, "building", &st.steps[0], &step).await? {
-                    None => phase = self.uix_phase(job, "backfill").await?,
+            match phase.as_str() {
+                "building:prepare" => match self.uix_prepare(job, &st.steps[0]).await? {
+                    None => phase = self.uix_phase(job, "building:apply").await?,
                     Some(e) => {
+                        self.uix_phase(job, "building:abort").await?;
+                        self.uix_abort(job, "building", &st.steps[0]).await?;
                         self.job_end(&job.owner).await?;
                         return Err(e);
                     }
                 },
+                "building:apply" => {
+                    self.uix_apply(job, &st.steps[0]).await?;
+                    phase = self.uix_phase(job, "backfill").await?;
+                }
+                "building:abort" => {
+                    self.uix_abort(job, "building", &st.steps[0]).await?;
+                    self.job_end(&job.owner).await?;
+                    return Err(st.error.take().unwrap_or_else(rolled_back));
+                }
                 "backfill" => match self.uix_backfill(job, &mut st).await {
                     Ok(()) => phase = self.uix_phase(job, "enforcing:prepare").await?,
                     Err(e) if e.code == 1180 => return Err(e),
                     Err(e) => {
                         tracing::warn!(table = %job.space, error = %e.message, "an online index build's backfill failed");
-                        st.error = Some(e);
+                        st.error.get_or_insert(e);
                         self.uix_save(job, &st).await?;
                         phase = self.uix_phase(job, "dropping:prepare").await?;
                     }
                 },
-                "enforcing" => match self.uix_step(job, "enforcing", &st.steps[1], &step).await? {
-                    None => {
-                        self.job_end(&job.owner).await?;
-                        return Ok(());
-                    }
-                    Some(e) => {
-                        st.error = Some(e);
+                "enforcing:prepare" => {
+                    // A refusal for a transient reason: PREPARE again (a
+                    // shard that refused it undid it; one that prepared takes
+                    // it again), as the backfill is done.
+                    let mut retry = StepRetry::new(JOB_STEP_RETRY);
+                    phase = loop {
+                        match self.uix_prepare(job, &st.steps[1]).await? {
+                            None => break self.uix_phase(job, "enforcing:apply").await?,
+                            Some(e) if step_retried(&e) => {
+                                // (still this server's job)
+                                self.record_phase(job, "enforcing:prepare").await?;
+                                if retry.wait().await {
+                                    tracing::info!(table = %job.space, error = %e.message,
+                                        "an online index build's enforcing step was refused; sending it again");
+                                    continue;
+                                }
+                                st.error.get_or_insert(e);
+                            }
+                            Some(e) => {
+                                st.error.get_or_insert(e);
+                            }
+                        }
                         self.uix_save(job, &st).await?;
-                        phase = self.uix_phase(job, "dropping:prepare").await?;
-                    }
-                },
-                "dropping" => match self.uix_step(job, "dropping", &st.steps[2], &step).await? {
-                    None => {
-                        self.job_end(&job.owner).await?;
-                        return Err(st.error.take().unwrap_or_else(|| {
-                            SqlError::new(1213, "40001", format!("ALTER TABLE of {} was rolled back", job.space))
-                        }));
-                    }
-                    Some(e) => {
-                        // (Its drain may wait past its timeout: again.)
-                        tracing::warn!(table = %job.space, error = %e.message,
-                            "dropping a failed online index build was refused; trying again");
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                        phase = self.uix_phase(job, "dropping:prepare").await?;
-                    }
-                },
+                        break self.uix_phase(job, "enforcing:abort").await?;
+                    };
+                }
+                "enforcing:apply" => {
+                    self.uix_apply(job, &st.steps[1]).await?;
+                    self.job_end(&job.owner).await?;
+                    return Ok(());
+                }
+                "enforcing:abort" => {
+                    self.uix_abort(job, "enforcing", &st.steps[1]).await?;
+                    phase = self.uix_phase(job, "dropping:prepare").await?;
+                }
+                "dropping:prepare" => {
+                    let mut retry = StepRetry::new(JOB_STEP_RETRY);
+                    phase = loop {
+                        match self.uix_prepare(job, &st.steps[2]).await? {
+                            None => break self.uix_phase(job, "dropping:apply").await?,
+                            Some(e) => {
+                                self.record_phase(job, "dropping:prepare").await?;
+                                if retry.wait().await {
+                                    tracing::info!(table = %job.space, error = %e.message,
+                                        "dropping a failed online index build was refused; sending it again");
+                                    continue;
+                                }
+                                // The change failed; whichever server finds
+                                // the job abandoned drops the index.
+                                tracing::warn!(table = %job.space, error = %e.message,
+                                    "dropping a failed online index build was refused; it is left to finish later");
+                                return Err(st.error.take().unwrap_or(e));
+                            }
+                        }
+                    };
+                }
+                "dropping:apply" => {
+                    self.uix_apply(job, &st.steps[2]).await?;
+                    self.job_end(&job.owner).await?;
+                    return Err(st.error.take().unwrap_or_else(rolled_back));
+                }
                 _ => return Err(SqlError::internal(format!("an online index build in phase {phase}"))),
             }
         }
@@ -273,165 +386,181 @@ impl Cluster {
         ))
     }
 
-    /// One ALTER step of an online build (`stage`), from phase `step`
-    /// (prepare, apply or abort), as `run_job_steps` runs an ALTER TABLE's:
-    /// None once applied everywhere, or the reason it was aborted.
-    async fn uix_step(&self, job: &Job, stage: &str, args: &[u8], step: &str) -> SqlResult<Option<SqlError>> {
+    /// The call of step `args` to `proc` on shard `i`, sent again while it
+    /// fails for a transient reason.
+    async fn uix_send(&self, job: &Job, i: usize, proc: &'static str, args: &[u8]) -> SqlResult<bytes::Bytes> {
         let mut call = Mp::new();
         call.arr(3).str(&job.space);
         call.0.extend_from_slice(args);
         call.uint(job.gen);
-        let live: Vec<usize> = self.live_shards().collect();
-        let send = |i: usize, proc: &'static str| {
-            let call = &call;
-            retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || async move {
-                self.call(i, proc, &call.0)
-                    .await
-                    .and_then(|d| lua_status(&d).map(|_| d.clone()))
-            })
-        };
-        let mut phase = step.to_string();
-        let mut failed: Option<SqlError> = None;
-        if phase == "prepare" {
-            for r in crate::topology::collect(
-                live.iter().map(|&i| send(i, "tarn_alter_build")),
-                self.cfg.topology.fanout,
-            )
-            .await
-            {
-                if let Err(e) = r {
-                    failed.get_or_insert(e);
-                }
-            }
-            let mut applied = false;
-            if failed.is_none() {
-                for r in crate::topology::collect(
-                    live.iter().map(|&i| send(i, "tarn_alter_prepare")),
-                    self.cfg.topology.fanout,
-                )
+        let call = &call;
+        retry_transient(JOB_STEP_RETRY, Duration::from_millis(20), move || async move {
+            self.call(i, proc, &call.0)
                 .await
-                {
-                    match r {
-                        Ok(d) => applied |= applied_reply(&d),
-                        Err(e) => {
-                            failed.get_or_insert(e);
-                        }
-                    }
-                }
-            }
-            phase = if failed.is_some() && !applied { "abort" } else { "apply" }.to_string();
-            self.record_phase(job, &format!("{stage}:{phase}")).await?;
-        }
-        if phase == "abort" {
-            for r in crate::topology::collect(
-                live.iter().map(|&i| send(i, "tarn_alter_abort")),
-                self.cfg.topology.fanout,
-            )
-            .await
-            {
-                if let Err(e) = r {
-                    tracing::warn!("ALTER TABLE of {}: {} abort: {}", job.space, stage, e);
-                    return Err(SqlError::new(
-                        1180,
-                        "40003",
-                        format!(
-                            "ALTER TABLE did not finish on every shard ({}); it completes in the background",
-                            e.message
-                        ),
-                    ));
-                }
-            }
-            return Ok(Some(failed.unwrap_or_else(|| {
-                SqlError::new(1213, "40001", format!("ALTER TABLE of {} was rolled back", job.space))
-            })));
-        }
+                .and_then(|d| lua_status(&d).map(|_| d.clone()))
+        })
+        .await
+    }
+
+    /// BUILD, then PREPARE, of step `args` on every live shard: None once
+    /// every shard has prepared, or one has applied it already (the step
+    /// goes forward); else the first refusal.
+    async fn uix_prepare(&self, job: &Job, args: &[u8]) -> SqlResult<Option<SqlError>> {
+        let live: Vec<usize> = self.live_shards().collect();
+        let mut failed: Option<SqlError> = None;
         for r in crate::topology::collect(
-            live.iter().map(|&i| send(i, "tarn_alter_apply")),
+            live.iter().map(|&i| self.uix_send(job, i, "tarn_alter_build", args)),
             self.cfg.topology.fanout,
         )
         .await
         {
             if let Err(e) = r {
-                return Err(SqlError::new(
-                    1180,
-                    "40003",
-                    format!(
-                        "ALTER TABLE did not finish on every shard ({}); it completes in the background",
-                        e.message
-                    ),
-                ));
+                failed.get_or_insert(e);
             }
         }
-        self.bump_catalog().await?;
-        Ok(None)
+        if failed.is_some() {
+            return Ok(failed);
+        }
+        let mut applied = false;
+        for r in crate::topology::collect(
+            live.iter().map(|&i| self.uix_send(job, i, "tarn_alter_prepare", args)),
+            self.cfg.topology.fanout,
+        )
+        .await
+        {
+            match r {
+                Ok(d) => applied |= applied_reply(&d),
+                Err(e) => {
+                    failed.get_or_insert(e);
+                }
+            }
+        }
+        Ok(if applied { None } else { failed })
+    }
+
+    /// ABORT of step `args` (of `stage`) on every live shard.
+    async fn uix_abort(&self, job: &Job, stage: &str, args: &[u8]) -> SqlResult<()> {
+        let live: Vec<usize> = self.live_shards().collect();
+        for r in crate::topology::collect(
+            live.iter().map(|&i| self.uix_send(job, i, "tarn_alter_abort", args)),
+            self.cfg.topology.fanout,
+        )
+        .await
+        {
+            if let Err(e) = r {
+                tracing::warn!("ALTER TABLE of {}: {} abort: {}", job.space, stage, e);
+                return Err(unfinished(&e));
+            }
+        }
+        Ok(())
+    }
+
+    /// APPLY of step `args` on every live shard, then the catalog's bump.
+    async fn uix_apply(&self, job: &Job, args: &[u8]) -> SqlResult<()> {
+        let live: Vec<usize> = self.live_shards().collect();
+        for r in crate::topology::collect(
+            live.iter().map(|&i| self.uix_send(job, i, "tarn_alter_apply", args)),
+            self.cfg.topology.fanout,
+        )
+        .await
+        {
+            if let Err(e) = r {
+                return Err(unfinished(&e));
+            }
+        }
+        self.bump_catalog().await
     }
 
     /// The backfill: every shard's rows, a page at a time from its cursor.
     async fn uix_backfill(&self, job: &Job, st: &mut UixBuild) -> SqlResult<()> {
-        self.reload_catalog().await?;
-        let t = self
-            .catalog()
-            .get(&st.db, &st.table)
-            .filter(|t| t.ver == st.ver && t.globals.iter().any(|g| g.building()))
-            .ok_or_else(|| {
-                SqlError::internal(format!(
-                    "{}: its definition is not the building one ({}) the backfill needs",
-                    job.space, st.ver
-                ))
-            })?;
+        let t = retry_transient(BACKFILL_RETRY, Duration::from_millis(20), || async {
+            self.reload_catalog().await?;
+            Ok(self
+                .catalog()
+                .get(&st.db, &st.table)
+                .filter(|t| t.ver == st.ver && t.globals.iter().any(|g| g.building())))
+        })
+        .await?
+        .ok_or_else(|| {
+            SqlError::internal(format!(
+                "{}: its definition is not the building one ({}) the backfill needs",
+                job.space, st.ver
+            ))
+        })?;
         let mut shards: Vec<(u32, usize)> = self.live_shards().map(|i| (self.shards[i].id, i)).collect();
         shards.sort_unstable();
+        let mut saved = Instant::now();
         for (id, shard) in shards {
-            let (mut after, done): (Option<Vec<Value>>, bool) = st.cursors.get(&id).cloned().unwrap_or((None, false));
-            if done {
-                continue;
-            }
-            let client = self.shards[shard].client(self).await?;
-            loop {
-                let mut key = Mp::new();
-                let iter = match &after {
-                    Some(k) => {
-                        key.vals(k);
-                        tarn_iproto::Iter::Gt
-                    }
-                    None => {
-                        key.arr(0);
-                        tarn_iproto::Iter::All
-                    }
-                };
-                let r = client
-                    .select(0, t.space_id, 0, iter, 0, BACKFILL_PAGE, &key.0)
-                    .await
-                    .map_err(from_iproto)?;
-                let mut pks = Vec::new();
-                for tup in r.tuples().map_err(crate::mpw::proto)? {
-                    pks.push(t.pk_key(&Rd::shared(&tup).row_of(&t)?));
+            let mut cur = st.cursors.get(&id).cloned().unwrap_or_default();
+            while !cur.done {
+                let (rows, next) = self.uix_page(shard, &t, &cur).await?;
+                if !rows.is_empty() {
+                    self.uix_backfill_page(&t, rows).await?;
                 }
-                let last = pks.last().cloned();
-                let full = pks.len() == BACKFILL_PAGE as usize;
-                if !pks.is_empty() {
-                    self.uix_backfill_page(&t, pks).await?;
-                }
-                after = last.or(after);
-                st.cursors.insert(id, (after.clone(), !full));
-                self.uix_save(job, st).await?;
-                if !full {
-                    break;
+                cur = next;
+                st.cursors.insert(id, cur.clone());
+                if cur.done || saved.elapsed() >= BACKFILL_SAVE {
+                    self.uix_save(job, st).await?;
+                    saved = Instant::now();
                 }
             }
         }
         Ok(())
     }
 
-    /// A page of the backfill, in a transaction sent again while it fails
-    /// for a transient reason.
-    /// A page that fails for a transient reason goes on a row at a time, so
-    /// that a row its writers keep busy holds up no other.
+    /// The next page of the backfill on `shard` (tarn_uix_backfill_page):
+    /// its rows' primary keys, and the cursor past it. Sent again while it
+    /// fails for a transient reason (it only reads).
+    async fn uix_page(&self, shard: usize, t: &TableDef, cur: &Cursor) -> SqlResult<(Vec<Vec<Value>>, Cursor)> {
+        let mut a = Mp::new();
+        a.arr(4).uint(t.space_id as u64);
+        for k in [&cur.after, &cur.bound] {
+            match k {
+                Some(k) => a.raw(k),
+                None => a.nil(),
+            };
+        }
+        a.uint(BACKFILL_PAGE as u64);
+        let a = &a;
+        let d = retry_transient(BACKFILL_RETRY, Duration::from_millis(20), move || async move {
+            self.call(shard, "tarn_uix_backfill_page", &a.0)
+                .await
+                .and_then(|d| lua_status(&d).map(|_| d.clone()))
+        })
+        .await?;
+        // {OK, rows, last key, done, bound}
+        let (_, mut rd) = lua_status(&d)?;
+        let mut pks = Vec::new();
+        for _ in 0..rd.array()? {
+            pks.push(t.pk_key(&Rd::new(rd.raw_value()?).row_of(t)?));
+        }
+        let raw = |rd: &mut Rd| -> SqlResult<Option<Vec<u8>>> {
+            if rd.is_nil() {
+                rd.skip()?;
+                Ok(None)
+            } else {
+                Ok(Some(rd.raw_value()?.to_vec()))
+            }
+        };
+        let after = raw(&mut rd)?;
+        let done = rd.value()?.as_i64() == Some(1);
+        let bound = raw(&mut rd)?;
+        Ok((pks, Cursor { after, bound, done }))
+    }
+
+    /// A page of the backfill, in a transaction that fails for a transient
+    /// reason goes on a row at a time, in transactions that lock their row
+    /// and keys instead of validating them, so that a row its writers keep
+    /// busy holds up no other, and is not starved by them.
     async fn uix_backfill_page(&self, t: &Arc<TableDef>, pks: Vec<Vec<Value>>) -> SqlResult<()> {
-        match self.uix_backfill_rows(t, pks.clone(), Duration::ZERO).await {
-            Err(e) if pks.len() > 1 && backfill_transient(&e) => {
+        match self
+            .uix_backfill_rows(t, pks.clone(), TxnMode::Serializable, Duration::ZERO)
+            .await
+        {
+            Err(e) if backfill_transient(&e) => {
                 for pk in pks {
-                    self.uix_backfill_rows(t, vec![pk], BACKFILL_RETRY).await?;
+                    self.uix_backfill_rows(t, vec![pk], TxnMode::ReadCommitted, BACKFILL_RETRY)
+                        .await?;
                 }
                 Ok(())
             }
@@ -441,13 +570,19 @@ impl Cluster {
 
     /// A transaction of the backfill for rows `pks` of `t`, sent again for
     /// up to `retry` while it fails for a transient reason.
-    async fn uix_backfill_rows(&self, t: &Arc<TableDef>, pks: Vec<Vec<Value>>, retry: Duration) -> SqlResult<()> {
+    async fn uix_backfill_rows(
+        &self,
+        t: &Arc<TableDef>,
+        pks: Vec<Vec<Value>>,
+        mode: TxnMode,
+        retry: Duration,
+    ) -> SqlResult<()> {
         let c = self.arc();
         let lock_timeout = self.globals.lock().lock_wait_timeout;
         let (mut since, mut wait) = (None::<Instant>, Duration::from_millis(20));
         loop {
             let s = Session::new(c.clone(), 0);
-            let mut txn = Txn::with_mode(&c, true, TxnMode::Serializable, lock_timeout);
+            let mut txn = Txn::with_mode(&c, true, mode, lock_timeout);
             let r = match s.building_backfill(&mut txn, t, pks.clone()).await {
                 Ok(()) => txn.commit(&c).await.map(|_| ()),
                 Err(e) => {
@@ -468,10 +603,79 @@ impl Cluster {
     }
 }
 
+/// A step that did not finish on every shard: it completes in the
+/// background (whichever server finds the job abandoned goes on with it).
+fn unfinished(e: &SqlError) -> SqlError {
+    SqlError::new(
+        1180,
+        "40003",
+        format!(
+            "ALTER TABLE did not finish on every shard ({}); it completes in the background",
+            e.message
+        ),
+    )
+}
+
+/// A refusal of the enforcing step's PREPARE that another try may not meet:
+/// a lock wait past the step's timeout (its drain), a shard between leaders
+/// or down, a transaction conflict.
+fn step_retried(e: &SqlError) -> bool {
+    e.code == 1205 || crate::lazy::online_transient(e)
+}
+
 /// A failure of a backfill page that another try may not meet: a conflict
 /// with the table's writes, a lock wait, a definition fence raised for a
 /// while, an outcome a lost reply left unknown (the next try reads again,
 /// and passes rows that have their entries), a shard between leaders.
 fn backfill_transient(e: &SqlError) -> bool {
     matches!(e.code, 1180 | 1205 | 1213 | 1412) || crate::lazy::online_transient(e)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_job_arguments_round_trip() {
+        // (A shard's keys are kept as it encodes them.)
+        let mut key = Mp::new();
+        key.arr(2).uint(7).str("a");
+        let st = UixBuild {
+            db: "d".into(),
+            table: "t".into(),
+            steps: [vec![0x90], vec![0x91, 0x01], vec![0xc0]],
+            ver: 5,
+            cursors: BTreeMap::from([
+                (
+                    1,
+                    Cursor {
+                        after: Some(key.0.clone()),
+                        bound: Some(key.0.clone()),
+                        done: false,
+                    },
+                ),
+                (
+                    2,
+                    Cursor {
+                        after: None,
+                        bound: None,
+                        done: true,
+                    },
+                ),
+            ]),
+            error: Some(SqlError::new(1062, "23000", "Duplicate entry '7' for key 'u'")),
+        };
+        let back = UixBuild::parse(&st.encode()).unwrap();
+        assert_eq!((back.db.as_str(), back.table.as_str(), back.ver), ("d", "t", 5));
+        assert_eq!(back.steps, st.steps);
+        let c = &back.cursors[&1];
+        assert_eq!(
+            (c.after.as_deref(), c.bound.as_deref(), c.done),
+            (Some(&key.0[..]), Some(&key.0[..]), false)
+        );
+        let c = &back.cursors[&2];
+        assert!(c.after.is_none() && c.bound.is_none() && c.done);
+        let e = back.error.unwrap();
+        assert_eq!((e.code, e.message.as_str()), (1062, "Duplicate entry '7' for key 'u'"));
+    }
 }
