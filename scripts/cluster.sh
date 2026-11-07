@@ -187,9 +187,27 @@ case "$CMD" in
     echo "cluster up: $N shard(s) x $R replica(s); SQL on 127.0.0.1:$TPORT..$((TPORT + SERVERS - 1)); dir $DIR"
     ;;
   stop)
-    for f in "$DIR"/*.pid; do [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null; rm -f "$f"; done
-    sleep 0.5
-    for f in "$DIR"/*.pid; do [ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; done
+    # Every process gets SIGTERM, then up to 10 s to exit, then SIGKILL, and
+    # stop returns once all are gone: a node still shutting down writes into
+    # its directory, which the caller may remove next.
+    pids=()
+    for f in "$DIR"/*.pid; do [ -f "$f" ] && pids+=("$(cat "$f")"); done
+    alive() { kill -0 "$1" 2>/dev/null && [ "$(ps -o stat= -p "$1" 2>/dev/null | cut -c1)" != Z ]; }
+    wait_gone() {
+      for _ in $(seq 1 "$1"); do
+        left=0
+        for p in ${pids[@]+"${pids[@]}"}; do alive "$p" && left=1; done
+        [ "$left" = 0 ] && return 0
+        sleep 0.1
+      done
+      return 1
+    }
+    for p in ${pids[@]+"${pids[@]}"}; do kill "$p" 2>/dev/null; done
+    if ! wait_gone 100; then
+      for p in ${pids[@]+"${pids[@]}"}; do alive "$p" && kill -9 "$p" 2>/dev/null; done
+      wait_gone 50 || echo "cluster.sh: processes still running after SIGKILL" >&2
+    fi
+    rm -f "$DIR"/*.pid
     [ "${KEEP:-0}" = 1 ] || rm -rf "$DIR"
     ;;
   restart)

@@ -74,9 +74,10 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification && !inputs.topology_only)
     name: Tests
     runs-on: ubuntu-24.04
-    # (Passing runs take 50 to 56 minutes: the timeout is for a hung step,
-    # not for a slow runner.)
-    timeout-minutes: 80
+    # (Passing runs took 65 to 79 minutes in November 2026, and one at 80
+    # timed out in its last step: the timeout is for a hung step, not for
+    # a slow runner.)
+    timeout-minutes: 110
     env:
       TARN_QUERY_PUSHDOWN: 'true'
     services:
