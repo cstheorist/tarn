@@ -173,6 +173,20 @@ def vinyl_refusal(e):
     return e.args[0] == 1205 and "Vinyl" in str(e.args[1])
 
 
+def load(c, sql, args=None):
+    """q() for the rows a scenario starts from: a statement that vinyl
+    admission refuses (it wrote nothing) is sent again, for up to two
+    minutes, as a client would."""
+    deadline = time.monotonic() + 120
+    while True:
+        try:
+            return q(c, sql, args)
+        except pymysql.MySQLError as e:
+            if not vinyl_refusal(e) or time.monotonic() > deadline:
+                raise
+            time.sleep(0.2)
+
+
 def owned_by_model(i):
     """Rows the model's writer owns: the original rows of every fourth round
     of tenants (some in each tenant), and the rows it inserts or moves. The
@@ -346,7 +360,7 @@ def main():
         q(c, f"CREATE TABLE {g} (tenant_id INT, id INT, u INT NOT NULL, k INT, PRIMARY KEY (tenant_id, id), "
              f"UNIQUE KEY uu (u)) ENGINE={engine} PARTITION BY KEY(tenant_id)")
         for first in range(0, n, 1000):
-            q(c, f"INSERT INTO {g} VALUES " + ",".join(f"({i % TENANTS},{i},{i},{i % 97})"
+            load(c, f"INSERT INTO {g} VALUES " + ",".join(f"({i % TENANTS},{i},{i},{i % 97})"
                                                      for i in range(first, first + 1000)))
         model = {(i % TENANTS, i): i for i in range(n)}
         fresh = {"id": 2 * FRESH_ID, "u": 3 * FRESH_C}
@@ -516,7 +530,7 @@ def main():
         q(c, f"CREATE TABLE {r} (tenant_id INT, id INT, u INT, k INT, PRIMARY KEY (tenant_id, id), "
              f"UNIQUE KEY ru (u)) ENGINE={engine} PARTITION BY KEY(tenant_id)")
         for first in range(0, n, 1000):
-            q(c, f"INSERT INTO {r} VALUES " + ",".join(f"({i % TENANTS},{i},{i},{i % 97})"
+            load(c, f"INSERT INTO {r} VALUES " + ",".join(f"({i % TENANTS},{i},{i},{i % 97})"
                                                      for i in range(first, first + 1000)))
         model = {(i % TENANTS, i): i for i in range(n)}
         fresh = {"id": 8 * FRESH_ID, "u": 8 * FRESH_C}
@@ -646,7 +660,7 @@ def main():
         q(c, f"CREATE TABLE {o} (tenant_id INT, id INT, u INT, k INT, PRIMARY KEY (tenant_id, id)) "
              f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
         for first in range(0, n, 1000):
-            q(c, f"INSERT INTO {o} VALUES " + ",".join(f"({i % TENANTS},{i},{i},0)"
+            load(c, f"INSERT INTO {o} VALUES " + ",".join(f"({i % TENANTS},{i},{i},0)"
                                                      for i in range(first, first + 1000)))
         model = {(i % TENANTS, i): i for i in range(n)}
         fresh = {"id": 5 * FRESH_ID, "u": 5 * FRESH_C}
@@ -798,7 +812,7 @@ def main():
         q(c, f"CREATE TABLE {t} (tenant_id INT, id INT, k INT, a INT, w INT, z INT, PRIMARY KEY (tenant_id, id)) "
              f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
         for first in range(0, 10000, 1000):
-            q(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},0,{i % 100},{i},{i})"
+            load(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},0,{i % 100},{i},{i})"
                                                        for i in range(first, first + 1000)))
         q(c, f"UPDATE {t} SET w = 100000 WHERE tenant_id = 5 AND id = 5")
         q(c, f"UPDATE {t} SET z = NULL WHERE tenant_id = 7 AND id = 7")
@@ -878,7 +892,7 @@ def main():
         q(c, f"CREATE TABLE {t} (tenant_id INT, id INT, k INT, PRIMARY KEY (tenant_id, id)) "
              f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
         for first in range(0, 20000, 1000):
-            q(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},0)" for i in range(first, first + 1000)))
+            load(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},0)" for i in range(first, first + 1000)))
         caught_up()
         first_g, held_g = groups
         lead1, lead2 = leader(first_g), leader(held_g)
@@ -996,7 +1010,7 @@ def main():
              f"KEY by_j (j, id) COMMENT 'tarn:lazy', UNIQUE KEY uu (u), UNIQUE KEY uw (w)) "
              f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
         for first in range(0, n, 1000):
-            q(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},{i % keys},{i % keys},{i},{i},{i % 2})"
+            load(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},{i % keys},{i % keys},{i},{i},{i % 2})"
                                                      for i in range(first, first + 1000)))
         # (tenant_id, id) -> [k, j, u, w]
         model = {(i % TENANTS, i): [i % keys, i % keys, i, i] for i in range(n)}
@@ -1232,7 +1246,7 @@ def main():
              f"PRIMARY KEY (tenant_id, id), KEY by_k (k, id) COMMENT 'tarn:lazy', UNIQUE KEY uu (u)) "
              f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
         for first in range(0, n, 1000):
-            q(c, f"INSERT INTO {lt} VALUES " + ",".join(f"({i % TENANTS},{i},{i % keys},{i},{i})"
+            load(c, f"INSERT INTO {lt} VALUES " + ",".join(f"({i % TENANTS},{i},{i % keys},{i},{i})"
                                                       for i in range(first, first + 1000)))
         # (tenant_id, id) -> [k, v, u]
         model = {(i % TENANTS, i): [i % keys, i, i] for i in range(n)}
@@ -1434,7 +1448,7 @@ def main():
         q(c, f"CREATE TABLE {mt} (tenant_id INT NOT NULL, id INT NOT NULL, k INT, w INT, v INT, "
              f"PRIMARY KEY (tenant_id, id)) ENGINE={engine} PARTITION BY KEY(tenant_id)")
         for first in range(0, n, 1000):
-            q(c, f"INSERT INTO {mt} VALUES " + ",".join(f"({i % TENANTS},{i},{i % keys},{i % (keys + 7)},{i})"
+            load(c, f"INSERT INTO {mt} VALUES " + ",".join(f"({i % TENANTS},{i},{i % keys},{i % (keys + 7)},{i})"
                                                       for i in range(first, first + 1000)))
         # (tenant_id, id) -> {column: value}
         model = {(i % TENANTS, i): {"k": i % keys, "w": i % (keys + 7), "v": i} for i in range(n)}
@@ -1588,7 +1602,7 @@ def main():
              f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
         for first in range(0, args.rows, 1000):
             rows = range(first, min(first + 1000, args.rows))
-            q(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},{i % 97},{i})" for i in rows))
+            load(c, f"INSERT INTO {t} VALUES " + ",".join(f"({i % TENANTS},{i},{i % 97},{i})" for i in rows))
 
         errors, bumps = [], [0]
         latencies = {"table": [], "model": [], "other": []}
@@ -1819,7 +1833,7 @@ def main():
         d, dspace = f"d_{engine}", f"{DB}.d_{engine}"
         q(c, f"CREATE TABLE {d} (tenant_id INT, id INT, c INT, PRIMARY KEY (tenant_id, id)) "
              f"ENGINE={engine} PARTITION BY KEY(tenant_id)")
-        q(c, f"INSERT INTO {d} VALUES " + ",".join(f"({i % 8},{i},{i})" for i in range(2000))
+        load(c, f"INSERT INTO {d} VALUES " + ",".join(f"({i % 8},{i},{i})" for i in range(2000))
              + ",(3,5000,11)")
         for alter, what in ((f"ALTER TABLE {d} ADD UNIQUE INDEX uc (tenant_id, c)", "a duplicate in the table"),
                             (f"ALTER TABLE {d} ADD COLUMN z INT DEFAULT 1, ADD UNIQUE INDEX uz (tenant_id, z)",
