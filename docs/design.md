@@ -614,6 +614,74 @@ statement's would keep what every page read charged to it until the
 statement returned, and refuse the backfill (1041) after some tens of
 megabytes of rows.
 
+**Measured.** `bench/online_lazy_build.py --index unique` loads two shards
+above `alter_check_rows` (1,237,327 and 1,162,673 rows; the limit is
+1,000,000), checkpoints every storage node and waits until vinyl dumps and
+compacts nothing (`--settle`). It then adds a unique key on a column
+without the shard key (`ALTER TABLE t ADD UNIQUE KEY un (n)`) while one
+session updates random rows at up to 200 a second, each update moving the
+row's value, and another inserts 100 rows a second into another table.
+Every write's latency is recorded, and the job's phase and each shard's
+copy record are polled every 0.1 s. Afterwards the index's entries are
+compared with the table's rows on every shard (a count and two
+order-independent digests), 300 rows are looked up by their values, and a
+duplicate must be refused. Setup: one 2-CPU host for every storage node,
+the SQL server and the client; Tarantool 3.9.0.
+
+On 2 shards × 3 replicas with `wal_mode = 'fsync'`, where the second step
+copies the table (results in `bench/results_unique_build_rf3_*_1200000.json`):
+
+| Engine | ALTER | Backfill | Second step (the copy) | Writes to the table during it | p50 / p99 | Longest write to the table | Longest write to the other table | Index = table |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| memtx | 927 s | 842 s, 2,851 rows/s | 85 s | 45,858, none refused | 19.3 / 55.6 ms | 0.29 s | 0.17 s | 2,400,000 entries, exact |
+| vinyl | 1,126 s | 953 s, 2,519 rows/s | 173 s | 49,972, none refused | 21.6 / 58.0 ms | 0.47 s | 0.11 s | 2,400,000 entries, exact |
+
+On 2 shards × 1 replica with `wal_mode = 'write'`, where the second step
+builds the key's local index in place (`bench/results_unique_build_*_1200000.json`):
+
+| Engine | ALTER | Backfill | Second step (in place) | Writes to the table during it | p50 / p99 | Longest write to the table | Longest write to the other table | Index = table |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| memtx | 288 s | 286 s, 8,392 rows/s | 2.3 s | 42,422, none refused | 5.7 / 14.5 ms | 2.33 s | 0.39 s | 2,400,000 entries, exact |
+| vinyl | 394 s | 387 s, 6,202 rows/s | 6.5 s | 51,279, none refused | 6.7 / 17.3 ms | 0.16 s | 0.22 s | 2,400,000 entries, exact |
+
+The fences are short where the table is copied. The first step's two
+fences took less than the poll's 0.1 s, and no write waited over 0.2 s
+then. The longest write to the table, 0.29 s on memtx and 0.47 s on
+vinyl, began as the copy's final fence came up: it holds the table only
+while it rereads the keys written since its last pass and publishes the
+copy. In place, memtx builds the key's local index behind the
+second step's fence: writes to the table waited up to 2.3 s for
+1.2 million rows, as any in-place memtx index build makes them wait
+(`index_build = copy` copies instead). Vinyl builds it before that fence.
+In a first run on vinyl, its dump of the new index filled vinyl's memory
+quota for about a second: a write to the table waited 0.96 s, and three
+inserts into the other table were refused
+(`bench/results_unique_build_vinyl_1200000_run1.json`).
+
+The writes' p99 went from 4.5 ms before the ALTER to 56-58 ms during it on
+replicated shards, and to 36-70 ms after it. After the build, an update
+that changes the key also writes its entries on the entries' shards, a
+distributed commit (p50 from 1.9-2.0 ms to 6.9-7.7 ms). During it, the
+backfill shares the shards' WAL and the host's two CPUs (p50 about 20 ms).
+Writes to the other table went from a p99 of 5.4-5.8 ms to 22-24 ms.
+
+The backfill is 85-91% of the ALTER on replicated shards, at a tenth
+(memtx) to a fifth (vinyl) of the copy's rate, which took 85 s and 173 s
+for the 2.4 million rows.
+It goes a page of up to 64 rows at a time, shard after shard, and each
+page is a distributed transaction (issue #303). Each shard's WAL grew by
+150-160 MB, and the leaders' RSS from 176-214 MB to 394-427 MB.
+
+An earlier vinyl run without `--settle` started the build while vinyl
+dumped the loaded rows on all six storage nodes, which share one disk
+here. WAL writes took up to 0.9 s for two minutes, and 126 s into the
+build both shards' leaders resigned, their quorum unheard for a second
+(`election_fencing_mode = 'strict'`). New leaders took over within 1.1 s,
+and the build went on through the change, its pages sent again. It
+finished in 1,247 s with the index exact, and no write was refused; the
+longest waited 7.1 s, across the election
+(`bench/results_unique_build_rf3_vinyl_1200000_unsettled.json`).
+
 Otherwise (`global_index_build` is `fenced`, the change does more, or a
 replica cannot) the change fills the global index from the rows behind the
 table's fence (issue #88). PREPARE
@@ -2798,7 +2866,7 @@ throughput measurements:
 | `tests/election.sh` | one shard of 3 replicas with an election watchdog period of 1 s: a leader for 4 s, then both followers stopped and resumed | no replica stands while there is a leader; the leader resigns without its quorum and does not stand without it; a leader again within 10 s of the followers' return |
 | `tests/vinylbuild.sh` | one shard of 3 replicas with fsync: ALTER TABLE adds three indexes to a vinyl table of 20,000 rows while 16 writers insert into another vinyl table | every replica applies the builds and the rows after them within 15 s; writes go on during the builds and after them; each index holds every row on every replica |
 | `tests/indexcopy.sh` | 2 shards of 3 replicas with fsync, through SQL: ALTER TABLE adds an index and a unique index to a memtx and to a vinyl table of 30,000 rows, with small catch-up bounds so that every shard's copy runs catch-up passes, the SQL server sending BUILD and PREPARE in 0.05 s slices, so that each shard's copy takes several calls, and keeping each copy's capture durably, then two columns with fills and indexes on them, which it copies (§2.11), while sessions update the table, move unique values and rows, and insert into a second table; a duplicate, and a fill rows share under a new unique index, fail their changes; a column renamed, then dropped, with an index; on each engine, a table of 20,000 rows with a global unique index and one with a lazy index, each through two ALTERs that copy it while a session writes; on each engine, an ALTER that renames a table of 20,000 rows with a global unique index and adds an index, while a session moves values and rows and goes on under the new name once the old one is gone; on each engine, an ALTER that adds a unique key without the shard key to a table of 20,000 rows with `alter_check_rows` at 1,000, building its global index online and copying the table for the step that makes it enforcing, while a session moves values between rows and rows to new primary keys, then the same change meeting a value two rows of different shards share; on each engine, an ALTER whose first shard's capture outgrows its limits while the other shard's BUILD is held (test hooks); an engine change follows | no election term changes; writes go on and none fails; every replica holds the same rows and indexes, each index every row; the new unique index refuses a duplicate; the failed changes leave their tables as they were and no copy behind; the global index's space and the lazy index's generation, target and entries are kept, bound to the copy, and find every row; the renamed table is a copy published under the new name, the old name gone (1146), its global index's entries kept on every replica, named after the copy; the online build replaces the table's space on every shard, its entries one per row on every replica in their space named after the copy, with no conflicts space, and the shared value fails it with 1062 naming the value, leaving the table as it was; the shard whose capture outgrew it copies its table again in the catch-up round, before any shard fences (the phases each leader's copy record takes, logged with the host's monotonic clock) |
-| `tests/uniquebuild.sh` | 2 shards of one replica, two SQL servers, through SQL, on memtx and on vinyl, with `alter_check_rows` at 500: ALTER TABLE adds a unique key without the shard key to a table of 20,000 rows while a session hands values from row to row, perhaps on the other shard, sets them to NULL and back, inserts, deletes and moves rows to new primary keys, and another increments a column; a table where two rows share a value before the change, one where a session inserts a value a row holds during it, one where values rows share during the change no longer do when it checks (a conflict takes the entry over; under READ COMMITTED a conflict's row is deleted), and one whose primary key has a case-insensitive part; the first case again with the change's SQL server killed during the backfill and the writes sent to the other; all of it again with `index_build` `copy`, whose step that makes the index enforcing copies the table | the changes succeed above `alter_check_rows`, writes go on and none fails (but for those that met a transaction the killed server left prepared: 1213, sent again); the rows match the sessions' models; the index holds one entry per row with a value, the row's, and no conflicts space is left; every row is found by its value; the key refuses a duplicate; the duplicates fail their changes with MariaDB's 1062 and leave the tables as they were; the other server takes the change over and finishes it; no shard refuses a write as from a server that does not maintain building indexes; with the copy, the changes that succeed replace the table's space on every shard, those that fail keep it, and no copy is left |
+| `tests/uniquebuild.sh` | 2 shards of one replica, two SQL servers, through SQL, on memtx and on vinyl, with `alter_check_rows` at 500: ALTER TABLE adds a unique key without the shard key to a table of 20,000 rows while a session hands values from row to row, perhaps on the other shard, sets them to NULL and back, inserts, deletes and moves rows to new primary keys, and another increments a column; a table where two rows share a value before the change, one where a session inserts a value a row holds during it, one where values rows share during the change no longer do when it checks (a conflict takes the entry over; under READ COMMITTED a conflict's row is deleted), and one whose primary key has a case-insensitive part; a table of 40,000 rows of about 1 KB, whose backfill reads more than one statement's memory budget holds, and one of 300 rows of 200 KB, whose backfill pages hold fewer rows than 64; the first case again with the change's SQL server killed during the backfill and the writes sent to the other; all of it again with `index_build` `copy`, whose step that makes the index enforcing copies the table | the changes succeed above `alter_check_rows`, writes go on and none fails (but for those that met a transaction the killed server left prepared: 1213, sent again); the rows match the sessions' models; the index holds one entry per row with a value, the row's, and no conflicts space is left; every row is found by its value; the key refuses a duplicate; the duplicates fail their changes with MariaDB's 1062 and leave the tables as they were; the other server takes the change over and finishes it; no shard refuses a write as from a server that does not maintain building indexes; with the copy, the changes that succeed replace the table's space on every shard, those that fail keep it, and no copy is left |
 | `tests/uniquefaults.sh` | 2 shards of 3 replicas with fsync and test hooks, through SQL, on memtx and on vinyl (issue #292): ALTER TABLE adds a unique key without the shard key to a table of 6,000 rows while a session writes; the copy of the step that makes the key enforcing is held after its first page on the second shard's leader (`engine_copy`), which then ends itself, and is started again once the change is done; on another table, the first backfill transaction to PREPARE on a shard's leader votes yes there and loses its reply (a wrapper of `tarn_prepare`); on a third, once the job is in its backfill, a row of the second shard takes the value of a row of the first | the first two changes succeed: the shard's new leader resumes the copy from its durable capture, and the backfill goes on past the transaction whose outcome the SQL server resolves; the writes go on (those the crash refused or left unknown aside); the table's space is replaced by the copy on every shard, and no copy is left; the index holds one entry per row with a value, the row's, the same on every replica of a shard, with no conflicts space; the key finds rows and refuses a duplicate; the third fails with 1062 naming the value, and leaves the table as it was: its space on every shard, no index, conflicts or copy space, both rows with the value |
 | `tests/bucketcount.sh` | the number of buckets a SQL server gives the map it makes: the configured `bucket_count`; 3,000 on shards that have tables but no map (a cluster made before bucket moves, simulated by removing the map and restarting the nodes); 30,000 on a new cluster; each time the shards' ranges and, with rows, their bucket ids, reads by key and writes | 20/20 |
 | `tests/ddlfaults.sh` | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with shard 2 down, and with shard 2 killed while a test hook holds its APPLY; the abandoned jobs are finished by the SQL server (`ddl_job_stale` = 2 s) | 6/6: rolled back with the shard down (the table on no shard, or unchanged), rolled forward when killed while applying; checked on each shard directly |

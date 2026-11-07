@@ -1,0 +1,229 @@
+{
+  "issue": 292,
+  "date": "2026-11-06T21:34:29+00:00",
+  "source": "c0990763b4b6d807544d9e3dd8c36d4b71171462",
+  "dirty": false,
+  "tarn_server_sha256": "36ad2c67b09ba0226d3d660846797859cbad7c97c9b1bca63f423563de07a602",
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f5",
+  "host": {
+    "cpus": 2,
+    "machine": "x86_64",
+    "kernel": "6.18.44-fc-v242"
+  },
+  "engine": "vinyl",
+  "index": "unique",
+  "shards": 2,
+  "replicas_per_shard": 3,
+  "rows_per_shard": 1200000,
+  "alter_check_rows": 1000000,
+  "writer_rate": 200,
+  "other_rate": 100.0,
+  "load_s": 307.4,
+  "load_vinyl_refusals": 2,
+  "settle_s": 14.3,
+  "alter_s": 1126.33,
+  "alter_error": null,
+  "published_s": null,
+  "leader_changes": [
+    0,
+    0
+  ],
+  "build_rows_per_s": 2131,
+  "writes": {
+    "before": {
+      "writes": 1972,
+      "errors": 0,
+      "p50_ms": 2.008724997722311,
+      "p99_ms": 4.477364000194939,
+      "max_ms": 38.792662002379075
+    },
+    "during": {
+      "writes": 49972,
+      "errors": 0,
+      "p50_ms": 21.649253001669422,
+      "p99_ms": 57.9504609995638,
+      "max_ms": 474.3848889993387,
+      "slow": [
+        [
+          967.5,
+          200
+        ],
+        [
+          1126.02,
+          474
+        ]
+      ]
+    },
+    "after": {
+      "writes": 447,
+      "errors": 0,
+      "p50_ms": 7.660285002202727,
+      "p99_ms": 69.76311499965959,
+      "max_ms": 91.36869299982209
+    }
+  },
+  "other_writes": {
+    "before": {
+      "writes": 997,
+      "errors": 0,
+      "p50_ms": 1.8276219998369925,
+      "p99_ms": 5.82680599836749,
+      "max_ms": 31.35572300016065
+    },
+    "during": {
+      "writes": 100025,
+      "errors": 0,
+      "p50_ms": 6.469668001955142,
+      "p99_ms": 24.13645199703751,
+      "max_ms": 110.16393300087657,
+      "slow": []
+    },
+    "after": {
+      "writes": 467,
+      "errors": 0,
+      "p50_ms": 2.8965040000912268,
+      "p99_ms": 42.78610500114155,
+      "max_ms": 84.20059700074489
+    }
+  },
+  "nodes_before": [
+    {
+      "check_rows": 1000000,
+      "rows": 1237327,
+      "term": 2,
+      "rss": 214401024,
+      "ro": false,
+      "wal_bytes": 77561970,
+      "engine": "vinyl"
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1162673,
+      "term": 2,
+      "rss": 203767808,
+      "ro": false,
+      "wal_bytes": 72117785,
+      "engine": "vinyl"
+    }
+  ],
+  "nodes_after": [
+    {
+      "check_rows": 1000000,
+      "rows": 1242594,
+      "term": 2,
+      "rss": 426864640,
+      "uix_entries": 1204981,
+      "ro": false,
+      "wal_bytes": 237623081,
+      "engine": "vinyl"
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1167616,
+      "term": 2,
+      "rss": 422432768,
+      "uix_entries": 1205187,
+      "ro": false,
+      "wal_bytes": 228126129,
+      "engine": "vinyl"
+    }
+  ],
+  "copy_phases": [
+    [
+      [
+        953.05,
+        "resetting"
+      ],
+      [
+        953.26,
+        "copying"
+      ],
+      [
+        1125.01,
+        "copied"
+      ],
+      [
+        1126.05,
+        "prepared"
+      ],
+      [
+        1126.31,
+        "published"
+      ],
+      [
+        1126.42,
+        "cleaned"
+      ]
+    ],
+    [
+      [
+        953.05,
+        "resetting"
+      ],
+      [
+        953.26,
+        "copying"
+      ],
+      [
+        1089.72,
+        "copied"
+      ],
+      [
+        1126.05,
+        "preparing"
+      ],
+      [
+        1126.32,
+        "cleaned"
+      ]
+    ]
+  ],
+  "slow_probes": [],
+  "write_errors": [],
+  "checked_rows": 2400000,
+  "mismatched_keys": [],
+  "job_phases": [
+    [
+      0.1,
+      "backfill"
+    ],
+    [
+      953.04,
+      "enforcing:prepare"
+    ],
+    [
+      1126.25,
+      "enforcing:apply"
+    ],
+    [
+      1126.42,
+      null
+    ]
+  ],
+  "job_steps": [
+    [
+      "backfill",
+      952.94
+    ],
+    [
+      "enforcing:prepare",
+      173.21
+    ],
+    [
+      "enforcing:apply",
+      0.17
+    ]
+  ],
+  "fill_s": 952.9,
+  "fill_rows_per_s": 2519,
+  "index_spaces": [
+    [
+      "_tarn_uix_10005_2"
+    ],
+    [
+      "_tarn_uix_10005_2"
+    ]
+  ],
+  "lookups_checked": 300,
+  "duplicate_refused": true
+}
