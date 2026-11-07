@@ -1750,7 +1750,8 @@ idempotent steps per shard (lua/tarn.lua "Schema changes"):
    under temporary names (a unique one with a nullable column under its
    own, §2.11) while writes go on: vinyl keeps an index current
    while it builds it, so no write waits for the build, however long it
-   takes. A memtx table builds in PREPARE instead: with memtx MVCC, any
+   takes (but for an index APPLY builds again, §2.11). A memtx table builds
+   in PREPARE instead: with memtx MVCC, any
    write committed while an index build yields aborts the build. A
    replicated shard's vinyl table builds in PREPARE too (issue #263).
    Tarantool's vinyl build waits for the transactions already in the WAL,
@@ -1807,7 +1808,10 @@ idempotent steps per shard (lua/tarn.lua "Schema changes"):
    definition, with `ver` = V, in `_tarn_catalog` (where the fence survives
    restarts and leader changes: `FENCE` is rebuilt from it). A materializing
    APPLY resumes its durable prepared/applying state; other APPLYs rerun
-   PREPARE first when their in-memory fence was lost.
+   PREPARE first when their in-memory fence was lost. The first shard,
+   whose catalog the SQL servers read, applies last: a server that meets
+   the fence reads the new definition there and writes with it at once,
+   which no shard still applying it must take.
 4. The catalog version is bumped; the other SQL servers reload within their
    0.3 s poll, or at once when a statement meets the fence.
 
@@ -1999,7 +2003,8 @@ sees, while its write here is missing from the snapshot.
 
 **Schema changes.** On an unreplicated shard, `ALTER TABLE` builds a vinyl
 table's new indexes before it fences the table's writes (§2.10), so an
-`ADD INDEX` on a large table does not hold its writes for hours. On a
+`ADD INDEX` on a large table does not hold its writes for hours (but see
+the unique indexes APPLY builds again, below). On a
 replicated shard an index built in place costs twice. The leader builds it
 behind the fence, because Tarantool's vinyl build can miss a write still
 waiting for its quorum, and a replica applying the build can stop behind
@@ -2089,7 +2094,15 @@ a duplicate of its key. So in place (lua/tarn.lua `M.alter_unsafe`):
   old index is gone, APPLY drops it and builds it again under its own
   name, behind the fence. APPLY does the same for every new such index
   when the change's format lowers the `min_field_count`, after the format.
-  Each was built from the same rows, so it builds again.
+  Each was built from the same rows, so it builds again. Before it drops
+  one, APPLY stores the table's fence, so that a restart or a new leader
+  still refuses writes made with the old definition while the key has no
+  index. Writes made with the new one wait too, since the first shard,
+  whose catalog the SQL servers read, applies last (§2.10). So writes to
+  the table wait for that build, as for a build in PREPARE, with no
+  `tarn.cfg.alter_check_rows` limit. One longer than the RPC timeout
+  reports an unknown outcome (1180), and the job finishes in the
+  background. A change that copies the table builds nothing at APPLY.
 - BUILD and PREPARE refuse (1846), before anything changes, a change that
   would alter such an index the table already has. That is `RENAME INDEX`
   of one, or a format that lowers the `min_field_count` while one stays.
@@ -2100,8 +2113,13 @@ a duplicate of its key. So in place (lua/tarn.lua `M.alter_unsafe`):
   it anew instead.
 
 A copy (above) creates every index of the new space under its final name,
-and renames spaces only, which alters no index. A table whose index lost
-entries before this needs the index dropped and added again.
+and renames spaces only, which alters no index. A key that an earlier
+version built in place, renamed or altered by such a format loses entries
+on every node until the node restarts from a checkpoint taken after that
+change, and entries it lost stay lost: drop and add each such key again
+([operations](operations.md#vinyl-unique-keys-altered-before-issue-305)).
+A change prepared by an earlier version and applied by this one goes on
+in place, with a warning in the log.
 
 **Online engine changes.** A separate `ALTER TABLE ... ENGINE=memtx` or
 `ENGINE=vinyl` creates an owned shadow with a fresh space ID. The source
@@ -2891,7 +2909,7 @@ throughput measurements:
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; unique indexes with a nullable column (issue #305), each checked by a transaction that moves a row to a new primary key: built under their own names (a refused write, ABORT and a decided transaction's row finding them by the catalog), built again at APPLY when an index the change drops holds the name or the format lowers the field count every row must have, and `RENAME INDEX` of one and such a format while one stays refused; online builds of global unique indexes, on both engines (each step's stored fence, writes without the building fence pair refused from the first step's PREPARE on, a conflict left failing the enforcing step with MySQL's 1062, a PREPARE whose drain times out undoing itself and holding when sent again, ABORT's tombstone, the index's spaces dropped, the row limit on replicated clusters, the backfill's bounded pages); jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE`; bucket moves (`bucket_test.lua`): the map, requests refused for buckets the shard does not own on every read, write, lock and commit path (also writes that name no bucket, by their rows' `bucket_id`), a move step by step (copy in pages, writes during the copy in the last copy, the hold failing scans of the receiving shard, the fence refusing writes, row locks and PREPAREs but serving reads, send and receive, repeated steps), the fence breaking row locks and waiting for prepared transactions (also after a leader change, from the lock records) and for a local commit in flight, notes lost to a leader change and the copy made again, giving a move up, an APPLY during a move, a read of every shard that waits for a lock while a bucket is sent, moves and schema changes waiting for each other, the map read again while a send, a last copy or a receive waits for its quorum, two servers making a shard's map at once with different counts; recovery and garbage collection while one of three shards is stopped (`recovery_faults.sh`): newer transactions resolved and collected behind more blocked ones than a pass takes, the blocked ones' records and locks kept, then resolved once the shard is back | 405/405 and 138/138; 20/20 |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; unique indexes with a nullable column (issue #305), each checked by a transaction that moves a row to a new primary key: built under their own names (a refused write, ABORT and a decided transaction's row finding them by the catalog), built again at APPLY when an index the change drops holds the name or the format lowers the field count every row must have (the fence stored first, refusing the old definition after a rebuild from storage; APPLY again after one that stopped between its drops), a published one left in place when it refuses a decided transaction's row as two rows swap values, and `RENAME INDEX` of one and such a format while one stays refused; online builds of global unique indexes, on both engines (each step's stored fence, writes without the building fence pair refused from the first step's PREPARE on, a conflict left failing the enforcing step with MySQL's 1062, a PREPARE whose drain times out undoing itself and holding when sent again, ABORT's tombstone, the index's spaces dropped, the row limit on replicated clusters, the backfill's bounded pages); jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE`; bucket moves (`bucket_test.lua`): the map, requests refused for buckets the shard does not own on every read, write, lock and commit path (also writes that name no bucket, by their rows' `bucket_id`), a move step by step (copy in pages, writes during the copy in the last copy, the hold failing scans of the receiving shard, the fence refusing writes, row locks and PREPAREs but serving reads, send and receive, repeated steps), the fence breaking row locks and waiting for prepared transactions (also after a leader change, from the lock records) and for a local commit in flight, notes lost to a leader change and the copy made again, giving a move up, an APPLY during a move, a read of every shard that waits for a lock while a bucket is sent, moves and schema changes waiting for each other, the map read again while a send, a last copy or a receive waits for its quorum, two servers making a shard's map at once with different counts; recovery and garbage collection while one of three shards is stopped (`recovery_faults.sh`): newer transactions resolved and collected behind more blocked ones than a pass takes, the blocked ones' records and locks kept, then resolved once the shard is back | 480/480 and 138/138; 20/20 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries (MySQL's and MessagePack's), values skipped however nested, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, collation weights against MariaDB's, weight fields and the `ALTER TABLE` rules for them, index use under a collation, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection), the bucket map from the shards' reports (a bucket between send and receive, overlapping and inconsistent reports) and the bucket count of a new map; the rebalancer's plans (even weights, and even shares of buckets of uneven sizes) and its record | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
 | `tests/sql/difftest.py` | 465 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors; tables without a primary key, `information_schema.TABLES`, `SELECT ... INTO @var`, SQL-level `PREPARE` / `EXECUTE`, `CLIENT_FOUND_ROWS`, row-value comparisons, `DATETIME` spellings, hexadecimal literals and introducers (binary strings, their coercibility, plans cached per kind of literal); collations (98 cases): `=`, `IN`, `LIKE`, ranges and lookups through case-insensitive indexes, `ORDER BY`, `GROUP BY`, `DISTINCT`, `UNION`, joins, unique and primary keys that refuse case and accent variants, upserts, coercibility and 1267, `WEIGHT_STRING()` of every kind of character, case-insensitive keys in transactions and at READ COMMITTED, `ALTER TABLE` with collations, case-insensitive keys of tables without a primary key, keyset cursors over case-insensitive keys | 465/465 identical |
@@ -3020,32 +3038,31 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineCopyTailUnchecked | violates CheckedImage | 137124 | 413836 | 14 | 05s | 14 |
 | Bug_EngineCopyUnbindEarly | violates PreparedImage | 459597 | 1564903 | 17 | 12s | 17 |
 | Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 554 | 898 | 6 | 00s | 6 |
-| Bug_EngineCutoverAbortAfterDecision | violates AbortedUnderOldName | 31500 | 139854 | 8 | 02s | 8 |
-| Bug_EngineCutoverAbortKeepsMade | violates AbortedMadeRetired | 2364 | 6481 | 4 | 01s | 4 |
-| Bug_EngineCutoverAbortRetiresDropped | violates RetiredOnlyUnnamed | 1960 | 4963 | 4 | 01s | 4 |
-| Bug_EngineCutoverAbortRetiresKept | violates KeptLazyAlive | 552 | 876 | 3 | 00s | 3 |
-| Bug_EngineCutoverAbortSkipsMissing | violates AbortedMadeRetired | 10712 | 39773 | 6 | 01s | 6 |
-| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 100481 | 567008 | 13 | 06s | 13 |
-| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 83009 | 473821 | 12 | 05s | 12 |
-| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 31499 | 139822 | 8 | 02s | 8 |
-| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 74 | 74 | 2 | 00s | 2 |
-| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 75 | 75 | 2 | 00s | 2 |
-| Bug_EngineCutoverKeptByNameOnly | violates KeptFound | 31496 | 139819 | 8 | 02s | 8 |
-| Bug_EngineCutoverMadeUnbound | violates MadeBound | 73433 | 399523 | 11 | 04s | 11 |
-| Bug_EngineCutoverNoPendingNew | violates KeptLazyCaptured | 36882 | 208138 | 13 | 03s | 13 |
-| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 83009 | 473821 | 12 | 05s | 12 |
-| Bug_EngineCutoverPendingOnlyKept | violates KeptLazyCaptured | 63097 | 367638 | 13 | 04s | 13 |
-| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 52804 | 246120 | 9 | 03s | 9 |
-| Bug_EngineCutoverPublishBeforeDecision | violates AbortedUnderOldName | 19408 | 79129 | 7 | 01s | 7 |
-| Bug_EngineCutoverPublishBeforeKeptRename | violates KeptNamedAfterCatalog | 60663 | 310806 | 10 | 04s | 10 |
-| Bug_EngineCutoverPublishUnready | violates MadePublished | 73433 | 399523 | 11 | 04s | 11 |
-| Bug_EngineCutoverReadyUnscanned | violates MadePublished | 84203 | 452929 | 11 | 05s | 11 |
-| Bug_EngineCutoverRebindAfterPublish | violates KeptLazyBound | 73433 | 399523 | 11 | 04s | 11 |
-| Bug_EngineCutoverRenameBeforeKept | violates KeptFound | 31864 | 141888 | 8 | 02s | 8 |
-| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 94752 | 567211 | 14 | 05s | 14 |
-| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 83012 | 473828 | 12 | 05s | 12 |
-| Bug_EngineCutoverRetireBeforePublish | violates RetiredOnlyUnnamed | 532 | 822 | 3 | 00s | 3 |
-| Bug_EngineCutoverRetireKept | violates KeptAlive | 83006 | 473818 | 12 | 05s | 12 |
+| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 43487 | 242696 | 12 | 03s | 12 |
+| Bug_EngineCutoverAbortKeepsMade | violates AbortedMadeRetired | 1200 | 3313 | 4 | 01s | 4 |
+| Bug_EngineCutoverAbortRetiresDropped | violates RetiredOnlyUnnamed | 1008 | 2579 | 4 | 01s | 4 |
+| Bug_EngineCutoverAbortRetiresKept | violates KeptLazyAlive | 288 | 468 | 3 | 01s | 3 |
+| Bug_EngineCutoverAbortSkipsMissing | violates AbortedMadeRetired | 5450 | 20321 | 6 | 01s | 6 |
+| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 49386 | 279743 | 13 | 03s | 13 |
+| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 41228 | 235663 | 12 | 04s | 12 |
+| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 15782 | 70057 | 8 | 01s | 8 |
+| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 38 | 38 | 2 | 00s | 2 |
+| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 39 | 39 | 2 | 00s | 2 |
+| Bug_EngineCutoverKeptByNameOnly | violates KeptFound | 15780 | 70055 | 8 | 02s | 8 |
+| Bug_EngineCutoverMadeUnbound | violates MadeBound | 36605 | 199495 | 11 | 03s | 11 |
+| Bug_EngineCutoverNoPendingNew | violates KeptLazyCaptured | 18236 | 102791 | 13 | 02s | 13 |
+| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 41228 | 235663 | 12 | 03s | 12 |
+| Bug_EngineCutoverPendingOnlyKept | violates KeptLazyCaptured | 31211 | 181755 | 13 | 03s | 13 |
+| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 26144 | 122608 | 9 | 02s | 9 |
+| Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 40207 | 212970 | 11 | 03s | 11 |
+| Bug_EngineCutoverPublishBeforeKeptRename | violates KeptNamedAfterCatalog | 30339 | 155590 | 10 | 02s | 10 |
+| Bug_EngineCutoverPublishUnready | violates MadePublished | 36605 | 199495 | 11 | 03s | 11 |
+| Bug_EngineCutoverReadyUnscanned | violates MadePublished | 41875 | 225687 | 11 | 03s | 11 |
+| Bug_EngineCutoverRebindAfterPublish | violates KeptLazyBound | 36605 | 199495 | 11 | 03s | 11 |
+| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 46886 | 279936 | 14 | 04s | 14 |
+| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 41231 | 235670 | 12 | 03s | 12 |
+| Bug_EngineCutoverRetireBeforePublish | violates RetiredOnlyUnnamed | 268 | 414 | 3 | 00s | 3 |
+| Bug_EngineCutoverRetireKept | violates KeptAlive | 41225 | 235660 | 12 | 03s | 12 |
 | Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FairnessPrefix | violates BoundedWait | 1281 | 1281 | 6 | 00s | 6 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
@@ -3256,7 +3273,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
 | EngineBuildReentry | no errors | 1500 | 2946 | 14 | 00s |  |
 | EngineCopy | no errors | 1215733 | 4821937 | 35 | 33s |  |
-| EngineCutover | no errors | 147394 | 993540 | 26 | 08s |  |
+| EngineCutover | no errors | 70982 | 472752 | 26 | 05s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |

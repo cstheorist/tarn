@@ -197,13 +197,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the online unique build's enforcing step, and a change that rebuilt a
   key under its own name (a column of it made nullable, or dropped), on
   unreplicated shards or with `index_build` `in_place`. The shard now
-  builds such an index under its own name, or builds it again under that
-  name at APPLY, behind the fence, once the index that held the name is
-  gone. It refuses (1846) `RENAME INDEX` of such a key, and dropping a
-  `NOT NULL` case-insensitive indexed column or making it nullable while
-  such a key stays; dropping the key and adding it again in the same
-  statement does either. Copies were not affected. A table whose index lost
-  entries before needs the index dropped and added again.
+  builds such an index under its own name. When an index the change drops
+  still holds the name, APPLY builds it again under that name once the old
+  one is gone, behind the fence, with the fence stored first; the first
+  shard, whose catalog the SQL servers read, now applies every `ALTER
+  TABLE` last, so no write with the new definition reaches a shard still
+  applying it. In place, the shards refuse (1846) `RENAME INDEX` of such a
+  key, and dropping a `NOT NULL` case-insensitive indexed column or making
+  it nullable while such a key stays, when its weight field is the last
+  field every row has; dropping the key and adding it again in the same
+  statement does either. Copies were not affected. A key that an earlier
+  version built in place, renamed or altered so keeps losing rows on each
+  node until the node restarts from a checkpoint taken after that change,
+  and the rows lost stay lost: the operations guide shows how to find such
+  keys and build them anew.
 
 - Terminal SQL errors remain available through `SHOW WARNINGS`, `SHOW
   ERRORS` and the diagnostic counts, including failed preparation and
