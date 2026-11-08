@@ -207,6 +207,20 @@ class Cluster:
             out[node] = r if isinstance(r, dict) else {}   # (an empty table encodes as [])
         return out
 
+    def unique_entries(self, space):
+        """On each shard's leader: the table's rows, and the entries of each
+        of its unique secondary indexes, by name ({shard id: {name: count}}).
+        (Tarantool's vinyl lost entries of a unique index with a nullable
+        column that an alter had changed in place, issue #305.)"""
+        return {g["id"]: ev(self.leader(g), """
+            local sp = box.space[...]
+            local out = {primary = sp.index[0]:count()}
+            for i, x in pairs(sp.index) do
+                if type(i) == 'number' and i > 0 and x.unique then out[x.name] = x:count() end
+            end
+            return out
+        """, [space]) for g in self.groups}
+
     def job(self, space):
         """The schema change of `space` in progress, from the first shard's
         leader: its phase and arguments (None: none)."""
@@ -353,6 +367,9 @@ def built(cl, c, w, name, key):
     sample = random.Random(name).sample(sorted(want), min(500, len(want)))
     lost = [u for u in sample if q(c, f"SELECT tenant_id, id FROM {name} WHERE u = %s", (u,)) != (want[u],)]
     check("every row is found by its value (a sample of 500)", not lost, lost[:5])
+    entries = cl.unique_entries(f"{DB}.{name}")
+    check("on every shard, the key's own index holds an entry for every row, as each unique index does",
+          all(key in e and len(set(e.values())) == 1 for e in entries.values()), entries)
     u0 = sample[0]
     dup = attempt(c, f"INSERT INTO {name} VALUES (%s, %s, %s, 0)", ((want[u0][0] + 1) % TENANTS, 9 * FRESH_ID, u0))
     check("the key refuses a duplicate in another tenant (1062)", dup is not None and dup[0] == 1062, dup)
