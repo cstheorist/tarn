@@ -47,7 +47,7 @@
 //! throughout (tarn_job_begin), so that no row escapes the cursors.
 
 use super::*;
-use crate::session::Session;
+use crate::session::{BackfillRows, Session};
 use crate::txn::{Mode as TxnMode, Txn};
 use std::collections::BTreeMap;
 
@@ -705,7 +705,7 @@ impl Cluster {
                             pages.push_back(async move {
                                 if !rows.is_empty() {
                                     let _slot = self.backfill_pages.acquire().await.expect("backfill slots");
-                                    self.uix_backfill_page(t, rows).await?;
+                                    self.uix_backfill_page(t, shard, rows).await?;
                                 }
                                 Ok::<Cursor, SqlError>(next)
                             });
@@ -807,14 +807,27 @@ impl Cluster {
         Ok((pks, Cursor { after, bound, done }))
     }
 
-    /// A page of the backfill, in a transaction that fails for a transient
-    /// reason goes on in parts of `BACKFILL_PART` rows, and a part that
-    /// fails again a row at a time, in transactions that lock their row and
-    /// keys instead of validating them, so that a row its writers keep busy
+    /// A page of the backfill: rows `pks` of `shard`, in key order. Its
+    /// transaction reads them again as one range of the shard's primary
+    /// key, from the first to the last (with any row written in between
+    /// since, which a write with the building version indexed), so that its
+    /// commit validates and locks one range rather than a key per row
+    /// (issue #310). A page that fails for a transient reason goes on in
+    /// parts of `BACKFILL_PART` rows, read by key, and a part that fails
+    /// again a row at a time, in transactions that lock their row and keys
+    /// instead of validating them, so that a row its writers keep busy
     /// holds up no other, and is not starved by them.
-    async fn uix_backfill_page(&self, t: &Arc<TableDef>, pks: Vec<Vec<Value>>) -> SqlResult<()> {
+    async fn uix_backfill_page(&self, t: &Arc<TableDef>, shard: usize, pks: Vec<Vec<Value>>) -> SqlResult<()> {
+        let (Some(lo), Some(hi)) = (pks.first(), pks.last()) else {
+            return Ok(());
+        };
+        let range = BackfillRows::Range {
+            shard,
+            lo: lo.clone(),
+            hi: hi.clone(),
+        };
         let first = self
-            .uix_backfill_rows(t, pks.clone(), TxnMode::Serializable, Duration::ZERO)
+            .uix_backfill_rows(t, range, TxnMode::Serializable, Duration::ZERO)
             .await;
         let e = match first {
             Err(e) if backfill_transient(&e) => e,
@@ -822,16 +835,26 @@ impl Cluster {
         };
         for part in pks.chunks(BACKFILL_PART) {
             let r = if pks.len() > BACKFILL_PART {
-                self.uix_backfill_rows(t, part.to_vec(), TxnMode::Serializable, Duration::ZERO)
-                    .await
+                self.uix_backfill_rows(
+                    t,
+                    BackfillRows::Keys(part.to_vec()),
+                    TxnMode::Serializable,
+                    Duration::ZERO,
+                )
+                .await
             } else {
                 Err(e.clone())
             };
             match r {
                 Err(e) if backfill_transient(&e) => {
                     for pk in part {
-                        self.uix_backfill_rows(t, vec![pk.clone()], TxnMode::ReadCommitted, BACKFILL_RETRY)
-                            .await?;
+                        self.uix_backfill_rows(
+                            t,
+                            BackfillRows::Keys(vec![pk.clone()]),
+                            TxnMode::ReadCommitted,
+                            BACKFILL_RETRY,
+                        )
+                        .await?;
                     }
                 }
                 r => r?,
@@ -840,7 +863,7 @@ impl Cluster {
         Ok(())
     }
 
-    /// A transaction of the backfill for rows `pks` of `t`, sent again for
+    /// A transaction of the backfill for rows `rows` of `t`, sent again for
     /// up to `retry` while it fails for a transient reason. Each try has a
     /// query memory budget of its own (`budget::Query`), which it releases
     /// as it ends: the statement's would keep what every page read charged
@@ -849,7 +872,7 @@ impl Cluster {
     async fn uix_backfill_rows(
         &self,
         t: &Arc<TableDef>,
-        pks: Vec<Vec<Value>>,
+        rows: BackfillRows,
         mode: TxnMode,
         retry: Duration,
     ) -> SqlResult<()> {
@@ -861,7 +884,7 @@ impl Cluster {
                 let s = Session::new(c.clone(), 0);
                 let mut txn = Txn::with_mode(&c, true, mode, lock_timeout);
                 let page: futures::future::BoxFuture<'_, SqlResult<()>> =
-                    Box::pin(s.building_backfill(&mut txn, t, pks.clone()));
+                    Box::pin(s.building_backfill(&mut txn, t, rows.clone()));
                 match page.await {
                     Ok(()) => txn.commit(&c).await.map(|_| ()),
                     Err(e) => {

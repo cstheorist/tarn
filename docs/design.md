@@ -528,13 +528,18 @@ PREPARE and APPLY as in §2.10, and a backfill:
    (`tarn_uix_backfill_page`), up to the last key the shard had when its
    backfill began: a row after it was written since, and has its entry or
    conflict already. Each page goes through a serializable transaction
-   whose commit validates the rows, entries and conflicts it read; a row
-   whose entry or conflict is there already is passed. A page that fails
-   for a transient reason goes on in parts of 16 rows, and a part that
-   fails again a row at a time, in READ COMMITTED transactions that lock
-   the row, then its key's entry, and read them under the locks, so that a
-   row its writers keep busy is waited for rather than starved. The pages
-   of a shard may be in flight together and the shards backfilled at once
+   that reads the page's rows again as one range of the shard's primary
+   key, from its first row to its last, and whose commit validates that
+   range, the entries and the conflicts it read; a row whose entry or
+   conflict is there already is passed (a row written into the range
+   since was written with the building version, and is). Its PREPARE
+   holds one range lock on the shard rather than a lock per row
+   (issue #310). A page that fails for a transient reason goes on in
+   parts of 16 rows, read by key, and a part that fails again a row at a
+   time, in READ COMMITTED transactions that lock the row, then its key's
+   entry, and read them under the locks, so that a row its writers keep
+   busy is waited for rather than starved. The pages of a shard may be in
+   flight together and the shards backfilled at once
    (`global_index_backfill`, issue #303). A shard's cursor passes a page
    once that page and those before it have committed, and the job stores
    the cursors at most every second: a server that takes the job over

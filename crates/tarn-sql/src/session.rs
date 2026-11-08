@@ -21,6 +21,7 @@ use tarn_common::{Column, ColumnType, SqlError, SqlResult, Value};
 use tarn_iproto::Iter;
 
 mod building;
+pub(crate) use building::BackfillRows;
 
 #[derive(Debug)]
 pub enum Output {

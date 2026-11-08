@@ -3039,12 +3039,25 @@ local function still_fresh()
     writable()
     return not LK_STALE and not FENCE_STALE and not BK.stale
 end
+-- The spaces a request writes and reads may serve it: the replication mode
+-- read once, then each space checked once, in the order the request names
+-- them, all in this one call, which does not yield (tla/PlanGuardBatch.tla,
+-- as BK.fresh_plans). A page of the online unique build's backfill reads
+-- tens of rows of one space; reading the mode for each of them was a fifth
+-- of a leader's Lua time (issue #310).
 function BK.fresh_spaces(writes, points, ranges)
-    for _, w in ipairs(writes or {}) do
-        local sp = box.space[w[2]]; if sp then M.fresh.space(sp) end
+    local mode, seen = nil, {}
+    local function fresh(id)
+        if seen[id] then return end
+        seen[id] = true
+        local sp = box.space[id]
+        if sp == nil then return end
+        if mode == nil then mode = M.fresh.mode() end
+        M.fresh.space_in(sp, mode)
     end
+    for _, w in ipairs(writes or {}) do fresh(w[2]) end
     for _, reads in ipairs({points or {}, ranges or {}}) do
-        for _, r in ipairs(reads) do local sp = box.space[r[1]]; if sp then M.fresh.space(sp) end end
+        for _, r in ipairs(reads) do fresh(r[1]) end
     end
 end
 function BK.fresh_plans(plans)
