@@ -54,7 +54,7 @@ jobs:
           python3 bench/loadgen.py run "${common[@]}" --keys-per-transaction 4 --distribution hot \
             --isolation READ-COMMITTED --warmup .2 --seconds 1 --rate 20 --p99-ms 10000 \
             --max-error-rate 1 --out /tmp/loadgen-reference/hot
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: loadgen-mysql-reference-${{ github.run_id }}
@@ -82,7 +82,7 @@ jobs:
           git rev-parse HEAD > /tmp/loadgen-build/source.txt
           rustc -Vv > /tmp/loadgen-build/rustc.txt
           sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/loadgen-build/binaries.sha256
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: loadgen-build-${{ github.run_id }}
           path: /tmp/loadgen-build
@@ -135,7 +135,7 @@ jobs:
           bash bench/loadgen_smoke.sh /tmp/loadgen-smoke
           tarantool --version > /tmp/loadgen-smoke/tarantool-version.txt
           sha256sum "$(command -v tarantool)" > /tmp/loadgen-smoke/tarantool.sha256
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: loadgen-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}

@@ -29,7 +29,7 @@ jobs:
           --health-interval=5s --health-timeout=3s --health-retries=30
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0 tarantool==1.2.0
@@ -83,7 +83,7 @@ jobs:
             cp "$RUNNER_TEMP/key-cluster/"*.log key-evidence/cluster/ || true
             KEEP=1 scripts/cluster.sh stop -d "$RUNNER_TEMP/key-cluster" || true
           fi
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: keys-${{ matrix.engine }}-native-${{ matrix.native }}-${{ github.run_id }}

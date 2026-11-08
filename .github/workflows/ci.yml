@@ -155,7 +155,7 @@ jobs:
         run: bash lua/test/rc_plan_guard_controls.sh /tmp/tarn-rc-plan-guard-controls
       - name: Retain final plan guard controls
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: rc-plan-guard-controls
           path: /tmp/tarn-rc-plan-guard-controls/*.log
@@ -170,7 +170,7 @@ jobs:
           ci/annotate.sh production-lua python3 tests/production.py --bin target/release --work /tmp/tarn-production-lua --require-drivers --skip-cost
       - name: Retain production security evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: production-security
           path: |
@@ -445,7 +445,7 @@ jobs:
           retention-days: 30
       - name: Retain integrity outcomes
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: integrity-${{ github.run_id }}-${{ github.run_attempt }}
           path: integrity-evidence
@@ -551,7 +551,7 @@ jobs:
         run: ENGINE=${{ matrix.engine }} bash tests/rolling_upgrade.sh
       - name: Retain upgrade evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: rolling-upgrade-${{ matrix.engine }}
           path: |
@@ -565,7 +565,7 @@ jobs:
 
       - name: Retain lazy policy evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lazy-policy-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
