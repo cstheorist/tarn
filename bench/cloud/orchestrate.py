@@ -664,7 +664,7 @@ def bench(f, system, variant=None, tests=None, threads=None, secs=None):
     new = not os.path.exists(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", newline="") as fh:
-        w = csv.DictWriter(fh, BENCH_FIELDS)
+        w = csv.DictWriter(fh, BENCH_FIELDS, lineterminator="\n")
         if new:
             w.writeheader()
         for test in tests:
