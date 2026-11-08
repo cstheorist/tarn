@@ -1,0 +1,288 @@
+{
+  "issue": 292,
+  "date": "2026-11-08T00:16:43+00:00",
+  "source": "ea5b8bcf4b71b65cbeb9b5f6471f0c0ff5df9db0",
+  "dirty": false,
+  "tarn_server_sha256": "34e3c08badb6a2563659e6776926d129543d0a987efe4c88bcc19ee0ae57f254",
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f5",
+  "host": {
+    "cpus": 2,
+    "machine": "x86_64",
+    "kernel": "6.18.44-fc-v310"
+  },
+  "engine": "memtx",
+  "index": "unique",
+  "shards": 2,
+  "replicas_per_shard": 3,
+  "rows_per_shard": 1200000,
+  "alter_check_rows": 1000000,
+  "writer_rate": 200,
+  "other_rate": 100.0,
+  "load_s": 347.4,
+  "load_vinyl_refusals": 0,
+  "settle_s": 8.5,
+  "alter_s": 457.43,
+  "alter_error": null,
+  "published_s": null,
+  "leader_changes": [
+    0,
+    0
+  ],
+  "build_rows_per_s": 5247,
+  "writes": {
+    "before": {
+      "writes": 1953,
+      "errors": 0,
+      "p50_ms": 1.9666650005092379,
+      "p99_ms": 4.916277999654994,
+      "max_ms": 97.77174500050023
+    },
+    "during": {
+      "writes": 6265,
+      "errors": 0,
+      "p50_ms": 57.85582199860073,
+      "p99_ms": 176.4740990001883,
+      "max_ms": 532.4800590005907,
+      "slow": [
+        [
+          16.34,
+          208
+        ],
+        [
+          49.46,
+          203
+        ],
+        [
+          52.9,
+          214
+        ],
+        [
+          63.91,
+          229
+        ],
+        [
+          74.45,
+          203
+        ],
+        [
+          87.98,
+          217
+        ],
+        [
+          120.15,
+          240
+        ],
+        [
+          147.98,
+          251
+        ],
+        [
+          155.24,
+          270
+        ],
+        [
+          175.12,
+          263
+        ],
+        [
+          177.08,
+          237
+        ],
+        [
+          198.22,
+          220
+        ],
+        [
+          198.46,
+          221
+        ],
+        [
+          243.1,
+          219
+        ],
+        [
+          301.34,
+          202
+        ],
+        [
+          313.14,
+          208
+        ],
+        [
+          330.67,
+          217
+        ],
+        [
+          456.93,
+          532
+        ]
+      ]
+    },
+    "after": {
+      "writes": 473,
+      "errors": 0,
+      "p50_ms": 7.9654370001662755,
+      "p99_ms": 47.29558100007125,
+      "max_ms": 87.06942299977527
+    }
+  },
+  "other_writes": {
+    "before": {
+      "writes": 995,
+      "errors": 0,
+      "p50_ms": 1.9134560006932588,
+      "p99_ms": 6.177682998895762,
+      "max_ms": 39.04637200139405
+    },
+    "during": {
+      "writes": 18168,
+      "errors": 0,
+      "p50_ms": 13.463372999467538,
+      "p99_ms": 112.84972700013896,
+      "max_ms": 197.74877400050173,
+      "slow": []
+    },
+    "after": {
+      "writes": 489,
+      "errors": 0,
+      "p50_ms": 3.171698999722139,
+      "p99_ms": 10.583147000943427,
+      "max_ms": 80.46316400032083
+    }
+  },
+  "nodes_before": [
+    {
+      "check_rows": 1000000,
+      "rows": 1237327,
+      "term": 2,
+      "rss": 178958336,
+      "ro": false,
+      "wal_bytes": 77583093,
+      "engine": "memtx"
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1162673,
+      "term": 2,
+      "rss": 175452160,
+      "ro": false,
+      "wal_bytes": 72145684,
+      "engine": "memtx"
+    }
+  ],
+  "nodes_after": [
+    {
+      "check_rows": 1000000,
+      "rows": 1237327,
+      "term": 2,
+      "rss": 411222016,
+      "uix_entries": 1199930,
+      "ro": false,
+      "wal_bytes": 187149148,
+      "engine": "memtx"
+    },
+    {
+      "check_rows": 1000000,
+      "rows": 1162673,
+      "term": 2,
+      "rss": 398700544,
+      "uix_entries": 1200070,
+      "ro": false,
+      "wal_bytes": 178304454,
+      "engine": "memtx"
+    }
+  ],
+  "copy_phases": [
+    [
+      [
+        359.83,
+        "copying"
+      ],
+      [
+        456.95,
+        "preparing"
+      ],
+      [
+        457.16,
+        "prepared"
+      ],
+      [
+        457.27,
+        "cleaned"
+      ]
+    ],
+    [
+      [
+        359.83,
+        "copying"
+      ],
+      [
+        454.43,
+        "copied"
+      ],
+      [
+        456.95,
+        "preparing"
+      ],
+      [
+        457.28,
+        "cleaned"
+      ]
+    ]
+  ],
+  "slow_probes": [],
+  "write_errors": [],
+  "other_write_errors": [],
+  "checked_rows": 2400000,
+  "mismatched_keys": [],
+  "job_phases": [
+    [
+      0.1,
+      "backfill"
+    ],
+    [
+      359.82,
+      "enforcing:prepare"
+    ],
+    [
+      457.27,
+      "enforcing:apply"
+    ],
+    [
+      457.49,
+      null
+    ]
+  ],
+  "job_steps": [
+    [
+      "backfill",
+      359.72
+    ],
+    [
+      "enforcing:prepare",
+      97.45
+    ],
+    [
+      "enforcing:apply",
+      0.22
+    ]
+  ],
+  "fill_s": 359.7,
+  "fill_rows_per_s": 6672,
+  "index_spaces": [
+    [
+      "_tarn_uix_10005_2"
+    ],
+    [
+      "_tarn_uix_10005_2"
+    ]
+  ],
+  "lookups_checked": 300,
+  "duplicate_refused": true,
+  "global_index_backfill": {
+    "page_rows": 1024,
+    "pages_in_flight": 1,
+    "shards_at_once": 1
+  },
+  "global_index_backfill_note": "global_index_backfill added after the run: this build of #303's change read the pace from environment variables, before it moved into cluster.json"
+}

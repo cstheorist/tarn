@@ -4,6 +4,7 @@
   python3 bench/online_lazy_build.py --tarn HOST:PORT --kv LEADER,LEADER
         [--rows-per-shard 1200000] [--rate 200] [--engine vinyl] [--out RESULTS]
         [--index lazy|plain|unique] [--any-size] [--other-rate 0] [--settle NODE,...]
+        [--cluster-json PATH]
 
 --index plain adds an ordinary secondary index instead (no lazy checks; each
 shard's new index is counted against its rows). --index unique adds a
@@ -20,6 +21,8 @@ writes go one at a time (#264), and they wait while the followers apply the
 build (#267). --settle (every storage node) checkpoints them after loading
 and waits until vinyl dumps and compacts nothing on any of them: on one
 host, the load's dumps would otherwise share the disk with the build.
+--cluster-json (the SQL server's configuration) records its
+global_index_backfill, the pace of the unique key's backfill (#303).
 
 Needs the Python `tarantool` connector for its storage probes.
 
@@ -360,6 +363,8 @@ def main():
     ap.add_argument("--index", choices=("lazy", "plain", "unique"), default="lazy")
     ap.add_argument("--any-size", action="store_true", help="allow shards below alter_check_rows")
     ap.add_argument("--other-rate", type=float, default=0, help="writes per second to another table, u")
+    ap.add_argument("--cluster-json", help="the SQL server's cluster.json, whose global_index_backfill (the "
+                    "backfill's pace) the results record")
     ap.add_argument("--settle", help="every storage node, comma-separated: after loading, checkpoint each and wait "
                                      "until no vinyl dump or compaction runs on any, before the writes begin")
     args = ap.parse_args()
@@ -630,6 +635,10 @@ def finish(args, nodes, shards, before_state, after_state, load_s, refusals, alt
         "write_errors": (errors or [])[:20], "other_write_errors": (other_errors or [])[:20],
         "checked_rows": checked, "mismatched_keys": mismatched,
     }
+    if args.cluster_json:
+        with open(args.cluster_json) as f:
+            # (None: the defaults)
+            result["global_index_backfill"] = json.load(f).get("global_index_backfill")
     result.update(extra or {})
     with open(args.out, "w") as f:
         json.dump(result, f, indent=2)

@@ -2143,11 +2143,23 @@ backfill reads what that write left. A variant without that drain passes
   any keys of two (or none), from any initial table. The backfill's write
   commits only if the row is unchanged and the prepared transaction locks
   neither the row nor its key.
+- The backfill keeps up to two pages in flight at once (issue #303), each
+  of one row: it reads the next row and writes its entry or conflict, and
+  reads the row again if the write fails. Its cursor, which the job
+  stores, passes the first page in flight once that page's write has
+  committed. A server that takes the job over reads on from the stored
+  cursor. The server that had the job learns that it lost it only when it
+  next stores the cursor, which it no longer can, so meanwhile one of its
+  pages goes on, one it had in flight or one it reads on, and is written as
+  any page is, until that server stops. (A table's shards page at once
+  too: their rows differ, so two of their pages meet as two pages of one
+  shard do.)
 
 Its invariants are `NoStale` and `WellFormed`, as above, and:
-- `Passed`: every row the backfill's cursor has passed holds its key's
-  entry or is among its conflicts, unless the backfill is writing it or
-  the prepared transaction, whose commit leaves it so, has locked it.
+- `Passed`: every row the backfill's stored cursor has passed holds its
+  key's entry or is among its conflicts, unless a page in flight is
+  writing it or the prepared transaction, whose commit leaves it so, has
+  locked it.
 - `Serialized`: a prepared transaction's writes are those its statements
   would make if they ran then, as one step, which is what
   `GlobalUniqueBuild` takes a write to be.
@@ -2159,6 +2171,7 @@ tla/check.sh GlobalUniqueBuild Bug_GlobalUniqueBuildBackfillUnvalidated \
   Bug_GlobalUniqueBuildStaleWrite Bug_GlobalUniqueBuildVolatileFence \
   GlobalUniqueWrites Bug_GlobalUniqueWritesKeyUnserialized \
   Bug_GlobalUniqueWritesNoOverlay Bug_GlobalUniqueWritesCursorEarly \
+  Bug_GlobalUniqueWritesCursorOutOfOrder Bug_GlobalUniqueWritesOrphanUnvalidated \
   Bug_GlobalUniqueWritesSkipConflict Bug_GlobalUniqueWritesNoPromote \
   Bug_GlobalUniqueWritesBlindLeave Bug_GlobalUniqueWritesJoinReplace
 ```
@@ -2173,22 +2186,24 @@ tla/check.sh GlobalUniqueBuild Bug_GlobalUniqueBuildBackfillUnvalidated \
 | `Bug_GlobalUniqueBuildNoDrainToAbort` | 56,090 | 13 | violates `Dropped`: a write of version 1, in flight when a cancel's version 3 is decided, writes its entry after its shard dropped the index |
 | `Bug_GlobalUniqueBuildStaleWrite` | 12,962 | 9 | violates `NoStale`: a shard that published version 1 takes a write of version 0, which moves a row without its entry |
 | `Bug_GlobalUniqueBuildVolatileFence` | 40,403 | 10 | violates `NoStale`: a leader change loses a shard's fence during the step to version 1; still at version 0, the shard takes a write of version 1 that gives a row its entry, then one of version 0 that moves the row without it |
-| `GlobalUniqueWrites` | 117,977 | 13 | passes (two rows, two keys, a transaction of two statements) |
-| `Bug_GlobalUniqueWritesKeyUnserialized` | 1,144 | 4 | violates `Serialized`: a statement decides that its row takes a free key's entry; another write takes the entry first, and the transaction's validation, which leaves out the key, passes |
-| `Bug_GlobalUniqueWritesNoOverlay` | 1,105 | 4 | violates `Serialized`: a transaction's row takes a free key's entry, then leaves the key; the second statement reads the committed index, misses the entry, and leaves it |
-| `Bug_GlobalUniqueWritesCursorEarly` | 8,835 | 5 | violates `Passed`: the backfill's cursor passes a row as it reads it; the row's write is refused by a prepared transaction's lock on its key, and the row is left without its entry |
-| `Bug_GlobalUniqueWritesSkipConflict` | 2,416 | 4 | violates `Passed`: the backfill drops a row whose key another row's entry holds, instead of recording a conflict |
-| `Bug_GlobalUniqueWritesNoPromote` | 1,486 | 4 | violates `WellFormed`: the holder leaves its key, and a conflicting row is left with no entry to hold |
-| `Bug_GlobalUniqueWritesBlindLeave` | 3,270 | 4 | violates `Passed`: a row that held no entry leaves a key that two rows had before the change, and deletes the entry the backfill gave the other one |
-| `Bug_GlobalUniqueWritesJoinReplace` | 2,898 | 4 | violates `Passed`: a row joining a key takes the entry from the row the backfill gave it |
+| `GlobalUniqueWrites` | 16,243,730 | 20 | passes (two rows, two keys, a transaction of two statements, two pages in flight, and a page of a server that lost the job) |
+| `Bug_GlobalUniqueWritesKeyUnserialized` | 1,261 | 4 | violates `Serialized`: a statement decides that its row takes a free key's entry; another write takes the entry first, and the transaction's validation, which leaves out the key, passes |
+| `Bug_GlobalUniqueWritesNoOverlay` | 1,121 | 4 | violates `Serialized`: a transaction's row takes a free key's entry, then leaves the key; the second statement reads the committed index, misses the entry, and leaves it |
+| `Bug_GlobalUniqueWritesCursorEarly` | 514 | 3 | violates `Passed`: the backfill's cursor passes a row as it reads it; a server that takes the job over reads on from the cursor, and the row is left without its entry |
+| `Bug_GlobalUniqueWritesCursorOutOfOrder` | 39,861 | 6 | violates `Passed`: the cursor passes the second page in flight, written, before the first, whose write is still to come; a server that takes the job over reads on from the cursor, and the first row is left without its entry |
+| `Bug_GlobalUniqueWritesOrphanUnvalidated` | 10,238 | 5 | violates `NoStale`: the backfill reads a row, a write moves the row off its key, and another server takes the job over; the page of the server that lost it writes the entry for the key the row had, without checking the row |
+| `Bug_GlobalUniqueWritesSkipConflict` | 8,717 | 5 | violates `Passed`: the backfill drops a row whose key another row's entry holds, instead of recording a conflict |
+| `Bug_GlobalUniqueWritesNoPromote` | 1,217 | 4 | violates `WellFormed`: the holder leaves its key, and a conflicting row is left with no entry to hold |
+| `Bug_GlobalUniqueWritesBlindLeave` | 15,969 | 5 | violates `Passed`: a row that held no entry leaves a key that two rows had before the change, and deletes the entry the backfill gave the other one |
+| `Bug_GlobalUniqueWritesJoinReplace` | 9,497 | 5 | violates `Passed`: a row joining a key takes the entry from the row the backfill gave it |
 
 Without `Serialized` among the invariants, the first two controls break
 the index itself:
-- `KeyUnserialized` violates `WellFormed` (15,339 states, depth 6). A
+- `KeyUnserialized` violates `WellFormed` (19,237 states, depth 6). A
   transaction moves a key's holder away and, seeing no conflict, drops the
   entry. Meanwhile another write records a conflict at the key, and the
   conflict is left with no entry.
-- `NoOverlay` violates `NoStale` (5,236 states, depth 5): the entry the
+- `NoOverlay` violates `NoStale` (5,334 states, depth 5): the entry the
   transaction wrote is committed stale.
 
 The server implements this design. A statement's writes of version 1 are
@@ -2231,7 +2246,9 @@ change succeeds, no write fails, and the index then holds exactly the rows'
 keys; values two rows share, before the change and written during it, fail
 it with 1062 and leave the table as it was; and when the SQL server that
 runs the change is killed during the backfill, the other one takes the job
-over and finishes it from the stored cursors. The sixteen configurations
+over and finishes it from the stored cursors. Two of CI's four runs
+backfill both shards at once, three pages of 32 rows in flight on each
+(`global_index_backfill`, issue #303). The sixteen configurations
 are generated by `gen_cfgs.sh` and bring the default check list from 373 to
 389. `tests/uniquefaults.sh` runs the build on 2 shards x 3 replicas with
 fsync through two faults, on memtx and on vinyl (CI runs both): the leader
@@ -2241,7 +2258,8 @@ backfill transaction's PREPARE loses its reply after a durable yes, which
 the SQL server resolves as recovery does. Each change succeeds, and the
 index then holds exactly the rows' keys on every replica. A third change
 meets a duplicate that a row of the other shard writes during the
-backfill: it fails with 1062 and leaves the table as it was.
+backfill: it fails with 1062 and leaves the table as it was. CI runs the
+three again at the faster pace of the two runs above.
 
 ### Detached source transactions
 

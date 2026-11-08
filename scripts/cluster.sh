@@ -22,6 +22,8 @@
 #                TARN_INDEX_BUILD=auto|copy|in_place (index_build in cluster.json: how ALTER TABLE builds indexes)
 #                TARN_GLOBAL_INDEX_BUILD=online|fenced (global_index_build in cluster.json: how ALTER
 #                TABLE builds a new unique key's global index)
+#                TARN_GLOBAL_INDEX_BACKFILL=JSON (global_index_backfill in cluster.json: the pace of
+#                an online build's backfill)
 #                TARN_BUCKET_COUNT=N (bucket_count in cluster.json: buckets of a new cluster)
 #                TARN_RESOURCE_LIMITS=JSON (gateway SQL resource budgets: load fixtures)
 #                TARN_TOPOLOGY_LIMITS=JSON (gateway topology object: resource-pressure fixtures)
@@ -124,6 +126,7 @@ write_config() {
   [ -n "${TARN_DDL_STEP_SLICE:-}" ] && out+=",\"ddl_step_slice\":$TARN_DDL_STEP_SLICE"
   [ -n "${TARN_INDEX_BUILD:-}" ] && out+=",\"index_build\":\"$TARN_INDEX_BUILD\""
   [ -n "${TARN_GLOBAL_INDEX_BUILD:-}" ] && out+=",\"global_index_build\":\"$TARN_GLOBAL_INDEX_BUILD\""
+  [ -n "${TARN_GLOBAL_INDEX_BACKFILL:-}" ] && out+=",\"global_index_backfill\":$TARN_GLOBAL_INDEX_BACKFILL"
   [ -n "${TARN_BUCKET_COUNT:-}" ] && out+=",\"bucket_count\":$TARN_BUCKET_COUNT"
   [ -n "${TARN_TOPOLOGY_LIMITS:-}" ] && out+=",\"topology\":$TARN_TOPOLOGY_LIMITS"
   [ -n "${TARN_RESOURCE_LIMITS:-}" ] && out+=",\"resources\":$TARN_RESOURCE_LIMITS"
