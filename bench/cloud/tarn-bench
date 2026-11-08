@@ -1,0 +1,308 @@
+#!/bin/bash
+# tarn-bench: create and destroy the GCP fleet of a benchmark run. Run it on
+# the operator's machine; nothing else creates cloud resources.
+#
+#   tarn-bench up TOPOLOGY [--project P] [--region R] [--zones a,b,c] [--bundle FILE] [--hours H]
+#   tarn-bench down RUN_ID       delete the run's VMs and network now
+#   tarn-bench sweep             delete every tarn-bench VM and network in the project
+#   tarn-bench status [RUN_ID]   list runs, or one run's VMs and deadline
+#   tarn-bench quota             what the topologies need from the project's quotas
+#
+# TOPOLOGY: az-rf3 | region-rf5 (see topology.py).
+#
+# Safety properties:
+#   * Credentials: every invocation logs in afresh (your Google account,
+#     passkey) into a private gcloud configuration under the run directory,
+#     and revokes and deletes it before exiting. No credential outlives the
+#     command; between `up` and `down` only the run's SSH key exists.
+#   * Deadline: every VM is created with --max-run-duration (default 6h) and
+#     --instance-termination-action=DELETE, so Compute Engine itself deletes
+#     it on time, whether or not anyone is around. Local SSDs and the control
+#     node's ephemeral IP go with their VM; what remains (network, subnet,
+#     firewall rules) costs nothing and `down` or `sweep` removes it.
+#   * Access: VMs run without a service account (no cloud API access from
+#     inside). Only the control node has an external IP, and it accepts SSH
+#     only from the address this command runs from. Workers have no external
+#     IP and are reached through the control node.
+#
+# Files: ~/tarn-bench/runs/RUN_ID/{plan.json,hosts.json,ssh_config,id_ed25519,deadline}
+# Config: ~/tarn-bench/config (PROJECT=..., REGION=...), or the options above.
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+BASE=${TARN_BENCH_HOME:-$HOME/tarn-bench}
+RUNS=$BASE/runs
+HOURS=6
+PROJECT="" REGION="" ZONES="" BUNDLE=""
+[ -f "$BASE/config" ] && . "$BASE/config"
+REGION=${REGION:-us-central1}
+SSH_USER=bench
+IMAGE_FAMILY=ubuntu-2404-lts-amd64
+IMAGE_PROJECT=ubuntu-os-cloud
+SUBNET_RANGE=10.42.0.0/20
+
+die() { echo "tarn-bench: $*" >&2; exit 1; }
+say() { echo "[$(date +%H:%M:%S)] $*"; }
+
+need() { command -v "$1" > /dev/null || die "$1 is required"; }
+
+# --- credentials ---------------------------------------------------------
+
+GCLOUD_DIR=""
+login() {  # dir: a private gcloud configuration for this invocation
+  GCLOUD_DIR=$1
+  rm -rf "$GCLOUD_DIR"; mkdir -p "$GCLOUD_DIR"; chmod 700 "$GCLOUD_DIR"
+  export CLOUDSDK_CONFIG=$GCLOUD_DIR CLOUDSDK_CORE_DISABLE_PROMPTS=1
+  trap logout EXIT
+  [ -n "$PROJECT" ] || die "no project: set PROJECT in $BASE/config or pass --project"
+  echo
+  echo "Sign in to Google Cloud (use the bench account; a private browser window"
+  echo "makes the sign-in ask for your passkey even if a session exists):"
+  gcloud auth login --brief --update-adc=false --launch-browser > /dev/null ||
+    die "sign-in failed"
+  gcloud config set core/project "$PROJECT" > /dev/null
+  gcloud config set compute/region "$REGION" > /dev/null
+}
+
+logout() {
+  [ -n "$GCLOUD_DIR" ] || return 0
+  CLOUDSDK_CONFIG=$GCLOUD_DIR gcloud auth revoke --all > /dev/null 2>&1 || true
+  rm -rf "$GCLOUD_DIR"
+  GCLOUD_DIR=""
+  echo "credentials revoked"
+}
+
+# --- helpers -------------------------------------------------------------
+
+run_label() { echo "$1" | tr 'A-Z' 'a-z'; }
+
+terminate_flags() {  # GA gcloud, or beta for older SDKs
+  if gcloud compute instances create --help 2> /dev/null | grep -q -- '--max-run-duration'; then
+    echo "GA"
+  else
+    echo "BETA"
+  fi
+}
+
+check_quota() {  # plan.json
+  python3 "$HERE/topology.py" quota --plan "$1" > "$GCLOUD_DIR/need.json"
+  gcloud compute regions describe "$REGION" --format=json | python3 -c '
+import json, sys
+need = json.load(open(sys.argv[1]))
+q = {x["metric"]: x for x in json.load(sys.stdin)["quotas"]}
+bad = []
+for m in ("N2D_CPUS", "LOCAL_SSD_TOTAL_GB", "INSTANCES", "IN_USE_ADDRESSES"):
+    if m not in q:
+        continue
+    free = q[m]["limit"] - q[m]["usage"]
+    print(f"  quota {m}: need {need[m]}, free {free:g} of {q[m][\"limit\"]:g}")
+    if free < need[m]:
+        bad.append(m)
+sys.exit(1 if bad else 0)' "$GCLOUD_DIR/need.json" || die "not enough quota in $REGION (request increases first)"
+}
+
+# --- up ------------------------------------------------------------------
+
+cmd_up() {
+  local topo=${1:-}; shift || true
+  [ -n "$topo" ] || die "usage: tarn-bench up TOPOLOGY [options]"
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --project) PROJECT=$2; shift 2;;
+      --region) REGION=$2; shift 2;;
+      --zones) ZONES=$2; shift 2;;
+      --bundle) BUNDLE=$2; shift 2;;
+      --hours) HOURS=$2; shift 2;;
+      *) die "unknown option $1";;
+    esac
+  done
+  need gcloud; need python3; need ssh; need ssh-keygen; need scp; need curl
+  case $HOURS in [1-6]) ;; *) die "--hours must be 1..6";; esac
+  BUNDLE=${BUNDLE:-$(ls -t "$BASE"/bundles/tarn-bench-bundle-*.tar.gz 2> /dev/null | head -1)}
+  [ -f "$BUNDLE" ] || die "no bundle: put it in $BASE/bundles or pass --bundle"
+  [ -f "$BUNDLE.sha256" ] || die "no $BUNDLE.sha256"
+  (cd "$(dirname "$BUNDLE")" && shasum -a 256 -c "$(basename "$BUNDLE").sha256" > /dev/null) ||
+    die "bundle checksum does not match"
+
+  local short; case $topo in az-rf3) short=az3;; region-rf5) short=rg5;; *) short=x;; esac
+  local id; id=tb-$(date -u +%m%d-%H%M)-$short
+  local dir=$RUNS/$id
+  mkdir -p "$dir"; chmod 700 "$dir"
+  python3 "$HERE/topology.py" plan "$topo" --region "$REGION" ${ZONES:+--zones "$ZONES"} > "$dir/plan.json"
+  ssh-keygen -q -t ed25519 -N "" -C "$id" -f "$dir/id_ed25519"
+  local myip; myip=$(curl -fsS https://api.ipify.org) || die "cannot find this machine's public IP"
+
+  login "$dir/.gcloud"
+  say "checking quota"
+  check_quota "$dir/plan.json"
+  local ga; ga=$(terminate_flags)
+  local GC="gcloud compute"; [ "$ga" = BETA ] && GC="gcloud beta compute"
+
+  local deadline_epoch=$(( $(date +%s) + HOURS * 3600 ))
+  echo "$deadline_epoch" > "$dir/deadline"
+  say "run $id: VMs delete themselves by $(date -r "$deadline_epoch" 2> /dev/null || date -d "@$deadline_epoch")"
+
+  local net=$id label; label=$(run_label "$id")
+  say "network"
+  gcloud compute networks create "$net" --subnet-mode=custom --quiet > /dev/null
+  gcloud compute networks subnets create "$net" --network="$net" --region="$REGION" \
+    --range="$SUBNET_RANGE" --quiet > /dev/null
+  gcloud compute firewall-rules create "$net-internal" --network="$net" --direction=INGRESS \
+    --allow=tcp,udp,icmp --source-ranges="$SUBNET_RANGE" --quiet > /dev/null
+  gcloud compute firewall-rules create "$net-ssh" --network="$net" --direction=INGRESS \
+    --allow=tcp:22 --source-ranges="$myip/32" --target-tags="$net-control" --quiet > /dev/null
+
+  say "VMs"
+  # One create call per (zone, role): names in one call share the flags.
+  python3 - "$dir/plan.json" > "$dir/groups" << 'EOF'
+import json, sys
+p = json.load(open(sys.argv[1]))
+groups = {}
+for h in p["hosts"]:
+    key = (h["zone"], h["role"], h["machine"], h.get("local_ssd", 0), h.get("boot_disk_gb", 50))
+    groups.setdefault(key, []).append(h["name"])
+for (zone, role, machine, ssd, disk), names in groups.items():
+    print(zone, role, machine, ssd, disk, " ".join(names))
+EOF
+  local pids="" zone role machine ssd disk names n
+  while read -r zone role machine ssd disk names; do
+    local full=""
+    for n in $names; do full="$full $id-$n"; done
+    local extra=""
+    [ "$ssd" -gt 0 ] && extra="--local-ssd=interface=NVME"
+    local addr="no-address"; local tags="tb"
+    [ "$role" = control ] && { addr=""; tags="tb,$net-control"; }
+    # shellcheck disable=SC2086
+    $GC instances create $full --zone="$zone" --machine-type="$machine" \
+      --network-interface="subnet=$net${addr:+,$addr}" \
+      --image-family="$IMAGE_FAMILY" --image-project="$IMAGE_PROJECT" \
+      --boot-disk-size="${disk}GB" --boot-disk-type=pd-balanced $extra \
+      --no-service-account --no-scopes \
+      --provisioning-model=STANDARD --max-run-duration="${HOURS}h" --instance-termination-action=DELETE \
+      --labels="tarn-bench=$label,role=$role" --tags="$tags" \
+      --metadata="enable-oslogin=FALSE,block-project-ssh-keys=TRUE,ssh-keys=$SSH_USER:$(cat "$dir/id_ed25519.pub")" \
+      --metadata-from-file="startup-script=$HERE/node/node-init.sh" \
+      --quiet > "$dir/create-$zone-$role.log" 2>&1 &
+    pids="$pids $!"
+  done < "$dir/groups"
+  local failed=0 p
+  for p in $pids; do wait "$p" || failed=1; done
+  if [ $failed = 1 ]; then
+    cat "$dir"/create-*.log >&2
+    say "creation failed: deleting what was created"
+    delete_run "$id"
+    die "up failed"
+  fi
+
+  say "addresses"
+  gcloud compute instances list --filter="labels.tarn-bench=$label" --format=json > "$dir/instances.json"
+  python3 - "$dir" "$id" "$SSH_USER" << 'EOF'
+import json, os, sys
+d, run, user = sys.argv[1:4]
+plan = json.load(open(os.path.join(d, "plan.json")))
+inst = {i["name"]: i for i in json.load(open(os.path.join(d, "instances.json")))}
+for h in plan["hosts"]:
+    i = inst[f"{run}-{h['name']}"]
+    nic = i["networkInterfaces"][0]
+    h["internal_ip"] = nic["networkIP"]
+    acc = nic.get("accessConfigs") or []
+    if acc and acc[0].get("natIP"):
+        h["external_ip"] = acc[0]["natIP"]
+plan["run_id"] = run
+plan["ssh_user"] = user
+plan["deadline"] = int(open(os.path.join(d, "deadline")).read())
+json.dump(plan, open(os.path.join(d, "hosts.json"), "w"), indent=1)
+ctl = next(h for h in plan["hosts"] if h["role"] == "control")
+with open(os.path.join(d, "ssh_config"), "w") as f:
+    common = (f"  User {user}\n  IdentityFile {d}/id_ed25519\n  IdentitiesOnly yes\n"
+              f"  UserKnownHostsFile {d}/known_hosts\n  StrictHostKeyChecking accept-new\n"
+              "  ServerAliveInterval 15\n  ConnectTimeout 10\n")
+    f.write(f"Host control\n  HostName {ctl['external_ip']}\n{common}\n")
+    for h in plan["hosts"]:
+        if h["role"] != "control":
+            f.write(f"Host {h['name']}\n  HostName {h['internal_ip']}\n  ProxyJump control\n{common}\n")
+EOF
+  logout
+
+  say "waiting for SSH on the control node"
+  local ok=0
+  for _ in $(seq 60); do
+    ssh -F "$dir/ssh_config" control true 2> /dev/null && { ok=1; break; }
+    sleep 5
+  done
+  [ $ok = 1 ] || die "control node unreachable; the fleet still deletes itself at the deadline (or: tarn-bench down $id)"
+  say "copying bundle, key and inventory to the control node"
+  ssh -F "$dir/ssh_config" control 'sudo install -d -o $(id -u) -g $(id -g) /data/stage'
+  scp -F "$dir/ssh_config" -q "$BUNDLE" "$BUNDLE.sha256" "$dir/hosts.json" "$dir/id_ed25519" control:/data/stage/
+  ssh -F "$dir/ssh_config" control 'cd /data/stage && chmod 600 id_ed25519 && sha256sum -c *.sha256 > /dev/null &&
+    mkdir -p /data/tb && tar -xzf tarn-bench-bundle-*.tar.gz -C /data/tb --strip-components=1 &&
+    echo "bundle ready: $(cat /data/tb/MANIFEST | head -1)"'
+  echo
+  echo "Run $id is up. Deadline: $(date -r "$deadline_epoch" 2> /dev/null || date -d "@$deadline_epoch")"
+  echo "  ssh -F $dir/ssh_config control"
+  echo "  then on the control node: /data/tb/bench/cloud/orchestrate.py --hosts /data/stage/hosts.json prepare"
+}
+
+# --- down / sweep / status -----------------------------------------------
+
+delete_run() {  # run id (logged in)
+  local id=$1 label; label=$(run_label "$1")
+  local names
+  names=$(gcloud compute instances list --filter="labels.tarn-bench=$label" --format='value(name,zone.basename())')
+  if [ -n "$names" ]; then
+    echo "$names" | awk '{print $2}' | sort -u | while read -r z; do
+      # shellcheck disable=SC2046
+      gcloud compute instances delete $(echo "$names" | awk -v z="$z" '$2 == z {print $1}') \
+        --zone="$z" --quiet > /dev/null 2>&1 &
+    done
+    wait
+  fi
+  for r in "$id-ssh" "$id-internal"; do
+    gcloud compute firewall-rules delete "$r" --quiet > /dev/null 2>&1 || true
+  done
+  gcloud compute networks subnets delete "$id" --region="$REGION" --quiet > /dev/null 2>&1 || true
+  gcloud compute networks delete "$id" --quiet > /dev/null 2>&1 || true
+  say "deleted $id"
+}
+
+cmd_down() {
+  local id=${1:-}; [ -n "$id" ] || die "usage: tarn-bench down RUN_ID"
+  need gcloud
+  mkdir -p "$RUNS/$id"
+  login "$RUNS/$id/.gcloud-down"
+  delete_run "$id"
+}
+
+cmd_sweep() {
+  need gcloud
+  mkdir -p "$BASE"
+  login "$BASE/.gcloud-sweep"
+  local runs
+  runs=$( { gcloud compute instances list --filter='labels.tarn-bench:*' --format='value(labels.tarn-bench)';
+            gcloud compute networks list --filter='name ~ ^tb-' --format='value(name)'; } | sort -u)
+  [ -n "$runs" ] || { say "nothing to delete"; return; }
+  for r in $runs; do delete_run "$r"; done
+}
+
+cmd_status() {
+  if [ -z "${1:-}" ]; then
+    ls -1t "$RUNS" 2> /dev/null | while read -r r; do
+      local d; d=$(cat "$RUNS/$r/deadline" 2> /dev/null || echo 0)
+      if [ "$d" -gt "$(date +%s)" ]; then echo "$r  deletes itself in $(( (d - $(date +%s)) / 60 )) min"
+      else echo "$r  past its deadline"; fi
+    done
+    return
+  fi
+  need gcloud
+  login "$RUNS/$1/.gcloud-status"
+  gcloud compute instances list --filter="labels.tarn-bench=$(run_label "$1")" \
+    --format='table(name,zone.basename(),status,machineType.basename(),scheduling.maxRunDuration.seconds)'
+}
+
+case ${1:-} in
+  up) shift; cmd_up "$@";;
+  down) shift; cmd_down "$@";;
+  sweep) shift; cmd_sweep;;
+  status) shift; cmd_status "$@";;
+  quota) python3 "$HERE/topology.py" quota;;
+  *) sed -n '2,30p' "$0"; exit 2;;
+esac
