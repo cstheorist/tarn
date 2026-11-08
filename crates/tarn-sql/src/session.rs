@@ -212,6 +212,11 @@ pub(crate) const MARK_NO_NATIVE_WRITE: u32 = 1;
 struct StaleRetry {
     deadline: std::time::Instant,
     attempt: u32,
+    /// The attempts that met a newer catalog (1146 / 1054 / 1049), of which
+    /// a statement runs three: those for 1412 and moved buckets don't count,
+    /// as an ALTER's own steps refuse a statement once each before the
+    /// change publishes.
+    changed: u32,
     /// Catalog version when the current attempt started.
     seen: u64,
 }
@@ -221,7 +226,29 @@ impl StaleRetry {
         StaleRetry {
             deadline: std::time::Instant::now() + std::time::Duration::from_secs_f64(lock_wait_timeout.max(1.0)),
             attempt: 0,
+            changed: 0,
             seen: 0,
+        }
+    }
+
+    /// The pause before running a refused statement again (1412, a moved
+    /// bucket): 10 ms, doubling up to 80 ms.
+    fn backoff(&mut self) -> std::time::Duration {
+        self.attempt += 1;
+        std::time::Duration::from_millis((5u64 << self.attempt.min(4)).min(100))
+    }
+
+    /// The verdict on an attempt that met a newer catalog: run the
+    /// statement again, three times at most, else report a catalog that
+    /// keeps changing as such (1412) rather than the error the stale one
+    /// produced.
+    fn newer_catalog(&mut self, autocommit: bool) -> Stale {
+        self.attempt += 1;
+        self.changed += 1;
+        if autocommit && self.changed <= 3 {
+            Stale::Retry
+        } else {
+            Stale::Changed
         }
     }
 
@@ -241,10 +268,8 @@ impl StaleRetry {
             if !autocommit || std::time::Instant::now() > self.deadline {
                 return Ok(Stale::Done);
             }
-            self.attempt += 1;
             cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
-            let ms = (5u64 << self.attempt.min(4)).min(100);
-            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            tokio::time::sleep(self.backoff()).await;
             return Ok(Stale::Retry);
         }
         match e.code {
@@ -253,10 +278,8 @@ impl StaleRetry {
                 if !autocommit || std::time::Instant::now() > self.deadline {
                     return Ok(Stale::Done);
                 }
-                self.attempt += 1;
                 cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
-                let ms = (5u64 << self.attempt.min(4)).min(100);
-                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                tokio::time::sleep(self.backoff()).await;
                 Ok(Stale::Retry)
             }
             1146 | 1054 | 1049 => {
@@ -267,12 +290,8 @@ impl StaleRetry {
                 if !newer {
                     return Ok(Stale::Done);
                 }
-                self.attempt += 1;
-                // A catalog that keeps changing: report it as such (1412)
-                // rather than the error the stale one produced.
-                Ok(if autocommit && self.attempt <= 3 {
-                    Stale::Retry
-                } else {
+                let verdict = self.newer_catalog(autocommit);
+                if matches!(verdict, Stale::Changed) {
                     tracing::info!(
                         code = e.code,
                         message = %e.message,
@@ -280,8 +299,8 @@ impl StaleRetry {
                         catalog = cluster.catalog().version,
                         "a statement failed while the catalog changed: reported as such (1412)"
                     );
-                    Stale::Changed
-                })
+                }
+                Ok(verdict)
             }
             // A shard that cannot be reached may have left the cluster: the
             // statement runs again once this server learns that it has (the
@@ -4609,6 +4628,30 @@ fn first_value(d: &[u8]) -> SqlResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_alters_refusals_leave_a_statement_its_newer_catalog_attempts() {
+        // An ALTER's steps refuse a statement with 1412 once each before the
+        // change publishes (#221): it still runs three times on a newer
+        // catalog (1146 / 1054 / 1049) before that is reported as 1412.
+        let mut r = StaleRetry::new(1.0);
+        for _ in 0..5 {
+            r.backoff();
+        }
+        for _ in 0..3 {
+            assert!(matches!(r.newer_catalog(true), Stale::Retry));
+        }
+        assert!(matches!(r.newer_catalog(true), Stale::Changed));
+        // A later statement of a transaction never starts over.
+        assert!(matches!(StaleRetry::new(1.0).newer_catalog(false), Stale::Changed));
+    }
+
+    #[test]
+    fn a_refused_statement_waits_10_ms_doubling_up_to_80_ms() {
+        let mut r = StaleRetry::new(1.0);
+        let ms: Vec<u128> = (0..6).map(|_| r.backoff().as_millis()).collect();
+        assert_eq!(ms, vec![10, 20, 40, 80, 80, 80]);
+    }
 
     fn diagnostic_session() -> Session {
         let cfg = serde_json::from_value(serde_json::json!({

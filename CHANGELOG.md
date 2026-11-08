@@ -214,6 +214,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A statement on a table that an `ALTER TABLE ... RENAME TO` renames now
+  fails with 1146 once the old name is gone, as in MySQL, rather than with
+  1412 ([#221](https://github.com/cstheorist/tarn/issues/221)). An
+  autocommit statement that meets a newer catalog runs again up to three
+  times before a catalog that keeps changing is reported as 1412, and the
+  retries after the ALTER's own refusals (1412) counted toward those
+  three: a statement the ALTER's steps had refused three times got 1412
+  when the rename published.
+
 - A storage process no longer crashes in Lua's garbage collector after the
   engine's tickets cut is replaced
   ([#160](https://github.com/cstheorist/tarn/issues/160)). The engine's
