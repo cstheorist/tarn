@@ -590,6 +590,62 @@ fn eval_keys(
 /// #10): each key goes to the shard it determines, or to every shard when
 /// it does not contain the shard key (secondary indexes are per shard).
 #[allow(clippy::too_many_arguments)]
+/// The rows of `t` on shard `shard` whose primary keys lie in `lo..=hi`,
+/// read through `mode`. In a transaction the read is recorded as one range,
+/// validated at commit and held by one range lock while prepared, where
+/// reading the same rows by key records, and PREPARE writes, a point for
+/// each. For a page of the online unique build's backfill
+/// (`cluster::uix_build`), whose rows are on one shard: bucket moves wait
+/// for the job (issue #310).
+pub(crate) async fn fetch_pk_range_on(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    t: &TableDef,
+    shard: usize,
+    lo: Vec<Value>,
+    hi: Vec<Value>,
+) -> SqlResult<Vec<Row>> {
+    let map = cluster.bucket_map();
+    let call = Call {
+        shard,
+        bucket: None,
+        key: lo.clone(),
+        iter: Iter::Ge,
+        limit: None,
+        end: Some((hi.clone(), true)),
+        range: Some(RangeRead {
+            space: t.space_id,
+            index: 0,
+            lo: Some(lo),
+            hi: Some(hi),
+            lo_incl: true,
+            hi_incl: true,
+            bucket: None,
+        }),
+    };
+    let cx = EvalCtx {
+        params: &[],
+        db: None,
+        user: "",
+        conn_id: 0,
+        last_insert_id: 0,
+        found_rows: 0,
+        row_count: 0,
+        now: "",
+    };
+    let written = BTreeSet::new();
+    let keep = Keep {
+        topk: None,
+        filter: None,
+        cx: &cx,
+        t,
+        written: &written,
+        project: None,
+    };
+    let scans = read_calls(cluster, &map, mode, t, 0, vec![call], false, keep).await?;
+    Ok(scans.into_iter().flat_map(|s| s.rows).collect())
+}
+
 pub(crate) async fn fetch_keys(
     cluster: &Arc<Cluster>,
     mode: &mut ReadMode<'_>,

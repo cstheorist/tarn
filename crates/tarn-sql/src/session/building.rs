@@ -44,6 +44,19 @@ fn gone(e: SqlError) -> SqlError {
     }
 }
 
+/// The rows a transaction of the online unique build's backfill reads
+/// (`cluster::uix_build`): by their primary keys, or a page's range of the
+/// primary key on one shard, read as one range (issue #310).
+#[derive(Clone)]
+pub(crate) enum BackfillRows {
+    Keys(Vec<Vec<Value>>),
+    Range {
+        shard: usize,
+        lo: Vec<Value>,
+        hi: Vec<Value>,
+    },
+}
+
 impl Session {
     /// The writes a row write makes to building global index `g` of table
     /// `t`: `before` is the old row's entry, `after` the new row's (None:
@@ -313,14 +326,24 @@ impl Session {
         &self,
         txn: &mut Txn,
         t: &Arc<TableDef>,
-        pks: Vec<Vec<Value>>,
+        rows: BackfillRows,
     ) -> SqlResult<()> {
-        self.building_backfill_once(txn, t, pks).await.map_err(gone)
+        self.building_backfill_once(txn, t, rows).await.map_err(gone)
     }
 
-    async fn building_backfill_once(&self, txn: &mut Txn, t: &Arc<TableDef>, pks: Vec<Vec<Value>>) -> SqlResult<()> {
+    async fn building_backfill_once(&self, txn: &mut Txn, t: &Arc<TableDef>, rows: BackfillRows) -> SqlResult<()> {
         txn.building.insert(t.space_id);
         let rc = txn.mode == TxnMode::ReadCommitted;
+        let pks = match rows {
+            BackfillRows::Keys(pks) => pks,
+            BackfillRows::Range { shard, lo, hi } if !rc => {
+                let rows = exec::fetch_pk_range_on(&self.cluster, &mut ReadMode::Txn(txn), t, shard, lo, hi).await?;
+                return self.building_backfill_rows(txn, t, rows).await;
+            }
+            BackfillRows::Range { .. } => {
+                return Err(SqlError::internal("a READ COMMITTED backfill reads its rows by key"));
+            }
+        };
         let rows = if rc {
             let x = LockOpts {
                 exclusive: true,
@@ -344,6 +367,12 @@ impl Session {
         } else {
             exec::fetch_keys(&self.cluster, &mut ReadMode::Txn(txn), t, t.pk(), pks, true, None).await?
         };
+        self.building_backfill_rows(txn, t, rows).await
+    }
+
+    /// The entries of `rows`, read through `txn`, for each building index.
+    async fn building_backfill_rows(&self, txn: &mut Txn, t: &Arc<TableDef>, rows: Vec<Row>) -> SqlResult<()> {
+        let rc = txn.mode == TxnMode::ReadCommitted;
         for g in t.globals.iter().filter(|g| g.building()) {
             let k = g.key_len();
             let entries: Vec<Vec<Value>> = rows.iter().filter_map(|r| g.entry(t, r)).collect();

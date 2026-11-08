@@ -1250,6 +1250,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- An online unique index build's backfill does less work per row
+  ([#310](https://github.com/cstheorist/tarn/issues/310)). A page's
+  transaction reads its rows as one range of the shard's primary key, so
+  its commit validates one range, and its PREPARE holds one range lock
+  where it held a durable lock per row. The shards' checks that the
+  spaces a PREPARE, a validation or a local commit names may serve it now
+  read the replication mode once per request rather than once per read and
+  write, which every transaction that reads or writes several rows gains
+  from. On 2 shards × 3 replicas with fsync, in three alternating pairs, a
+  default-pace backfill of 300,000 rows per shard took 9–16% less time
+  (medians 215 and 236 s) and 6–18% less host CPU per entry.
+
 - On a cluster with replicated shards, an `ALTER TABLE` that builds
   secondary indexes and also drops a global unique index or a lazy index
   copies the table instead of building in place. So does one that renews a

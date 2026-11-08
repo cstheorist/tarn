@@ -94,6 +94,9 @@ function M.new(c)
         end
     end
     function F.space(sp) return space_mode(sp, F.mode()) end
+    -- F.space with the mode a caller read (F.mode) in the same check, with
+    -- no yield since (BK.fresh_spaces).
+    function F.space_in(sp, mode) return space_mode(sp, mode) end
     -- The mode belongs only to this nonyielding final check.
     -- Do not retain it across a barrier, data access, yield or invocation.
     function F.plans(plans, space_pos)
