@@ -2686,10 +2686,11 @@ the first shard.
 
 A leader change (or a node that turns read-only and back) makes a shard
 read its map again from `_tarn_buckets`. A step whose commit is still
-waiting for the WAL or the quorum then has a state in memory that the
-stored one does not show yet: a send has made the bucket 'sent' already
-(`BK.early`), a last copy has added its rows to those the hold checks, and
-a receive makes the bucket 'active' only once its rows are seen. So the
+waiting for the WAL or the quorum then has a stored state that the
+confirmed one does not show yet, and that it applies in memory only once
+the commit is done: a send's 'reclaiming' or 'sent' serves less than the
+state before it, a last copy has added its rows to those the hold checks,
+and a receive's 'active' must not serve before its rows are seen. So the
 shard reads both the confirmed state and the one with the commits in
 progress, and takes for each bucket the state that serves less, the newer
 epoch, and the rows kept aside in either; steps also apply their state

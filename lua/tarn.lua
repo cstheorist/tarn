@@ -740,17 +740,18 @@ BK.SERVES = {active = 4, sending = 4, fenced = 3, receiving = 2, sent = 2, abort
 function BK.is_held(s) return s == 'held' or s == 'installing' or s == 'reclaiming' end
 function BK.is_partial(s) return s == 'installing' or s == 'reclaiming' end
 
--- Rebuild the state in memory from the stored one. A step whose commit
--- waits for the WAL or the quorum may have changed the state in memory
--- already, in the direction that serves less (a send: 'sent' and the
--- epoch, see BK.early), or changes it only once its rows are seen (a
--- receive: 'active'). So the rebuild reads the state as confirmed and with
--- the commits in progress (read-committed), and takes for each bucket the
--- one that serves less, the newer epoch, and for a held bucket the rows
--- kept aside in either. (Either view alone would undo a send in progress,
--- or serve a bucket whose rows are not seen yet.) A step whose commit then
--- fails makes the state stale again (BK.commit), or undoes its change
--- (BK.early's on_rollback).
+-- Rebuild the state in memory from the stored one. A step stores its
+-- state in a commit and applies it in memory once the commit is done
+-- (BK.set, or BK.applied after a step's last batch), so while the commit
+-- waits for the WAL or the quorum, the stored state is ahead of the one in
+-- memory: a send's 'reclaiming' or 'sent' serves less than the state
+-- before it, and a receive's 'active' must not serve before its rows are
+-- seen. So the rebuild reads the state as confirmed and with the commits
+-- in progress (read-committed), and takes for each bucket the one that
+-- serves less, the newer epoch, and for a held bucket the rows kept aside
+-- in either. (Either view alone would undo a send in progress, or serve a
+-- bucket whose rows are not seen yet.) A step whose commit then fails
+-- makes the state stale again (BK.commit).
 function BK.rebuild()
     local a, c = BK.read_view('read-confirmed'), BK.read_view('read-committed')
     local function serves(v, b) return BK.SERVES[v.state[b]] or 2 end
@@ -978,9 +979,10 @@ end
 -- A read checks its route before it reads (to fail fast) and again after,
 -- with no yield in between: a read that waited -- for a prepared
 -- transaction's lock, or for vinyl -- may have read after a move sent a
--- bucket away or brought one in. (BK.early changes the state and the epoch
--- before the rows do.) fn's argument `i` is the route; a reply that is not
--- 'ok' is returned as it is.
+-- bucket away or brought one in. (A move applies 'reclaiming' or
+-- 'installing', with a new epoch, before it deletes or inserts the first
+-- row.) fn's argument `i` is the route; a reply that is not 'ok' is
+-- returned as it is.
 function BK.recheck(fn, i)
     return function(...)
         local physical_gen = BK.physical_gen
@@ -7463,32 +7465,6 @@ function BK.commit()
     end
 end
 
--- Inside the transaction that stores it: make bucket b's state `state` in
--- memory now (and back if the transaction rolls back), before its writes
--- become visible -- as box.commit() waits for the WAL, other requests run,
--- and once the rows of a bucket sent are gone they must find it sent. With
--- state nil, bump the epoch alone: once the rows of a bucket received are
--- there, a read of every shard made with the old map must be refused,
--- while the bucket itself is served only once they are (BK.applied after
--- the commit).
-function BK.early(b, state, peer, move, epoch)
-    local old = {BK.state[b], BK.peer[b], BK.move[b], BK.epoch}
-    if state ~= nil then
-        BK.applied(b, state, peer, move, epoch)
-    else
-        BK.epoch, BK.ver = epoch, BK.ver + 1
-        BK.ns_sync()
-    end
-    box.on_rollback(function()
-        if state ~= nil then
-            BK.applied(b, old[1], old[2], old[3], old[4])
-        else
-            BK.epoch, BK.ver = old[4], BK.ver + 1
-            BK.ns_sync()
-        end
-    end)
-end
-
 -- One physical batch per modern RPC. Legacy private callers may run the
 -- repeatable batches to completion; every transaction remains bounded.
 function BK.move_loop(fn, once)
@@ -7591,7 +7567,7 @@ end
 -- 0, tables}: the number of Tarn tables on the shard, whose rows were
 -- stored by a version from before the map (with the count of that time).
 -- It reports the state in memory, which the shard's checks go by (a step's
--- change shows once the step made it, as BK.early does), and builds the
+-- change shows once its commit is done: BK.set, BK.applied), and builds the
 -- report once per change: reading 15,000 buckets from _tarn_buckets takes
 -- about 11 ms, and SQL servers read the map after every move.
 function BK.bucket_report()
