@@ -24,11 +24,13 @@ copy is left on any replica; the key finds rows by value and refuses a
 duplicate in another tenant. The checks read the table as it is: a write
 that a crash left with an unknown outcome is not replayed.
 
-  * A leader crash during the backfill: once the job is in its backfill,
-    the second shard's leader ends itself. The backfill's pages there fail
-    for a transient reason until the shard's new leader takes them, and the
-    build finishes while a session writes. The replica that crashed is
-    started again, and the index is checked as above.
+  * A leader crash during the backfill: the backfill's first page on
+    whichever replica of the second shard leads is held (test hook
+    uix_backfill_page), and that leader then ends itself, with all of the
+    shard's pages left. They fail for a transient reason until the shard's
+    new leader takes them, and the build finishes while a session writes.
+    The replica that crashed is started again, and the index is checked as
+    above.
   * A duplicate written during the backfill: once the job is in its
     backfill, a row of the second shard takes the value of a row of the
     first. The ALTER fails with 1062, naming the value, and leaves the
@@ -194,26 +196,26 @@ def main():
             time.sleep(0.2)
         raise AssertionError(f"the shards did not settle on their leaders: {last}")
 
-    def hook(targets, action):
+    def hook(targets, action, name="engine_copy"):
         done = []
         for node in targets:
             try:
-                r = rpc(node, "tarn_test_hook", ["engine_copy", action])
+                r = rpc(node, "tarn_test_hook", [name, action])
                 assert r[0] == "ok", r
                 done.append(node)
             except RuntimeError:  # a replica that is down
                 pass
         return done
 
-    def holder(targets, deadline):
-        """The replica whose copy reached the hook, if one does in time."""
+    def holder(targets, deadline, name="engine_copy"):
+        """The replica whose step reached the hook, if one does in time."""
         found = []
 
         def poll(node):
             while not found and time.monotonic() < deadline:
                 try:
                     # (waits up to 5 s on the node for a step to reach it)
-                    if rpc(node, "tarn_test_hook", ["engine_copy", "reached"])[1] > 0:
+                    if rpc(node, "tarn_test_hook", [name, "reached"])[1] > 0:
                         found.append(node)
                 except Exception:  # timed out, or the replica is down
                     time.sleep(0.2)
@@ -529,45 +531,37 @@ def main():
     space = f"{DB}.b"
     before = space_ids(space)
     crash = {}
-
-    def crash_in_backfill():
-        """Once the job is in its backfill, the second shard's leader ends
-        itself; the backfill's pages there fail until a new leader takes
-        them."""
-        deadline, phase = time.monotonic() + 120, None
-        while time.monotonic() < deadline and phase != "backfill":
-            phase = ev(wait_leader(groups[0]), "local t = box.space._tarn_meta:get{'job:' .. ...} "
-                                               "return t and t.value.phase or box.NULL", [space])
-            time.sleep(0.02)
-        crash["phase"] = phase
-        if phase != "backfill":
-            return
-        victim = wait_leader(groups[1])
-        state = ev(victim, "return {pid = box.info.pid, cwd = require('fio').cwd()}")
-        assert int((work / f"{Path(state['cwd']).name}.pid").read_text()) == state["pid"], state
-        ev(victim, "local pid = ...; assert(box.info.pid == pid); "
-                   "require('fiber').create(function() require('fiber').sleep(.05); "
-                   "local ffi = require('ffi'); ffi.cdef('void _exit(int);'); ffi.C._exit(86) end)",
-           [state["pid"]])
-        crash["victim"] = Path(state["cwd"]).name
-        crash["replacement"] = wait_leader(groups[1], exclude=victim)
-        # (still in the backfill once the shard had its new leader)
-        crash["phase_after"] = ev(wait_leader(groups[0]), "local t = box.space._tarn_meta:get{'job:' .. ...} "
-                                                          "return t and t.value.phase or box.NULL", [space])
-
     alter.clear()
     with Writer("b", True, f"{args.engine} backfill crash") as w:
         time.sleep(0.5)
-        th = threading.Thread(target=crash_in_backfill)
+        # The second shard's leader holds its first backfill page (test hook
+        # uix_backfill_page), so the shard has all its pages left when the
+        # leader ends itself.
+        armed = hook(second, "hold", "uix_backfill_page")
+        th = threading.Thread(target=run_alter, args=("b", "bu"))
         th.start()
-        run_alter("b", "bu")
-        th.join(130)
+        victim = holder(armed, time.monotonic() + 180, "uix_backfill_page")
+        if victim is not None:
+            crash["phase"] = ev(wait_leader(groups[0]), "local t = box.space._tarn_meta:get{'job:' .. ...} "
+                                                        "return t and t.value.phase or box.NULL", [space])
+            state = ev(victim, "return {pid = box.info.pid, cwd = require('fio').cwd()}")
+            assert int((work / f"{Path(state['cwd']).name}.pid").read_text()) == state["pid"], state
+            ev(victim, "local pid = ...; assert(box.info.pid == pid); "
+                       "require('fiber').create(function() require('fiber').sleep(.05); "
+                       "local ffi = require('ffi'); ffi.cdef('void _exit(int);'); ffi.C._exit(86) end)",
+               [state["pid"]])
+            crash["victim"] = Path(state["cwd"]).name
+            hook([n for n in armed if n != victim], "release", "uix_backfill_page")
+            crash["replacement"] = wait_leader(groups[1], exclude=victim)
+        else:
+            hook(armed, "release", "uix_backfill_page")
+        th.join(300)
         time.sleep(1)
     print(f"  ({args.engine}: {crash.get('victim')} ended itself in the backfill; "
           f"{crash.get('replacement')} leads now)", flush=True)
-    check("the second shard's leader ended itself during the backfill, which went on once another took over",
-          crash.get("phase") == "backfill" and crash.get("replacement") is not None
-          and crash.get("phase_after") == "backfill", crash)
+    check("the second shard's leader ended itself holding its first backfill page, and another took over",
+          crash.get("phase") == "backfill" and crash.get("victim") is not None
+          and crash.get("replacement") is not None, crash)
     check("the ALTER succeeds, the backfill going on with the shard's new leader", alter.get("ok") is True, alter)
     check(f"the writes went on through the crash ({w.writes}, {w.faults} refused or unknown), "
           f"none failing otherwise", w.writes > 0 and not w.errors, w.errors[:5])

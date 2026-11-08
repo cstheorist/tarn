@@ -6449,6 +6449,7 @@ end
 UIX.page_bytes = 1024 * 1024
 function tarn_uix_backfill_page(sid, after, bound, limit)
     writable()
+    yield_point('uix_backfill_page')
     local sp = box.space[sid]
     if sp == nil then return {'error', 1146, 'no such space ' .. tostring(sid)} end
     local pk, kd = sp.index[0], index_key_def(sid, 0)
