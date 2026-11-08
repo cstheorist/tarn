@@ -174,15 +174,29 @@ def vinyl_refusal(e):
 
 
 def load(c, sql, args=None):
-    """q() for the rows a scenario starts from: a statement that vinyl
-    admission refuses (it wrote nothing) is sent again, for up to two
-    minutes, as a client would."""
+    """q() for the rows a scenario starts from, which no one else writes: a
+    statement that vinyl admission refuses (it wrote nothing) is sent again,
+    for up to two minutes, as a client would. So is one whose outcome is
+    unknown (1180, as when a PREPARE could vote neither yes nor no on a busy
+    host, its transaction left to recovery): the statement inserts fresh
+    rows in one transaction, so if the next try meets a duplicate key
+    (1062), the first one committed, all its rows. Until recovery has
+    decided, the next tries may also wait for the rows' locks (1205) or
+    conflict (1213)."""
     deadline = time.monotonic() + 120
+    unknown = False
     while True:
         try:
             return q(c, sql, args)
         except pymysql.MySQLError as e:
-            if not vinyl_refusal(e) or time.monotonic() > deadline:
+            code = e.args[0]
+            if unknown and code == 1062:
+                return None
+            if time.monotonic() > deadline:
+                raise
+            if code == 1180:
+                unknown = True
+            elif not (vinyl_refusal(e) or (unknown and code in (1205, 1213))):
                 raise
             time.sleep(0.2)
 
