@@ -10,8 +10,13 @@
 //!    recorded as conflicts, unless they already are: a page at a time,
 //!    each shard's rows in primary-key order up to the last one it had when
 //!    the backfill began there, through transactions whose commit validates
-//!    the rows (`Session::building_backfill`). The job stores the shards'
-//!    cursors as the pages commit, at most every `BACKFILL_SAVE`.
+//!    the rows (`Session::building_backfill`). Up to `shards_at_once`
+//!    shards go at once, each with up to `pages_in_flight` pages of up to
+//!    `page_rows` rows in flight (`ClusterConfig::global_index_backfill`,
+//!    issue #303), and a shard's cursor passes a page only once that page
+//!    and those before it have committed (tla/GlobalUniqueWrites.tla,
+//!    BugCursorOutOfOrder). The job stores the shards' cursors as the pages
+//!    commit, at most every `BACKFILL_SAVE`.
 //! 3. `enforcing`: the table's local unique index is built; behind the
 //!    drained fence each shard checks that no conflict of its is left
 //!    (tarn_alter_prepare, `a.uix_check`); the index is published
@@ -50,15 +55,18 @@ use std::collections::BTreeMap;
 /// again while it fails for a transient reason, such as a conflict with the
 /// table's writes or a shard between leaders.
 const BACKFILL_RETRY: Duration = Duration::from_secs(300);
-/// Rows per backfill transaction, at most: a page also stops before its
-/// rows pass 1 MiB (`tarn_uix_backfill_page`).
-const BACKFILL_PAGE: u32 = 64;
+/// The rows of a page whose transaction failed for a transient reason (a
+/// write to one of its rows meanwhile) go in parts of this many, each a
+/// transaction, before a part that fails again goes a row at a time.
+const BACKFILL_PART: usize = 16;
+
 /// How often the backfill stores its cursors at most (and once a shard is
 /// done): a server that takes the job over passes again the rows of at most
 /// this long, which have their entries.
 const BACKFILL_SAVE: Duration = Duration::from_secs(1);
 
 /// The state of an online build (its job's arguments).
+#[derive(Clone)]
 pub(crate) struct UixBuild {
     pub(crate) db: String,
     pub(crate) table: String,
@@ -83,6 +91,38 @@ pub(crate) struct Cursor {
     /// building.
     bound: Option<Vec<u8>>,
     done: bool,
+}
+
+/// What the backfills of a build's shards share (issue #303).
+struct Backfill<'a> {
+    job: &'a Job,
+    base: &'a UixBuild,
+    t: &'a Arc<TableDef>,
+    /// Each shard's cursor, past the pages that have committed.
+    cursors: std::sync::Mutex<BTreeMap<u32, Cursor>>,
+    /// When the cursors were last stored (held while they are).
+    saved: tokio::sync::Mutex<Instant>,
+    /// Set once a shard's backfill has failed: no shard starts a page then.
+    stop: std::sync::atomic::AtomicBool,
+}
+
+impl Backfill<'_> {
+    fn stopped(&self) -> bool {
+        self.stop.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn stop(&self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn cursor(&self, id: u32) -> Cursor {
+        self.cursors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+            .cloned()
+            .unwrap_or_default()
+    }
 }
 
 impl UixBuild {
@@ -558,7 +598,11 @@ impl Cluster {
         self.bump_catalog().await
     }
 
-    /// The backfill: every shard's rows, a page at a time from its cursor.
+    /// The backfill: every shard's rows, a page at a time from its cursor,
+    /// up to `global_index_backfill.shards_at_once` shards at once. Once one
+    /// fails, no shard starts another page, and the pages in flight end: a
+    /// page is a distributed transaction, never dropped halfway. The cursors
+    /// are then stored as they are, and the first error returned.
     async fn uix_backfill(&self, job: &Job, st: &mut UixBuild) -> SqlResult<()> {
         let t = retry_transient(BACKFILL_RETRY, Duration::from_millis(20), || async {
             self.reload_catalog().await?;
@@ -576,23 +620,148 @@ impl Cluster {
         })?;
         let mut shards: Vec<(u32, usize)> = self.live_shards().map(|i| (self.shards[i].id, i)).collect();
         shards.sort_unstable();
-        let mut saved = Instant::now();
-        for (id, shard) in shards {
-            let mut cur = st.cursors.get(&id).cloned().unwrap_or_default();
-            while !cur.done {
-                let (rows, next) = self.uix_page(shard, &t, &cur).await?;
-                if !rows.is_empty() {
-                    self.uix_backfill_page(&t, rows).await?;
+        let pace = &self.cfg.global_index_backfill;
+        let at_once = match pace.shards_at_once {
+            0 => shards.len(),
+            n => n.min(shards.len()),
+        };
+        tracing::info!(
+            table = %job.space,
+            shards = shards.len(),
+            shards_at_once = at_once,
+            pages_in_flight = pace.pages_in_flight.max(1),
+            page_rows = pace.page_rows.max(1),
+            "an online index build's backfill starts"
+        );
+        let gate = tokio::sync::Semaphore::new(at_once.max(1));
+        let sh = Backfill {
+            job,
+            base: &*st,
+            t: &t,
+            cursors: std::sync::Mutex::new(st.cursors.clone()),
+            saved: tokio::sync::Mutex::new(Instant::now()),
+            stop: std::sync::atomic::AtomicBool::new(false),
+        };
+        let ended = futures::future::join_all(shards.iter().map(|&(id, shard)| {
+            let (gate, sh) = (&gate, &sh);
+            async move {
+                let _permit = gate.acquire().await.expect("gate");
+                if sh.stopped() {
+                    return Ok(());
                 }
-                cur = next;
-                st.cursors.insert(id, cur.clone());
-                if cur.done || saved.elapsed() >= BACKFILL_SAVE {
-                    self.uix_save(job, st).await?;
-                    saved = Instant::now();
+                self.uix_backfill_shard(sh, id, shard).await
+            }
+        }))
+        .await;
+        let Backfill { cursors, .. } = sh;
+        st.cursors = cursors.into_inner().unwrap_or_else(|e| e.into_inner());
+        let stored = self.uix_save(job, st).await;
+        ended.into_iter().collect::<SqlResult<Vec<()>>>()?;
+        stored
+    }
+
+    /// The backfill of shard `shard` (id `id`) from its cursor, with up to
+    /// `global_index_backfill.pages_in_flight` pages in flight: each page is
+    /// read while those before it commit, and the shard's cursor passes a
+    /// page once it and every page before it have committed
+    /// (tla/GlobalUniqueWrites.tla, BugCursorOutOfOrder). Each page's
+    /// transactions run once it has one of the server's backfill slots
+    /// (`Cluster::backfill_pages`). The cursors are stored while the pages go
+    /// on. Once a page fails, or another shard has, the shard starts no page,
+    /// drops the one it is reading (a read writes nothing), and lets those in
+    /// flight end.
+    async fn uix_backfill_shard(&self, sh: &Backfill<'_>, id: u32, shard: usize) -> SqlResult<()> {
+        use futures::StreamExt;
+        type Step<'a, T> = futures::future::BoxFuture<'a, SqlResult<T>>;
+        let depth = self.cfg.global_index_backfill.pages_in_flight.max(1);
+        let t = sh.t;
+        let mut read = sh.cursor(id);
+        let mut reading: Option<Step<'_, (Vec<Vec<Value>>, Cursor)>> = None;
+        let mut saving: Option<Step<'_, ()>> = None;
+        let mut pages = futures::stream::FuturesOrdered::new();
+        let mut failed: Option<SqlError> = None;
+        // (once a page has failed, the cursor stays before it)
+        let mut frozen = false;
+        loop {
+            let going = failed.is_none() && !sh.stopped();
+            if !going {
+                reading = None;
+            } else if reading.is_none() && !read.done && pages.len() < depth {
+                let at = read.clone();
+                reading = Some(Box::pin(async move { self.uix_page(shard, t, &at).await }));
+            }
+            if reading.is_none() && pages.is_empty() && saving.is_none() {
+                return failed.map_or(Ok(()), Err);
+            }
+            tokio::select! {
+                r = async { reading.as_mut().expect("a page being read").await }, if reading.is_some() => {
+                    reading = None;
+                    match r {
+                        Ok((rows, next)) if failed.is_none() && !sh.stopped() => {
+                            read = next.clone();
+                            pages.push_back(async move {
+                                if !rows.is_empty() {
+                                    let _slot = self.backfill_pages.acquire().await.expect("backfill slots");
+                                    self.uix_backfill_page(t, rows).await?;
+                                }
+                                Ok::<Cursor, SqlError>(next)
+                            });
+                        }
+                        // (a page read as the backfill stopped is read again by the next try)
+                        Ok(_) => {}
+                        Err(e) => {
+                            sh.stop();
+                            failed.get_or_insert(e);
+                        }
+                    }
+                }
+                Some(r) = pages.next(), if !pages.is_empty() => match r {
+                    Ok(cur) if !frozen => {
+                        let done = cur.done;
+                        sh.cursors.lock().unwrap_or_else(|e| e.into_inner()).insert(id, cur);
+                        if saving.is_none() {
+                            saving = self.uix_save_due(sh, done);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        frozen = true;
+                        sh.stop();
+                        failed.get_or_insert(e);
+                    }
+                },
+                r = async { saving.as_mut().expect("a save").await }, if saving.is_some() => {
+                    saving = None;
+                    if let Err(e) = r {
+                        sh.stop();
+                        failed.get_or_insert(e);
+                    }
                 }
             }
         }
-        Ok(())
+    }
+
+    /// The store of every shard's cursors, if a shard is done or
+    /// `BACKFILL_SAVE` has passed since they were last stored, unless another
+    /// shard is storing them. The store holds the lock while it runs, and
+    /// takes the cursors as they are when it starts.
+    fn uix_save_due<'a>(
+        &'a self,
+        sh: &'a Backfill<'_>,
+        done: bool,
+    ) -> Option<futures::future::BoxFuture<'a, SqlResult<()>>> {
+        let at = sh.saved.try_lock().ok()?;
+        if !done && at.elapsed() < BACKFILL_SAVE {
+            return None;
+        }
+        Some(Box::pin(async move {
+            let mut at = at;
+            let mut st = sh.base.clone();
+            st.cursors = sh.cursors.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            self.uix_save(sh.job, &st).await?;
+            *at = Instant::now();
+            Ok(())
+        }))
     }
 
     /// The next page of the backfill on `shard` (tarn_uix_backfill_page):
@@ -607,7 +776,7 @@ impl Cluster {
                 None => a.nil(),
             };
         }
-        a.uint(BACKFILL_PAGE as u64);
+        a.uint(self.cfg.global_index_backfill.page_rows.max(1) as u64);
         let a = &a;
         let d = retry_transient(BACKFILL_RETRY, Duration::from_millis(20), move || async move {
             self.call(shard, "tarn_uix_backfill_page", &a.0)
@@ -636,23 +805,36 @@ impl Cluster {
     }
 
     /// A page of the backfill, in a transaction that fails for a transient
-    /// reason goes on a row at a time, in transactions that lock their row
-    /// and keys instead of validating them, so that a row its writers keep
-    /// busy holds up no other, and is not starved by them.
+    /// reason goes on in parts of `BACKFILL_PART` rows, and a part that
+    /// fails again a row at a time, in transactions that lock their row and
+    /// keys instead of validating them, so that a row its writers keep busy
+    /// holds up no other, and is not starved by them.
     async fn uix_backfill_page(&self, t: &Arc<TableDef>, pks: Vec<Vec<Value>>) -> SqlResult<()> {
-        match self
+        let first = self
             .uix_backfill_rows(t, pks.clone(), TxnMode::Serializable, Duration::ZERO)
-            .await
-        {
-            Err(e) if backfill_transient(&e) => {
-                for pk in pks {
-                    self.uix_backfill_rows(t, vec![pk], TxnMode::ReadCommitted, BACKFILL_RETRY)
-                        .await?;
+            .await;
+        let e = match first {
+            Err(e) if backfill_transient(&e) => e,
+            r => return r,
+        };
+        for part in pks.chunks(BACKFILL_PART) {
+            let r = if pks.len() > BACKFILL_PART {
+                self.uix_backfill_rows(t, part.to_vec(), TxnMode::Serializable, Duration::ZERO)
+                    .await
+            } else {
+                Err(e.clone())
+            };
+            match r {
+                Err(e) if backfill_transient(&e) => {
+                    for pk in part {
+                        self.uix_backfill_rows(t, vec![pk.clone()], TxnMode::ReadCommitted, BACKFILL_RETRY)
+                            .await?;
+                    }
                 }
-                Ok(())
+                r => r?,
             }
-            r => r,
         }
+        Ok(())
     }
 
     /// A transaction of the backfill for rows `pks` of `t`, sent again for

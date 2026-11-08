@@ -1134,7 +1134,9 @@ mk_shadow_unique Bug_ShadowUniquePassInPlace FALSE FALSE FALSE FALSE TRUE
 # enforcing version published behind a durable, drained fence only with no
 # conflict left, and a version without the index when the change fails.
 # GlobalUniqueWrites: the building version's transactions, serialized at
-# their commit, beside the backfill. Both take their rules from
+# their commit, beside the backfill, two of whose pages are in flight at once
+# (#303), and a page of the server that lost the job to another. Both take
+# their rules from
 # GlobalUniqueRules.
 mk_global_unique () {
     local name=$1 enabled=$2 flags=$3 invariants=$4 extra=$5 flag value
@@ -1152,14 +1154,14 @@ mk_global_unique () {
     } > "$name.cfg"
 }
 gub_flags='BugBackfillUnvalidated BugPublishConflicts BugEarlyPublish BugNoDrainToEnforcing BugNoDrainToAbort BugStaleWrite BugVolatileFence'
-guw_flags='BugKeyUnserialized BugNoOverlay BugCursorEarly BugSkipConflict BugNoPromote BugBlindLeave BugJoinReplace'
+guw_flags='BugKeyUnserialized BugNoOverlay BugCursorEarly BugCursorOutOfOrder BugOrphanUnvalidated BugSkipConflict BugNoPromote BugBlindLeave BugJoinReplace'
 for gub_flag in '' $gub_flags; do
     mk_global_unique "${gub_flag:+Bug_}GlobalUniqueBuild${gub_flag#Bug}" "$gub_flag" \
         "$gub_flags" 'TypeOK NoStale WellFormed Enforced Dropped' ''
 done
 for guw_flag in '' $guw_flags; do
     mk_global_unique "${guw_flag:+Bug_}GlobalUniqueWrites${guw_flag#Bug}" "$guw_flag" \
-        "$guw_flags" 'TypeOK NoStale WellFormed Passed Serialized' 'Rows = 2 MaxStmts = 2'
+        "$guw_flags" 'TypeOK NoStale WellFormed Passed Serialized' 'Rows = 2 MaxStmts = 2 MaxInFlight = 2 MaxOrphans = 1'
 done
 
 # Final planned-space freshness guard. The model covers only the guard's

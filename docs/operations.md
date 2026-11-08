@@ -692,6 +692,7 @@ options:
   "ddl_job_stale": 30,
   "index_build": "auto",
   "global_index_build": "online",
+  "global_index_backfill": {"page_rows": 64, "pages_in_flight": 1, "shards_at_once": 1},
   "move_timeout": 10,
   "default_collation": "utf8mb4_bin"
 }
@@ -780,6 +781,26 @@ change above `alter_check_rows` rows per shard (1846) unless `index_build`
 is `in_place`, as a fill behind the fence is. While a build runs, the shards
 refuse (1412) writes to the table from SQL servers that predate it:
 upgrade the SQL servers before adding such keys.
+
+`global_index_backfill` is the pace of the online build's backfill, which
+gives the rows the table held when the build began their entries (issue
+#303). It reads a shard's rows a page of up to `page_rows` at a time (a
+page also stops before its rows pass 1 MiB), and writes each page's
+entries in a distributed transaction, with up to `pages_in_flight` pages of
+a shard in flight, on up to `shards_at_once` shards at once (0 means all of
+them). The defaults, 64, 1 and 1, are the pace of the builds before these
+settings. Whatever the pace, a SQL server keeps at most as many pages in
+flight as half its memory budget holds statements' budgets
+(`resources.server_bytes / 2 / resources.query_bytes`, 4 by default), as
+each page's transaction may hold a statement's budget: more wait their
+turn, and the server's statements are not refused (1041) meanwhile. A faster pace takes more of the shards' WAL and CPU, and of the
+SQL server's that runs the build, from the table's other writes. Where six
+storage nodes share one 2-CPU host, the fastest pace measured filled 2.9
+times as fast as the default, and the p99 of the writes to the table went
+from 65 ms to 177 ms ([design §1.4](design.md#14-global-unique-indexes)).
+Raise it where the shards' hosts have room to spare, and watch the writes'
+latency. The server that runs the build, or takes it over, uses its own
+setting, so give every SQL server the same one.
 
 `ddl_step_slice` is how long, in seconds, one call of a copy's BUILD or
 PREPARE runs before it returns and the SQL server sends it again (issue
