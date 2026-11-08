@@ -76,6 +76,12 @@ build_sysbench() {  # name repo ref
   git -C "$dir" fetch -q --tags origin
   git -C "$dir" checkout -q --force "$ref"
   git -C "$dir" clean -qfdx
+  local patch
+  for patch in "$ROOT"/bench/cloud/patches/"$name"-*.patch; do
+    [ -f "$patch" ] || continue
+    git -C "$dir" apply "$patch"
+    echo "$name: patched with $(basename "$patch")" >> "$STAGE/MANIFEST.tmp"
+  done
   (cd "$dir" && ./autogen.sh > /dev/null 2>&1 &&
     ./configure --prefix="$PREFIX/opt/$name" --with-mysql --with-pgsql > "$SRC/$name-configure.log" 2>&1 &&
     make -j"$(nproc)" > "$SRC/$name-build.log" 2>&1 &&
