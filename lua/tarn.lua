@@ -46,6 +46,7 @@ local uuid = require('uuid')
 
 local M = {
     compatibility = require('tarn_compat'),
+    phases = require('tarn_phases'),   -- profiling: a READ COMMITTED transaction's phases (issue #186)
     cfg = {
         shard_id = 0,
         peers = {},              -- shard_id -> {uri, uri, ...} (all replicas)
@@ -91,6 +92,7 @@ local M = {
         check_yields = false,    -- tests: an atomic section that yields is an error
         test_hooks = false,      -- tests: tarn_test_hook may hold yield points
         check_locks = false,     -- tests: the native module's copy of the lock index is checked (BK.ns_check_locks)
+        rc_phases = false,       -- profiling: count the phases of tarn_lock and tarn_commit_rc (lua/tarn_phases.lua)
         -- election_watchdog: seconds without a leader before a candidate
         -- stands itself (nil: three election timeouts; 0: never; see
         -- "Election watchdog").
@@ -2468,11 +2470,13 @@ local function pl_acquire(txid, sid, iid, kb, mode, opts, deadline, bucket)
     req.id = PL_WAIT_SEQ
     p.waiting = req
     M.stats.plock_waits = M.stats.plock_waits + 1
+    local w0, w1, w2 = M.phases.start()
     while not req.granted and req.failed == nil do
         local left = deadline - clock.monotonic()
         if left <= 0 then break end
         req.cond:wait(left)
     end
+    M.phases.stop('lock_wait', w0, w1, w2)
     if p.waiting == req then p.waiting = nil end
     if req.granted then return 'granted' end
     if req.failed == 'reset' then error(box.error.new(box.error.READONLY)) end
@@ -2563,7 +2567,9 @@ end
 -- The start of tarn_lock and tarn_lock_range: an error status, or nil and
 -- the deadline of the request.
 local function pl_begin(txid, opts)
+    local b0, b1, b2 = M.phases.start()
     M.fresh.barrier()
+    M.phases.stop('lock_barrier', b0, b1, b2)
     writable()
     lk_fresh()
     pl_fresh()
@@ -2584,10 +2590,16 @@ local function pl_take(txid, sid, iid, key, kb, mode, opts, deadline, bucket)
     if type(bucket) == 'number' and BK.count > 0 and BK.bad(bucket, true) then
         return pl_failed(txid, BK.moved(bucket))
     end
+    local PH = M.phases
+    local q0, q1, q2 = PH.start()
     local r = pl_acquire(txid, sid, iid, kb, mode, opts, deadline, bucket)
+    PH.stop('lock_acquire', q0, q1, q2)
     if r == 'skipped' then return false end
     if r ~= 'granted' then return pl_failed(txid, r) end
-    if not wait_commits(deadline, sid, iid, key) then
+    q0, q1, q2 = PH.start()
+    local waited = wait_commits(deadline, sid, iid, key)
+    PH.stop('lock_commit_wait', q0, q1, q2)
+    if not waited then
         M.stats.lock_timeouts = M.stats.lock_timeouts + 1
         return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
     end
@@ -2605,7 +2617,9 @@ local function pl_take(txid, sid, iid, key, kb, mode, opts, deadline, bucket)
                 return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
             end
             M.stats.lock_waits = M.stats.lock_waits + 1
+            q0, q1, q2 = PH.start()
             M.unlock_cond:wait(0.01)
+            PH.stop('lock_commit_wait', q0, q1, q2)
         end
     end
     if box.space[sid] == nil then   -- dropped while it waited (the lock is held)
@@ -2613,13 +2627,19 @@ local function pl_take(txid, sid, iid, key, kb, mode, opts, deadline, bucket)
     end
     M.fresh.space(box.space[sid])
     if not opts.read then return true end
+    q0, q1, q2 = PH.start()
     local t = box.space[sid].index[iid]:get(key)
+    PH.stop('lock_read', q0, q1, q2)
     return (t == nil) and box.NULL or t
 end
 
-function tarn_lock(txid, keys, mode, opts)
+-- (tarn_lock, its phases counted: lua/tarn_phases.lua)
+function M.rc_lock(txid, keys, mode, opts)
     opts = opts or {}
+    local PH = M.phases
+    local b0, b1, b2 = PH.start()
     local err, deadline, gen = pl_begin(txid, opts)
+    PH.stop('lock_begin', b0, b1, b2)
     if err then return err end
     local results = {}
     for i, k in ipairs(keys) do
@@ -2633,6 +2653,12 @@ function tarn_lock(txid, keys, mode, opts)
     writable()
     if not pl_intact(txid, gen) then return pl_failed(txid, {'error', 1213, BROKEN_MSG}) end
     return {OK, gen, results}
+end
+function tarn_lock(txid, keys, mode, opts)
+    local t0, a0, s0 = M.phases.start()
+    local r = M.rc_lock(txid, keys, mode, opts)
+    M.phases.stop('lock_total', t0, a0, s0)
+    return r
 end
 
 -- The scans of tarn_select and their pages (below, with tarn_select; one
@@ -4253,24 +4279,31 @@ end
 -- transaction, and the row locks are released once it has committed.
 -- Returns {'ok', n} or {status, code, message}.
 -- wb: the bucket of each write (see "Buckets").
-function tarn_commit_rc(txid, writes, gen, fence, wb)
+-- (tarn_commit_rc, its phases counted: lua/tarn_phases.lua)
+function M.rc_commit(txid, writes, gen, fence, wb)
     writable()
     local seq   -- the attempt in flight, if any
+    local PH = M.phases
     local ok, res = pcall(function()
+        local p0, p1, p2 = PH.start()
         lk_fresh()
         if not pl_intact(txid, gen) then
             pl_release_all(txid)
             return {'error', 1213, BROKEN_MSG}
         end
+        PH.stop('commit_fresh', p0, p1, p2)
         local deadline = clock.monotonic() + M.cfg.lock_wait
         while true do
+            p0, p1, p2 = PH.start()
             fence_fresh()
             BK.fresh()
             local stale = stale_definition(fence) or BK.commit_check(wb, nil, nil, false)
+            PH.stop('commit_fresh', p0, p1, p2)
             if stale then
                 pl_release_all(txid)
                 return stale
             end
+            p0, p1, p2 = PH.start()
             seq = inflight_begin()
             box.begin(RW)
             local engine = M.engine.guard(writes)
@@ -4283,10 +4316,19 @@ function tarn_commit_rc(txid, writes, gen, fence, wb)
                 if plans[i][P_RES] ~= nil then n = n + 1 end
             end
             inflight_writes(seq, plans)
+            PH.stop('commit_plan', p0, p1, p2)
+            p0, p1, p2 = PH.start()
             local r = atomic('CommitRC', commit_rc_checks, txid, gen, fence, plans, wb)
+            PH.stop('commit_checks', p0, p1, p2)
             if r == nil then
-                box.on_commit(function() pl_release_all(txid) end)
+                box.on_commit(function()
+                    local r0, r1, r2 = PH.start()
+                    pl_release_all(txid)
+                    PH.stop('commit_release', r0, r1, r2)
+                end)
+                p0, p1, p2 = PH.start()
                 local okc, cerr = pcall(box.commit)
+                PH.stop('commit_wal', p0, p1, p2)
                 inflight_end(seq)
                 if not okc then error(cerr) end
                 M.stats.commit_rc = M.stats.commit_rc + 1
@@ -4302,7 +4344,9 @@ function tarn_commit_rc(txid, writes, gen, fence, wb)
                 return conflict('row locked by prepared transaction ' .. r[2])
             end
             M.stats.lock_waits = M.stats.lock_waits + 1
+            p0, p1, p2 = PH.start()
             M.unlock_cond:wait(0.01)
+            PH.stop('commit_lock_wait', p0, p1, p2)
         end
     end)
     if seq then inflight_end(seq) end
@@ -4314,6 +4358,12 @@ function tarn_commit_rc(txid, writes, gen, fence, wb)
         return f
     end
     return res
+end
+function tarn_commit_rc(txid, writes, gen, fence, wb)
+    local t0, a0, s0 = M.phases.start()
+    local r = M.rc_commit(txid, writes, gen, fence, wb)
+    M.phases.stop('commit_total', t0, a0, s0)
+    return r
 end
 
 -------------------------------------------------------------------------------
@@ -8310,6 +8360,7 @@ function M.init(cfg)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
+    M.phases.enable(M.cfg.rc_phases)
     M.move.limits() -- validate on every replica, before setup or admission
     BK.ns_status = BK.ns ~= nil and 'ready' or (M.cfg.native and 'pending' or 'disabled')
     pcall(BK.term_mark)   -- (no stream yet: else lk_reload makes it)
@@ -8422,6 +8473,10 @@ function tarn_clock_certify(timeout)
     return p
 end
 function tarn_clock_status() return M.clock.status() end
+-- The phases of READ COMMITTED transactions counted since the last reset
+-- (tarn.cfg.rc_phases; lua/tarn_phases.lua): {'ok', {phase = {calls,
+-- seconds, bytes}, probe_bytes = n}}. `reset` starts the counters again.
+function tarn_rc_phases(reset) return {OK, M.phases.report(reset == true)} end
 function tarn_clock_test_time(wall, mono) return M.clock.test_time(wall, mono) end
 -- Code capability only: never a leader/clock/data freshness certificate.
 BK.production_functions = {

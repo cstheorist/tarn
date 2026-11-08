@@ -35,6 +35,7 @@
 --   TARN_CLOCK_MAX_DRIFT  immutable timing policy, in seconds; set on every
 --                      replica before its first policy installation
 --   TARN_CHECK_YIELDS, TARN_TEST_HOOKS  (tests) see lua/tarn.lua "Yields"
+--   TARN_RC_PHASES  (profiling) the phases of READ COMMITTED transactions (lua/tarn_phases.lua)
 --   TARN_CHECK_LOCKS   (tests) see lua/tarn.lua "Native procedures"
 --   TARN_DUMP_EVERY    (tests) checkpoint every N seconds, so that vinyl rows
 --                      go to disk and reads of them yield
@@ -277,6 +278,9 @@ require('tarn').init{
     -- Tests: check the native module's copy of the lock index after each
     -- change (lua/tarn.lua "Native procedures").
     check_locks = env('TARN_CHECK_LOCKS', '') ~= '',
+    -- Profiling: count the phases of READ COMMITTED row locks and commits
+    -- (lua/tarn_phases.lua, tarn_rc_phases).
+    rc_phases = env('TARN_RC_PHASES', '') ~= '',
     load_window = tonumber(env('TARN_LOAD_WINDOW', '60')),
     move_batch_rows = move_limit('TARN_MOVE_BATCH_ROWS', '512'),
     move_batch_bytes = move_limit('TARN_MOVE_BATCH_BYTES', '1048576'),

@@ -22,6 +22,7 @@ DB = 'rc186'
 METRICS = """
 local misc=require('misc')
 return {info=tarn_info(), metrics=misc.getmetrics(), calls=box.stat().CALL.total,
+ phases=require('tarn').cfg.rc_phases and tarn_rc_phases(false)[2] or nil,
  wal=box.cfg.wal_mode, quorum=box.cfg.replication_synchro_quorum,
  engine=box.space['rc186.t'].engine, pid=box.info.pid,
  test_flags={check_locks=require('tarn').cfg.check_locks,
@@ -248,7 +249,10 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
                      ('gc_allocated', 'gc_freed', 'gc_steps_propagate', 'gc_steps_atomic',
                       'gc_steps_sweep', 'gc_steps_finalize')},
             stats={k: a['info']['stats'][k] - b['info']['stats'][k] for k in
-                   ('plock_waits', 'deadlocks', 'lock_timeouts', 'commit_rc', 'commit_waits')}))
+                   ('plock_waits', 'deadlocks', 'lock_timeouts', 'commit_rc', 'commit_waits')},
+            # (TARN_RC_PHASES: each phase's calls, seconds and bytes: lua/tarn_phases.lua)
+            phases={k: [x - y for x, y in zip(v, b['phases'][k])] for k, v in a['phases'].items()
+                    if isinstance(v, list)} if a.get('phases') and b.get('phases') else None))
     record['complete'] = True
     output.write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({k: record[k] for k in ('number', 'shape', 'profiled', 'acknowledged', 'refused', 'goodput_per_second')}), flush=True)
