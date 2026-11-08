@@ -42,6 +42,12 @@ ten maintained directly). Explicit check arguments override the default.
   and lock updates inside `atomic()` with no yield, right before
   `box.commit()` (`lua/tarn.lua` "Yields", `docs/design.md` §2.11); the
   storage tests run with `TARN_CHECK_YIELDS`.
+- Tarantool 3.9's LuaJIT traces a store into an enclosing function's local,
+  made while that function still runs, without the collector's barrier,
+  and the trace keeps storing so after the function returns (#160). A
+  function that a constructor or a module's load calls must not store a
+  table, string, function or cdata into their locals: keep such state in a
+  table's field. `lua/test/jit_upvalue_test.lua` checks the storage code.
 - Code in `crates/tarn-verified` must keep verifying with Verus (144 verified,
   0 errors); keep its Verus idioms.
 - SQL behaviour is defined by MariaDB 10.11: add cases to
