@@ -1766,14 +1766,86 @@ local function pending_label(msg)
     end))
 end
 
--- The index under construction (temporary name) that refused a write of
--- space sp with `err` (TUPLE_FOUND), if one did: its id.
+-- Indexes Tarantool's vinyl must not alter in place (issue #305). An alter
+-- that needs no rebuild -- an index rename, or a space format that changes
+-- the field count every tuple must have (min_field_count), which alters
+-- every index of the space -- calls vinyl_index_update_def(). That copies
+-- the index definition's cmp_def over the LSM tree's, undoing the
+-- unique_part_count that vy_lsm_new() resets for a unique index with a
+-- nullable part. From then on, a transaction that deletes a row and inserts
+-- another with the same key loses the new row's entry: the two statements
+-- compare equal in its write set, and one overwrites the other. So such an
+-- index is built under its final name when no index has that name, and
+-- otherwise built again under it at APPLY, after the changes that would
+-- alter it; BUILD and PREPARE refuse a change that would alter one the
+-- table had before (M.alter_refusal).
+
+-- Whether an index of table space `sp` (unique or not, with key parts
+-- `parts`) is one that Tarantool may not alter in place.
+function M.alter_unsafe(sp, unique, parts)
+    if sp.engine ~= 'vinyl' or unique ~= true then return false end
+    for _, p in ipairs(type(parts) == 'table' and parts or {}) do
+        if type(p) == 'table' and p.is_nullable == true then return true end
+    end
+    return false
+end
+
+-- Tarantool's min_field_count of a space with format `format` and indexes
+-- with the key parts in `parts` (a list of part lists, by `fieldno` as an
+-- index has them or by number in `field` as a build names them): the last
+-- field that the format, or a key part, does not let be nil
+-- (tuple_format_min_field_count).
+function M.min_field_count(format, parts)
+    local n = 0
+    for i, f in ipairs(type(format) == 'table' and format or {}) do
+        if type(f) == 'table' and f.is_nullable ~= true then n = i end
+    end
+    for _, list in ipairs(parts) do
+        for _, p in ipairs(list) do
+            local no = p.fieldno or p.field
+            if type(no) == 'number' and p.is_nullable ~= true and no > n then n = no end
+        end
+    end
+    return n
+end
+
+-- Whether index `idx` of table space `sp` is one that an ALTER TABLE builds
+-- and has not published: under its temporary name, or, on vinyl, under a
+-- name the table's catalog entry does not list (M.alter_unsafe).
+function M.pending_index(sp, idx)
+    if idx == nil then return false end
+    if idx.name == TMP_PREFIX .. idx.id then return true end
+    if not M.alter_unsafe(sp, idx.unique, idx.parts) then return false end
+    -- (In another fiber, as fence_fresh: a caller inside a transaction gets
+    -- no read tracker on _tarn_catalog.)
+    local f = fiber.new(function()
+        local t = box.space._tarn_catalog:get{sp.name}
+        local defs = t ~= nil and type(t.def) == 'table' and t.def.indexes or nil
+        if type(defs) ~= 'table' then return false end
+        for _, d in ipairs(defs) do
+            if type(d) == 'table' and d.name == idx.name then return false end
+        end
+        return true
+    end)
+    f:set_joinable(true)
+    local ok, res = f:join()
+    if not ok then error(res) end
+    return res
+end
+
+-- The index under construction that refused a write of space sp with `err`
+-- (TUPLE_FOUND), if one did: its id.
 local function refused_by_pending(sp, err)
     if type(err) ~= 'cdata' or err.code ~= box.error.TUPLE_FOUND then return nil end
-    local iid = tonumber(tostring(err.message):match('"' .. TMP_PREFIX .. '(%d+)"'))
+    local msg = tostring(err.message)
+    local iid = tonumber(msg:match('"' .. TMP_PREFIX .. '(%d+)"'))
     local idx = iid and sp.index[iid]
-    if idx == nil or idx.name ~= TMP_PREFIX .. iid then return nil end
-    return iid
+    if idx == nil then
+        local name = err.index or msg:match('unique index "([^"]+)"')
+        idx = type(name) == 'string' and sp.index[name] or nil
+    end
+    if not M.pending_index(sp, idx) then return nil end
+    return idx.id
 end
 
 -- Global indexes of unique keys without the shard key (issue #14): hidden
@@ -4699,7 +4771,7 @@ function tarn_apply(txid, retries)
             -- and apply again.
             local sp = box.space[refused[1]]
             local idx = sp and sp.index[refused[2]]
-            if idx ~= nil and idx.name == TMP_PREFIX .. refused[2] then
+            if idx ~= nil and M.pending_index(sp, idx) then
                 log.warn('tarn: APPLY of %s writes a row that index %s of %s, which ALTER TABLE is building, '
                          .. 'refuses: dropping the index (the schema change will fail on the duplicate)',
                          txid, PENDING_NAME[sp.id .. '/' .. refused[2]] or idx.name, sp.name)
@@ -5802,13 +5874,17 @@ local function build_native_index(sp, name, opts)
     return res
 end
 
--- New indexes {id, name, unique, parts}, built under temporary names; a
--- unique one fails on duplicates (1062). May take long and yields.
+-- New indexes {id, name, unique, parts}, built under temporary names, but
+-- one that Tarantool may not alter in place (M.alter_unsafe) under its own
+-- name when no index has that name; a unique one fails on duplicates
+-- (1062). May take long and yields.
 local function build_indexes(sp, builds)
     for _, b in ipairs(builds or {}) do
         PENDING_NAME[sp.id .. '/' .. b[1]] = b[2]
         if sp.index[b[1]] == nil then
-            local ok, err = pcall(build_native_index, sp, tmp_index_name(b[1]),
+            local name = tmp_index_name(b[1])
+            if M.alter_unsafe(sp, b[3], b[4]) and sp.index[b[2]] == nil then name = b[2] end
+            local ok, err = pcall(build_native_index, sp, name,
                 {id = b[1], type = 'tree', unique = b[3], parts = b[4]})
             if not ok then
                 if type(err) == 'cdata' and err.code == box.error.TUPLE_FOUND then
@@ -5828,9 +5904,70 @@ end
 local function drop_built(sp, builds)
     for _, b in ipairs(builds or {}) do
         local idx = sp.index[b[1]]
-        if idx ~= nil and idx.name == tmp_index_name(b[1]) then idx:drop() end
+        if idx ~= nil and (idx.name == tmp_index_name(b[1]) or (idx.name == b[2] and M.pending_index(sp, idx))) then
+            idx:drop()
+        end
         PENDING_NAME[sp.id .. '/' .. b[1]] = nil
     end
+end
+
+-- The change `a` of table space `sp` refused before anything changes
+-- (1846), when its APPLY would make Tarantool alter in place an index of
+-- the table's that vinyl then breaks (M.alter_unsafe, issue #305): one it
+-- renames, or any it keeps while the new format lets a trailing field be
+-- nil that every row has had (the min_field_count drops). The indexes it
+-- builds are built again at APPLY instead (tarn_alter_apply).
+function M.alter_refusal(sp, a)
+    if sp.engine ~= 'vinyl' then return nil end
+    local built, dropped = {}, {}
+    for _, b in ipairs(a.builds or {}) do built[b[1]] = b end
+    for _, id in ipairs(a.drop or {}) do dropped[id] = true end
+    for _, r in ipairs(a.renames or {}) do
+        local idx = sp.index[r[1]]
+        if idx ~= nil and not built[r[1]] and idx.name ~= r[2] and M.alter_unsafe(sp, idx.unique, idx.parts) then
+            return {'error', 1846, string.format(
+                "Renaming unique key '%s' of '%s' in place is not supported. Reason: the key has a nullable "
+                .. "column, and Tarantool's vinyl loses rows from such an index once it is renamed (Tarn issue "
+                .. "#305). Drop the key and add it under the new name in one ALTER TABLE instead",
+                idx.name, sp.name)}
+        end
+    end
+    if a.format == nil or a.format == box.NULL then return nil end
+    -- The indexes as APPLY changes the format, but for the builds it then
+    -- builds again (and those a build under a temporary name replaces).
+    -- (Tarn's key parts let a field be nil where its format does, so they
+    -- change no min_field_count; they are counted anyway.)
+    local parts = {}
+    for i, idx in pairs(sp.index) do
+        local b = built[i]
+        if type(i) == 'number' and not dropped[i] and not (b and M.alter_unsafe(sp, b[3], b[4])) then
+            parts[#parts + 1] = idx.parts
+        end
+    end
+    for _, b in pairs(built) do
+        if sp.index[b[1]] == nil and not M.alter_unsafe(sp, b[3], b[4]) then parts[#parts + 1] = b[4] end
+    end
+    local old = M.min_field_count(sp:format(), parts)
+    if M.min_field_count(a.format, parts) == old then return nil end
+    local keys = {}
+    for i, idx in pairs(sp.index) do
+        if type(i) == 'number' and i ~= 0 and not dropped[i] and not built[i]
+           and M.alter_unsafe(sp, idx.unique, idx.parts) then
+            keys[#keys + 1] = idx.name
+        end
+    end
+    if #keys == 0 then return nil end
+    table.sort(keys)
+    local f = sp:format()[old]
+    local names = "'" .. table.concat(keys, "', '") .. "'"
+    return {'error', 1846, string.format(
+        "This ALTER TABLE of '%s' in place is not supported. Reason: it lets the last field every stored row "
+        .. "has (field %d, '%s', such as the collation weight of a NOT NULL case-insensitive column) hold nil, so "
+        .. "Tarantool would alter every index of the table in place, and vinyl would then lose rows from unique "
+        .. "%s %s, which %s a nullable column (Tarn issue #305). Drop %s and add %s again in the same ALTER "
+        .. "TABLE instead, which builds %s anew",
+        sp.name, old, f and f.name or '?', #keys > 1 and 'keys' or 'key', names, #keys > 1 and 'each have' or 'has',
+        #keys > 1 and 'those keys' or 'that key', #keys > 1 and 'them' or 'it', #keys > 1 and 'them' or 'it')}
 end
 
 
@@ -6033,6 +6170,8 @@ function tarn_alter_build(name, a)
     local sp = alter_space(name, a)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     if catalog_ver(sp.name) >= a.ver or sp.engine ~= 'vinyl' then return {OK} end
+    local refused = M.alter_refusal(sp, a)
+    if refused then return refused end
     -- On a replicated shard, vinyl's build while writes go on can miss a row
     -- (issue #263). Tarantool's vinyl_space_build_index waits for the
     -- transactions already in the WAL, not for their quorum: a write that
@@ -6065,6 +6204,8 @@ function tarn_alter_prepare(name, a, gen)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     local cur = catalog_ver(sp.name)
     if cur >= a.ver then return {OK, 'applied'} end
+    local refused = not a.reprepare and M.alter_refusal(sp, a)
+    if refused then return refused end
     -- A step of an online build of global indexes (issue #292): the spaces
     -- it makes are a building index's, which writes and the backfill fill
     -- while the index builds, not this fence's fill; but its fence is
@@ -6322,24 +6463,86 @@ function tarn_alter_apply(name, a, gen)
         if r[1] ~= OK or r[2] ~= nil then return r end
     elseif (FENCE[sp.id] or 0) < a.ver then
         -- The fence PREPARE raised is gone (restart, new leader): again.
+        -- (It refuses nothing the first PREPARE let through: the change is
+        -- decided, see M.alter_refusal.)
+        a.reprepare = true
         local r = tarn_alter_prepare(sp.name, a)
+        a.reprepare = nil
         if r[1] ~= OK then return r end
     end
     -- (PREPARE built them; an index dropped since is built again here,
     -- behind the fence.)
     local bad = build_indexes(sp, a.builds)
     if bad then return bad end
+    -- A build that Tarantool may not alter in place (M.alter_unsafe, issue
+    -- #305) and that it would -- renamed from its temporary name, or by a
+    -- format that lowers the min_field_count -- is dropped first and built
+    -- again under its own name once the rest has changed, behind the fence.
+    -- (It was built from the same rows, so it builds again.)
+    local again, gone, built = {}, {}, {}
+    for _, id in ipairs(a.drop or {}) do gone[id] = true end
+    for _, b in ipairs(a.builds or {}) do
+        local idx = sp.index[b[1]]
+        built[b[1]] = true
+        if idx ~= nil and idx.name ~= b[2] and M.alter_unsafe(sp, b[3], b[4]) then
+            again[#again + 1], gone[b[1]] = b, true
+        end
+    end
+    local shortens = false
+    if a.format ~= nil and a.format ~= box.NULL then
+        local parts = {}
+        for i, idx in pairs(sp.index) do
+            if type(i) == 'number' and not gone[i] then parts[#parts + 1] = idx.parts end
+        end
+        shortens = M.min_field_count(a.format, parts) ~= M.min_field_count(sp:format(), parts)
+    end
+    for _, b in ipairs(shortens and a.builds or {}) do
+        if not gone[b[1]] and sp.index[b[1]] ~= nil and M.alter_unsafe(sp, b[3], b[4]) then
+            again[#again + 1], gone[b[1]] = b, true
+        end
+    end
+    if #again > 0 then
+        -- From here until the catalog names the new definition, the table
+        -- lacks a unique index that enforces one of its keys: its fence is
+        -- stored, so that a restart or a new leader still refuses the
+        -- writes made with the old definition (fence_rebuild). (The SQL
+        -- servers read the new one only once the first shard has applied
+        -- it, which it does after every other shard.)
+        local r = UIX.record(sp.id)
+        if r == nil or r.ver < a.ver then box.space._tarn_meta:replace{'fence:' .. sp.id, {ver = a.ver}} end
+        for _, b in ipairs(again) do sp.index[b[1]]:drop() end
+    end
+    yield_point('alter_rebuild')
     for _, id in ipairs(a.drop or {}) do
         if sp.index[id] ~= nil then sp.index[id]:drop() end
     end
     for _, id in ipairs(a.uix_drop or {}) do
         if box.space[id] ~= nil then box.space[id]:drop() end
     end
-    if a.format ~= nil and a.format ~= box.NULL then sp:format(a.format) end
+    -- (PREPARE refused a change that alters one the table had, but a shard
+    -- from before that check may have prepared it: the change is decided,
+    -- and goes on.)
+    local function unsafe_kept(idx, why)
+        log.warn('tarn: APPLY of version %d of %s %s index %s in place, from which vinyl may lose rows '
+                 .. '(issue #305): drop it and add it again', a.ver, sp.name, why, idx.name)
+    end
+    if a.format ~= nil and a.format ~= box.NULL then
+        for i, idx in pairs(shortens and sp.index or {}) do
+            if type(i) == 'number' and i ~= 0 and not built[i] and M.alter_unsafe(sp, idx.unique, idx.parts) then
+                unsafe_kept(idx, 'alters, with the format,')
+            end
+        end
+        sp:format(a.format)
+    end
     for _, r in ipairs(a.renames or {}) do
         local idx = sp.index[r[1]]
-        if idx ~= nil and idx.name ~= r[2] then idx:rename(r[2]) end
+        if idx ~= nil and idx.name ~= r[2] then
+            if M.alter_unsafe(sp, idx.unique, idx.parts) then unsafe_kept(idx, 'renames') end
+            idx:rename(r[2])
+        end
     end
+    bad = build_indexes(sp, again)
+    if bad then return bad end
     for _, b in ipairs(a.builds or {}) do
         local idx = sp.index[b[1]]
         if idx ~= nil and idx.name ~= b[2] then idx:rename(b[2]) end

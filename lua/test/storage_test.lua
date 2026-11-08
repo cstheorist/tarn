@@ -863,6 +863,192 @@ r = {c[1]:call('tarn_alter_build', {'test.bld', bdone}), c[1]:call('tarn_alter_p
 check('BUILD, PREPARE and APPLY: the index under its own name',
       r[1][1] == 'ok' and r[2][1] == 'ok' and r[3][1] == 'ok' and bindex(5) == 'bv', {r, bindex(5)})
 
+print('vinyl unique indexes with a nullable column (issue #305)')
+-- Tarantool's vinyl loses rows from such an index once it alters the index
+-- in place -- a rename, or a format that lowers the space's min_field_count:
+-- a transaction that deletes a row and inserts another with the same key
+-- then leaves the index without the new row. So the shard builds such an
+-- index under its own name, or builds it again under that name at APPLY,
+-- and refuses a change that would alter one the table has.
+do
+    local nfmt = {{name = 'id', type = 'unsigned'}, {name = 'v', type = 'integer'},
+                  {name = 'u', type = 'string', is_nullable = true}, {name = 'bucket_id', type = 'unsigned'},
+                  {name = 'w', type = 'string'}}
+    local nidx = {{name = 'primary', unique = true, parts = {{field = 'id', type = 'unsigned'}}},
+                  {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}},
+                  {name = 'wk', unique = false, parts = {{field = 'w', type = 'string'}}}}
+    for i = 1, 2 do
+        c[i]:call('tarn_create_table', {{name = 'test.nul', engine = 'vinyl', format = nfmt, indexes = nidx}})
+    end
+    c[1]:reload_schema()
+    local nsid = c[1].space['test.nul'].id
+    for id = 1, 6 do
+        c[1]:call('tarn_autocommit', {{{'insert', nsid, {id, id * 10, 'u' .. id, 1, 'w' .. id}}}})
+    end
+    local function nindex(id)
+        return c[1]:eval('local i = box.space["test.nul"].index[...] return i and i.name', {id})
+    end
+    local function nargs(ver, fmt, indexes, extra)
+        local a = {ver = ver, timeout = 1, checks = {}, builds = {}, drop = {}, renames = {},
+                   def = {name = 'test.nul', id = nsid, format = fmt, indexes = indexes, json = '{}', ver = ver}}
+        for key, val in pairs(extra or {}) do a[key] = val end
+        return a
+    end
+    local function steps(a)
+        return {c[1]:call('tarn_alter_build', {'test.nul', a}), c[1]:call('tarn_alter_prepare', {'test.nul', a}),
+                c[1]:call('tarn_alter_apply', {'test.nul', a})}
+    end
+    local function all_ok(rs)
+        for _, x in ipairs(rs) do if x[1] ~= 'ok' then return false end end
+        return true
+    end
+    -- In one transaction, the row index `iname` finds by `key` deleted and
+    -- another with the same key inserted: does the index find the new one?
+    local function moved(iname, key)
+        return c[1]:eval([[
+            local iname, key = ...
+            local s = box.space['test.nul']
+            local old = s.index[iname]:get(key)
+            if old == nil then return false, 'nothing holds the key' end
+            local new = old:totable()
+            new[1] = new[1] + 100
+            box.begin()
+            s:delete{old[1]}
+            s:insert(new)
+            box.commit()
+            local got = s.index[iname]:get(key)
+            return got ~= nil and got[1] == new[1], got
+        ]], {iname, key})
+    end
+    local nu_parts = {{field = 3, type = 'string', is_nullable = true}}
+    local nu = {name = 'nu', unique = true, parts = {{field = 'u', type = 'string', is_nullable = true}}}
+    local with_nu = table.deepcopy(nidx)
+    with_nu[4] = nu
+    local add = nargs(1, nfmt, with_nu, {builds = {{5, 'nu', true, nu_parts}}})
+    r = c[1]:call('tarn_alter_build', {'test.nul', add})
+    check('BUILD makes a unique index with a nullable column under its own name',
+          r[1] == 'ok' and nindex(5) == 'nu', {r, nindex(5)})
+    r = c[1]:call('tarn_autocommit', {{{'insert', nsid, {9, 90, 'u1', 1, 'w9'}}}, {fence = {nsid, 0}}})
+    check('... a write it refuses fails with 1062, naming it',
+          r[1] == 'duplicate' and r[2] == 1062 and tostring(r[3]):find('"nu"') ~= nil, r)
+    c[1]:call('tarn_alter_abort', {'test.nul', add})
+    check('... and ABORT drops it, by the catalog, which does not name it', nindex(5) == nil, nindex(5))
+    r = prepare(1, 'NX1', {{'replace', nsid, {9, 90, 'u1', 1, 'w9'}}})
+    check('a transaction prepared before BUILD, writing a value the index will refuse', r[1] == 'yes', r)
+    r = c[1]:call('tarn_alter_build', {'test.nul', add})
+    check('... BUILD builds the index under its own name', r[1] == 'ok' and nindex(5) == 'nu', {r, nindex(5)})
+    r = c[1]:call('tarn_apply', {'NX1'})
+    check('... the APPLY lands, dropping the index, which no published definition names',
+          r[1] == 'ok' and nindex(5) == nil and c[1]:eval('return box.space["test.nul"]:get{9} ~= nil'),
+          {r, nindex(5)})
+    r = c[1]:call('tarn_alter_prepare', {'test.nul', add})
+    check('... and PREPARE, building it again behind the fence, fails the change (1062)',
+          r[1] == 'duplicate' and r[2] == 1062 and nindex(5) == nil, {r, nindex(5)})
+    c[1]:call('tarn_alter_abort', {'test.nul', add})
+    c[1]:call('tarn_autocommit', {{{'delete', nsid, {9}}}, {fence = {nsid, 0}}})
+    r = steps(add)
+    check('BUILD, PREPARE and APPLY publish it under its own name', all_ok(r) and nindex(5) == 'nu', {r, nindex(5)})
+    local ok, got = moved('nu', {'u2'})
+    check('... and it keeps a row that a transaction moves to another primary key', ok, got)
+
+    r = {c[1]:call('tarn_alter_build', {'test.nul', nargs(2, nfmt, with_nu, {renames = {{5, 'nv'}}})}),
+         c[1]:call('tarn_alter_prepare', {'test.nul', nargs(2, nfmt, with_nu, {renames = {{5, 'nv'}}})})}
+    check('RENAME INDEX of it is refused (1846), by BUILD and PREPARE',
+          r[1][1] == 'error' and r[1][2] == 1846 and r[2][1] == 'error' and r[2][2] == 1846
+          and tostring(r[2][3]):find("'nu'") ~= nil and nindex(5) == 'nu', r)
+    r = c[1]:call('tarn_autocommit', {{{'update', nsid, {1}, {{'+', 2, 1}}}}, {fence = {nsid, 1}}})
+    check('... before it fences the table', r[1] == 'ok', r)
+
+    -- Replaced by an index of the same name: built under a temporary name,
+    -- then at APPLY dropped and built again under its own.
+    local again = nargs(2, nfmt, with_nu, {drop = {5}, builds = {{6, 'nu', true, nu_parts}}})
+    r = c[1]:call('tarn_alter_build', {'test.nul', again})
+    check('an index taking the name of one the change drops is built under a temporary name',
+          r[1] == 'ok' and nindex(6) == '_tarn_tmp_6' and nindex(5) == 'nu', {r, nindex(6)})
+    r = c[1]:call('tarn_alter_prepare', {'test.nul', again})
+    -- APPLY held once it has dropped that index, before it builds it again.
+    local function hook(name, action) return c[1]:call('tarn_test_hook', {name, action}) end
+    hook('alter_rebuild', 'hold')
+    local fa = c[1]:call('tarn_alter_apply', {'test.nul', again}, {is_async = true})
+    hook('alter_rebuild', 'reached')
+    local fence = c[1]:eval('local t = box.space._tarn_meta:get{"fence:" .. ...} return t and t.value.ver', {nsid})
+    check('APPLY stores the fence before it drops that index to build it again',
+          r[1] == 'ok' and fence == 2 and nindex(6) == nil and nindex(5) == 'nu', {r, fence, nindex(6)})
+    c[1]:eval('tarn.stale_fences()')
+    r = c[1]:call('tarn_autocommit', {{{'insert', nsid, {30, 300, 'u3', 1, 'w30'}}}, {fence = {nsid, 1}}})
+    check('... so that, rebuilt from storage (a restart, a new leader), it still refuses the old definition',
+          r[1] == 'error' and r[2] == 1412, r)
+    hook('alter_rebuild', 'release')
+    local ok_a, res_a = pcall(fa.wait_result, fa, 10)
+    r = ok_a and res_a and res_a[1] or {'raised', tostring(res_a)}
+    fence = c[1]:eval('return box.space._tarn_meta:get{"fence:" .. ...} ~= nil', {nsid})
+    check('... and APPLY builds it again under that name, and drops the stored fence as it publishes',
+          r[1] == 'ok' and nindex(6) == 'nu' and nindex(5) == nil and not fence, {r, nindex(5), nindex(6), fence})
+    ok, got = moved('nu', {'u3'})
+    check('... which keeps a row a transaction moves', ok, got)
+    r = c[1]:call('tarn_alter_apply', {'test.nul', again})
+    check('... APPLY is idempotent', r[1] == 'ok' and r[2] == 'applied' and nindex(6) == 'nu', r)
+    -- A published index refuses a decided transaction's row while two rows
+    -- swap their values: tried again after the others, not dropped.
+    local st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()')
+    r = st:call('tarn_prepare', {'NX2', 1, {1, 2}, {{'replace', nsid, {1, 11, 'u6', 1, 'w1'}},
+                                 {'replace', nsid, {6, 60, 'u1', 1, 'w6'}}}, {}, {}, fiber.time(), box.NULL, {nsid, 2}})
+    local applied = r[1] == 'yes' and c[1]:call('tarn_apply', {'NX2'})
+    local swapped = c[1]:eval([[local nu = box.space['test.nul'].index.nu
+        return {nu:get{'u6'} and nu:get{'u6'}[1], nu:get{'u1'} and nu:get{'u1'}[1]}]])
+    check('a published one, which refuses a decided transaction\'s row while two rows swap values, stays',
+          applied and applied[1] == 'ok' and nindex(6) == 'nu' and swapped[1] == 1 and swapped[2] == 6,
+          {r, applied, swapped})
+    -- APPLY again after one that stopped once it had dropped both indexes
+    -- (with the stored fence): it builds the new one under its own name.
+    local after = nargs(3, nfmt, with_nu, {drop = {6}, builds = {{10, 'nu', true, nu_parts}}})
+    r = {c[1]:call('tarn_alter_build', {'test.nul', after}), c[1]:call('tarn_alter_prepare', {'test.nul', after})}
+    c[1]:eval([[local sid, ver = ...
+        box.space._tarn_meta:replace{'fence:' .. sid, {ver = ver}}
+        box.space[sid].index[10]:drop()
+        box.space[sid].index[6]:drop()
+        tarn.stale_fences()]], {nsid, 3})
+    r[3] = c[1]:call('tarn_alter_apply', {'test.nul', after})
+    ok, got = moved('nu', {'u6'})
+    check('APPLY after one that stopped between its drops builds the index under its own name',
+          all_ok(r) and nindex(10) == 'nu' and nindex(6) == nil and ok, {r, nindex(10), got})
+
+    -- w (field 5) is the last field every row has: a format that lets it be
+    -- nil lowers the min_field_count, which alters every index in place.
+    local wfmt = table.deepcopy(nfmt)
+    wfmt[5].is_nullable = true
+    local wk2 = {name = 'wk2', unique = false, parts = {{field = 'w', type = 'string', is_nullable = true}}}
+    local relaxed = {nidx[1], nidx[2], nu, wk2}
+    local wbuild = {7, 'wk2', false, {{field = 5, type = 'string', is_nullable = true}}}
+    local keep = nargs(4, wfmt, relaxed, {format = wfmt, drop = {2}, builds = {wbuild}})
+    r = {c[1]:call('tarn_alter_build', {'test.nul', keep}), c[1]:call('tarn_alter_prepare', {'test.nul', keep})}
+    check('a format that lowers the min_field_count is refused (1846) while the index stays',
+          r[1][1] == 'error' and r[1][2] == 1846 and r[2][1] == 'error' and r[2][2] == 1846
+          and tostring(r[2][3]):find("'nu'") ~= nil, r)
+    c[1]:call('tarn_alter_abort', {'test.nul', keep})
+    check('... building nothing', nindex(7) == nil, nindex(7))
+    -- As advised: the index dropped and added again in the same change, with
+    -- another under a new name; APPLY builds both again after the format.
+    local nw = {name = 'nw', unique = true,
+                parts = {{field = 'v', type = 'integer'}, {field = 'u', type = 'string', is_nullable = true}}}
+    local nw_parts = {{field = 2, type = 'integer'}, {field = 3, type = 'string', is_nullable = true}}
+    local renewed = {nidx[1], nidx[2], nu, wk2, nw}
+    local anew = nargs(4, wfmt, renewed, {format = wfmt, drop = {2, 10},
+                       builds = {wbuild, {8, 'nu', true, nu_parts}, {9, 'nw', true, nw_parts}}})
+    r = c[1]:call('tarn_alter_build', {'test.nul', anew})
+    check('... unless the change drops it: BUILD makes its successor under a temporary name, and a new one '
+          .. 'under its own', r[1] == 'ok' and nindex(8) == '_tarn_tmp_8' and nindex(9) == 'nw', {r, nindex(8)})
+    r = {c[1]:call('tarn_alter_prepare', {'test.nul', anew}), c[1]:call('tarn_alter_apply', {'test.nul', anew})}
+    check('... and APPLY builds both again under their own names',
+          all_ok(r) and nindex(8) == 'nu' and nindex(9) == 'nw' and nindex(7) == 'wk2' and nindex(10) == nil,
+          {r, nindex(8), nindex(9)})
+    ok, got = moved('nu', {'u4'})
+    local ok2, got2 = moved('nw', {50, 'u5'})
+    check('... and both keep a row a transaction moves', ok and ok2, {got, got2})
+    r = c[1]:call('tarn_autocommit', {{{'insert', nsid, {20, 200, 'u4', 1}}}, {fence = {nsid, 4}}})
+    check('... and still refuse a duplicate', r[1] == 'duplicate' and r[2] == 1062, r)
+end
+
 print('indexes over instant-ADD fields (issue #70)')
 do
     local fmt = table.deepcopy(afmt)

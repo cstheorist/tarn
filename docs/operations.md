@@ -643,6 +643,53 @@ and from a matched throughput comparison. The endpoint-driven regression
 test is `tests/sql/vinylpressure.py --real-pressure`; it preserves native
 samples, individual attempts and key-set checks in its evidence directory.
 
+### Vinyl unique keys altered before issue #305
+
+Before the fix for issue #305, an `ALTER TABLE` in place could leave a
+unique key with a nullable column of a vinyl table losing rows
+([design §2.11](design.md#211-tables-on-disk-vinyl)). After that, a
+transaction that deleted a row and inserted another with the row's key,
+such as an `UPDATE` of the primary key, left the key's index without the
+new row: lookups by the key miss that row, and the key takes a duplicate
+of it. A key could be affected if an earlier version did any of these in
+place, that is, on an unreplicated shard or with `index_build = in_place`:
+- added the key, or built it again, as for a `MODIFY` that made one of its
+  columns nullable, or a `DROP COLUMN` of one of them;
+- renamed it;
+- dropped, or made nullable, a `NOT NULL` case-insensitive indexed column
+  of its table.
+
+A node keeps losing such rows until it restarts from a checkpoint taken
+after that change, and the rows already lost stay lost. To find keys that
+have lost rows, compare each such index's entries with the table's rows on
+every storage node:
+
+```lua
+-- on each storage node, in its console (each count reads the whole index)
+for _, s in box.space._space:pairs() do
+    local sp = box.space[s.id]
+    if s.id >= 512 and sp.engine == 'vinyl' and box.space._tarn_catalog:get{s.name} ~= nil then
+        for i, x in pairs(sp.index) do
+            local nullable = false
+            for _, p in ipairs(type(i) == 'number' and i > 0 and x.unique and x.parts or {}) do
+                nullable = nullable or p.is_nullable
+            end
+            if nullable and x:count() ~= sp.index[0]:count() then
+                print(s.name, x.name, sp.index[0]:count(), x:count())
+            end
+        end
+    end
+end
+```
+
+Each key it prints, and any key you are unsure of, can be built anew by
+dropping it and adding it again in one statement, such as `ALTER TABLE t
+DROP INDEX k, ADD UNIQUE KEY k (tenant_id, email)`. If rows already share
+a value of the key, that statement fails with 1062 and names the value;
+resolve the duplicate first. A node that restarts after its next checkpoint
+loses no more rows, but its lost entries stay lost until the key is built
+anew.
+
 ## tarn-server
 
 ```

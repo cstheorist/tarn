@@ -195,6 +195,17 @@ left half done is finished by the next schema change or server start.
 | `ROW_FORMAT`, `ALGORITHM`, `LOCK`, `FORCE`, `DISABLE` / `ENABLE KEYS` | accepted and ignored |
 | Not supported (1235) | conversions that need every row rewritten (`INT` to `VARCHAR`, a different `DECIMAL` scale, `VARCHAR` to `DATETIME`), changing or dropping the primary key, `FULLTEXT` / `SPATIAL` indexes, partition maintenance, invisible columns |
 
+On a vinyl table, an `ALTER TABLE` that the shards apply in place (an
+unreplicated cluster, or `index_build = in_place`) refuses (1846) two
+changes to a unique key with a nullable column, because Tarantool's vinyl
+would then lose rows from the key's index
+([design](design.md#211-tables-on-disk-vinyl), issue #305):
+`RENAME INDEX` of such a key, and dropping a `NOT NULL` case-insensitive
+indexed column, or making it nullable, while such a key stays, when that
+column's collation weight is the last field every stored row has.
+Dropping the key and adding it again in the same statement (under the new
+name, for a rename) does either.
+
 An instant-added column's **fill** is its value for rows written before the
 column existed. It stays fixed when `SET DEFAULT` changes the default for new
 rows. Before indexing a non-NULL fill, Tarn appends missing fields in bounded

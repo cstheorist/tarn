@@ -3028,8 +3028,13 @@ impl Cluster {
             }));
         }
         // CREATE TABLE names the table in the first shard's catalog, which
-        // the SQL servers read, last.
-        let groups: Vec<Vec<usize>> = if job.kind == JobKind::Create && live.len() > 1 {
+        // the SQL servers read, last. So does ALTER TABLE: a server that
+        // meets the fence reads the new definition there and writes with it
+        // at once, and no shard may still be applying it then. Its APPLY
+        // may build a unique index again (issue #305, lua/tarn.lua
+        // tarn_alter_apply), and a write made with the new definition would
+        // pass the fence while the index is gone.
+        let groups: Vec<Vec<usize>> = if matches!(job.kind, JobKind::Create | JobKind::Alter) && live.len() > 1 {
             vec![live.iter().copied().filter(|&i| i != 0).collect(), vec![0]]
         } else {
             vec![live.clone()]

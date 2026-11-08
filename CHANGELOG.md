@@ -200,6 +200,34 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On vinyl tables, a unique index with a nullable column no longer loses
+  rows after an `ALTER TABLE`
+  ([#305](https://github.com/cstheorist/tarn/issues/305)). Tarantool's
+  vinyl loses such an index's entries once it alters the index in place: a
+  rename, or a format that lowers the field count every row must have,
+  which alters every index of the space. From then on, a transaction that
+  deleted a row and inserted another with the row's key (an `UPDATE` of
+  the primary key, say) left the index without the new row: a lookup by
+  the key missed the row, and the key took a duplicate of it. Every
+  in-place build renamed its index from a temporary name: `ADD UNIQUE`,
+  the online unique build's enforcing step, and a change that rebuilt a
+  key under its own name (a column of it made nullable, or dropped), on
+  unreplicated shards or with `index_build` `in_place`. The shard now
+  builds such an index under its own name. When an index the change drops
+  still holds the name, APPLY builds it again under that name once the old
+  one is gone, behind the fence, with the fence stored first; the first
+  shard, whose catalog the SQL servers read, now applies every `ALTER
+  TABLE` last, so no write with the new definition reaches a shard still
+  applying it. In place, the shards refuse (1846) `RENAME INDEX` of such a
+  key, and dropping a `NOT NULL` case-insensitive indexed column or making
+  it nullable while such a key stays, when its weight field is the last
+  field every row has; dropping the key and adding it again in the same
+  statement does either. Copies were not affected. A key that an earlier
+  version built in place, renamed or altered so keeps losing rows on each
+  node until the node restarts from a checkpoint taken after that change,
+  and the rows lost stay lost: the operations guide shows how to find such
+  keys and build them anew.
+
 - Terminal SQL errors remain available through `SHOW WARNINGS`, `SHOW
   ERRORS` and the diagnostic counts, including failed preparation and
   execution of prepared statements. Diagnostic retention respects the
