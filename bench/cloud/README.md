@@ -48,12 +48,15 @@ is checked against the vendor's SHA-256) and copies them to their nodes.
 
 ## The run (`orchestrate.py`)
 
-`prepare` installs everything; then for each system `system SYSTEM`:
-deploy, load (`TABLES` × `SIZE`, the load verified by counting every
-table), the sysbench matrix with every load generator at once, a second
+`prepare` installs everything; then `system RUN` for tarn, tidb, yb and
+tarn-fsync: deploy, load (`TABLES` × `SIZE`, the load verified by counting
+every table), the sysbench matrix with every load generator at once, a second
 isolation variant, `node-kill` and (region) `zone-cut`, logs, teardown.
-`orchestrate.py estimate` prints the time it takes: about 4 h with the
-defaults (16 × 1,000,000 rows, 16/64/256/512 threads, 60 s per point).
+`tarn-fsync` is Tarn again with fsync on every commit, writing workloads
+only. `orchestrate.py estimate` prints the time it takes: about 4.6 h with
+the defaults (16 × 1,000,000 rows, 16/64/256/512 threads, 60 s per point).
+`all` skips a run that would not finish 20 minutes before the deadline,
+which is why the optional tarn-fsync pass comes last.
 
 Results go to `/data/results/RUN/SYSTEM/` on the control node:
 `bench.csv` (one row per workload and thread count; latency percentiles are
@@ -73,20 +76,27 @@ exact, from the merged histograms of all generators), `load.json`,
   snapshot isolation (its default), then READ COMMITTED; YugabyteDB its
   default, then SERIALIZABLE.
 - **Durability.** Each system's default: Tarn writes its WAL without fsync
-  per commit (`TARN_WAL=fsync` changes that); TiKV syncs its Raft log;
-  YugabyteDB syncs on an interval. Say so with the results, or run Tarn both
-  ways.
+  per commit; TiKV syncs its Raft log; YugabyteDB syncs on an interval. The
+  `tarn-fsync` pass measures Tarn with fsync on every commit.
 - **Leaders.** Tarn's leaders are pinned to replica 1 of each shard, in a
   zone with two of its replicas (a quorum then needs one other zone, as for
   RF 3). TiDB and YugabyteDB place leaders themselves; zone labels are set
   for both.
+- **Loading.** One sysbench thread per table, except YugabyteDB, which
+  loads with one thread: concurrent CREATE TABLE / INDEX fail there with
+  40001 on its catalog.
 - **Tarn's admission budgets** are raised (`query_bytes` 512 MiB) so that
   sysbench's multi-MB bulk INSERTs are admitted (docs/resources.md).
 - **Faults** run `oltp_read_write` at 64 threads per generator with every
-  error ignored and counted, so the timeline continues through the failure.
-  `node-kill` kills shard 1's leader for Tarn and the store on `s1r1` for the
-  others. `zone-cut` drops all traffic between the first zone and the rest
-  (control excluded) for a third of the run.
+  error ignored and counted, so the timeline continues through the failure,
+  and with plain (not prepared) statements, which survive reconnecting.
+  YugabyteDB's sysbench fork has no such option: `patches/` adds
+  `--pgsql-ignore-errors=all`. `node-kill` kills shard 1's leader for Tarn and
+  the store on `s1r1` for the others. `zone-cut` drops all traffic between
+  the first zone and the rest (control excluded) for a third of the run;
+  the generators outside it use only the SQL endpoints outside it (as clients
+  with health-checked endpoints would), so the timeline shows the database's
+  failover rather than connections hung on unreachable hosts.
 
 ## Rehearsal
 
@@ -97,4 +107,5 @@ runs unchanged against it. It found, before any money was spent: Tarn's
 admission budget refusing sysbench's load; sysbench exiting 0 when a loader
 thread died; fault runs that ended at the first error; TiDB's DDL ingest
 needing a temp-dir larger than the default boot disk; a health check that
-passed while data was still unavailable.
+passed while data was still unavailable; YugabyteDB's initdb needing the
+en_US.UTF-8 locale; its concurrent loading failing on catalog conflicts.

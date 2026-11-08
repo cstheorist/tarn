@@ -49,6 +49,11 @@ if ! grep -q '^MaxStartups 200' /etc/ssh/sshd_config; then
   printf 'MaxStartups 200\nMaxSessions 200\n' >> /etc/ssh/sshd_config
   systemctl reload ssh 2> /dev/null || systemctl reload sshd 2> /dev/null || true
 fi
+# YugabyteDB's initdb needs en_US.UTF-8 (generated from the image's locales
+# package; workers have no internet access).
+if ! locale -a 2> /dev/null | grep -qi '^en_US.utf8$'; then
+  locale-gen en_US.UTF-8 > /dev/null 2>&1 || true
+fi
 # Nothing else should run during the benchmark.
 systemctl stop unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer 2> /dev/null || true
 systemctl disable unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer 2> /dev/null || true

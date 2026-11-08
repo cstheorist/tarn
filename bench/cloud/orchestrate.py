@@ -13,15 +13,17 @@ COMMAND:
   bench SYSTEM [--variant V] [--tests T,..] [--threads N,..] [--time S]
                       the sysbench matrix, every load generator at once
   fault SYSTEM KIND   a failure under load: node-kill | zone-cut (region topology)
-  system SYSTEM       deploy, load, bench (default variant and the other one),
+  system RUN          deploy, load, bench (default variant and the other one),
                       faults, stop: one system's whole share of a run
-  all                 prepare, then `system` for tarn, tidb and yb
+                      (RUN: tarn | tarn-fsync | tidb | yb)
+  all                 prepare, then `system` for tarn, tarn-fsync, tidb and yb
   status              what runs where
   estimate            how long `all` takes with the current settings
 
 Settings (environment): TABLES (16) SIZE (1000000) THREADS (16,64,256,512:
 total over all load generators) TIME (60 s) TESTS (the seven OLTP workloads)
-VARIANT_TESTS (oltp_read_write,oltp_write_only,oltp_update_index) WARMUP (20 s)
+VARIANT_TESTS (oltp_read_write,oltp_write_only,oltp_update_index)
+FSYNC_TESTS (oltp_update_index,oltp_insert,oltp_write_only,oltp_read_write) WARMUP (20 s)
 TARN_WAL (write | fsync) TARN_IPROTO_THREADS (2) FAULT_TIME (120 s)
 REHEARSAL (1: the local fake fleet; skips VM-only steps)
 
@@ -45,6 +47,11 @@ PKG = "/data/pkg"                    # vendor packages, on the control node
 SVC = f"{TB}/tarn/bench/cloud/node/svc.sh"
 HERE = os.path.dirname(os.path.abspath(__file__))
 SYSTEMS = ("tarn", "tidb", "yb")
+# What `all` runs. tarn-fsync: Tarn again with fsync on every commit (its
+# default writes the WAL without fsync; TiKV syncs its Raft log), so the
+# durability difference is measured, not assumed. Results go under the label.
+RUNS = ("tarn", "tidb", "yb", "tarn-fsync")   # the optional pass last
+LABEL = {}                                # system -> results label, while running a label
 SB_PASS = "sbpass-not-secret"
 ALL_TESTS = ("oltp_point_select,oltp_read_only,oltp_read_write,oltp_update_index,"
              "oltp_update_non_index,oltp_insert,oltp_write_only")
@@ -60,6 +67,7 @@ S = {
     "time": int(env("TIME", "60")),
     "tests": env("TESTS", ALL_TESTS).split(","),
     "variant_tests": env("VARIANT_TESTS", "oltp_read_write,oltp_write_only,oltp_update_index").split(","),
+    "fsync_tests": env("FSYNC_TESTS", "oltp_update_index,oltp_insert,oltp_write_only,oltp_read_write").split(","),
     "warmup": int(env("WARMUP", "20")),
     "tarn_wal": env("TARN_WAL", "write"),
     "tarn_iproto_threads": int(env("TARN_IPROTO_THREADS", "2")),
@@ -172,8 +180,12 @@ class Fleet:
             raise RuntimeError(f"local: exit {p.returncode}\n{script}\n{p.stderr[-3000:]}\n{p.stdout[-1000:]}")
         return p.stdout
 
+    def label(self, system):
+        return LABEL.get(system, system)
+
     def save(self, rel, text):
-        path = os.path.join(self.results, rel)
+        head, _, tail = rel.partition("/")
+        path = os.path.join(self.results, LABEL.get(head, head) + ("/" + tail if tail else ""))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "a") as f:
             f.write(text)
@@ -265,6 +277,8 @@ if [ ! -f yugabyte.tar.gz ]; then
 fi
 """, timeout=1800)
         def push_yb(n):
+            # YugabyteDB's initdb needs en_US.UTF-8 (node-init generates it too).
+            f.sh(n, "locale -a | grep -qi '^en_US.utf8$' || sudo locale-gen en_US.UTF-8 > /dev/null")
             with open(f"{PKG}/yb/yugabyte.tar.gz", "rb") as src:
                 f.sh(n, f"rm -rf /data/opt/yb && mkdir -p /data/opt/yb && tar -xzf - -C /data/opt/yb "
                         f"--strip-components=1 && /data/opt/yb/bin/post_install.sh > /dev/null 2>&1",
@@ -450,7 +464,8 @@ def deploy_yb(f):
               f"--rpc_bind_addresses={f.ip(n)}:7100", f"--webserver_interface={f.ip(n)}",
               f"--fs_data_dirs={RUN}/yb/master", "--placement_cloud=gcp", f"--placement_region={region}",
               f"--placement_zone={h['zone']}", f"--replication_factor={f.rf}",
-              "--default_memory_limit_to_ram_ratio=0.1")
+              *(["--memory_limit_hard_bytes=268435456"] if S["rehearsal"] else
+                ["--default_memory_limit_to_ram_ratio=0.1"]))
     f.par(masters, start_master, "starting yb-master")
     log("yb: tservers")
     def start_tserver(n):
@@ -461,7 +476,10 @@ def deploy_yb(f):
               "--enable_ysql", f"--pgsql_proxy_bind_address={f.ip(n)}:5433",
               f"--cql_proxy_bind_address={f.ip(n)}:9042", f"--fs_data_dirs={RUN}/yb/tserver",
               "--placement_cloud=gcp", f"--placement_region={region}", f"--placement_zone={h['zone']}",
-              "--default_memory_limit_to_ram_ratio=0.6")
+              # (The rehearsal's memory cgroup holds three small tservers.)
+              *(["--memory_limit_hard_bytes=1073741824", "--yb_num_shards_per_tserver=1",
+                 "--ysql_num_shards_per_tserver=1"] if S["rehearsal"] else
+                ["--default_memory_limit_to_ram_ratio=0.6"]))
     f.par(f.storage(), start_tserver, "starting yb-tserver")
     zones = ",".join(f"gcp.{region}.{z}" for z in f.p["zones"])
     admin = f"{yb}/bin/yb-admin -master_addresses {maddrs}"
@@ -515,17 +533,24 @@ def set_variant(f, system, variant):
 
 # --- sysbench ---------------------------------------------------------------------
 
-def sb_args(f, system, threads, ignore_all=False):
+def sb_args(f, system, threads, ignore_all=False, exclude=()):
     """sysbench's binary and options. ignore_all: no error stops a thread
-    (fault runs, where the timeline must go on through the failure)."""
+    (fault runs, where the timeline must go on through the failure).
+    exclude: SQL endpoints not to connect to."""
     hosts, port = endpoints(f, system)
+    hosts = [h for h in hosts if h not in exclude]
+    # Fault runs reconnect after lost connections, which loses server-side
+    # prepared statements: they use plain statements, for every system alike.
     common = [f"--tables={S['tables']}", f"--table-size={S['size']}", f"--threads={threads}",
-              "--rand-type=uniform", "--db-ps-mode=auto"]
+              "--rand-type=uniform", f"--db-ps-mode={'disable' if ignore_all else 'auto'}"]
     if system == "yb":
+        # YugabyteDB's sysbench fork, patched (patches/) with
+        # --pgsql-ignore-errors=all; it retries 40001 and 40P01 itself.
         return ([f"{TB}/opt/sysbench-yb/bin/sysbench"],
                 common + ["--db-driver=pgsql", f"--pgsql-host={','.join(hosts)}", f"--pgsql-port={port}",
                           "--pgsql-user=yugabyte", "--pgsql-db=sbtest", "--range_key_partitioning=true",
-                          "--serial_cache_size=1000", "--create_secondary=true"])
+                          "--serial_cache_size=1000", "--create_secondary=true"]
+                + (["--pgsql-ignore-errors=all"] if ignore_all else []))
     return ([f"{TB}/opt/sysbench/bin/sysbench"],
             common + ["--db-driver=mysql", f"--mysql-host={','.join(hosts)}", f"--mysql-port={port}",
                       "--mysql-user=sb", f"--mysql-password={SB_PASS}", "--mysql-db=sbtest",
@@ -540,7 +565,10 @@ def load(f, system):
         user = "root" if system == "tidb" else "sb"
         mysql(f, system, "DROP DATABASE IF EXISTS sbtest; CREATE DATABASE sbtest", user=user)
     loader = f.role("load")[0]["name"]
-    binary, args = sb_args(f, system, S["tables"])
+    # YugabyteDB loads with one thread: concurrent CREATE TABLE / INDEX from
+    # several sysbench threads fail with 40001 on its catalog (as the earlier
+    # single-host comparison found); the others load one table per thread.
+    binary, args = sb_args(f, system, 1 if system == "yb" else S["tables"])
     t0 = time.time()
     out = f.sh(loader, " ".join(shlex.quote(x) for x in binary + ["oltp_read_write"] + args + ["prepare"]) + " 2>&1",
                timeout=6 * 3600)
@@ -556,7 +584,7 @@ def load(f, system):
         counts.append(int(psql(f, q, db="sbtest") if system == "yb" else mysql(f, system, q, db="sbtest")))
     if any(c != S["size"] for c in counts):
         raise RuntimeError(f"{system}: load incomplete: rows per table {counts}, expected {S['size']}")
-    res = {"system": system, "tables": S["tables"], "size": S["size"], "seconds": round(secs, 1),
+    res = {"system": f.label(system), "tables": S["tables"], "size": S["size"], "seconds": round(secs, 1),
            "rows_per_s": round(rows / secs)}
     f.save(f"{system}/load.json", json.dumps(res) + "\n")
     log(f"{system}: loaded {rows} rows in {secs:.0f} s ({rows / secs:.0f} rows/s)")
@@ -632,7 +660,7 @@ def bench(f, system, variant=None, tests=None, threads=None, secs=None):
     set_variant(f, system, variant)
     if S["warmup"]:
         run_parallel(f, system, "oltp_point_select", max(threads), S["warmup"], label="warmup")
-    path = os.path.join(f.results, system, "bench.csv")
+    path = os.path.join(f.results, f.label(system), "bench.csv")
     new = not os.path.exists(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", newline="") as fh:
@@ -642,7 +670,7 @@ def bench(f, system, variant=None, tests=None, threads=None, secs=None):
         for test in tests:
             for th in threads:
                 r = run_parallel(f, system, test, th, secs, label=f"{variant}.{test}")
-                row = {"run": f.run_id, "topology": f.p["topology"], "system": system, "variant": variant,
+                row = {"run": f.run_id, "topology": f.p["topology"], "system": f.label(system), "variant": variant,
                        "test": test, "threads": th, "tps": round(r["tps"], 2), "qps": round(r["qps"], 2),
                        "p50_ms": r["p50"], "p95_ms": r["p95"], "p99_ms": r["p99"], "errors": r["errors"],
                        "reconnects": r["reconnects"], "generators": r["generators"], "time_s": secs,
@@ -678,6 +706,7 @@ def fault(f, system, kind):
         def heal():
             f.svc(victim, "restart", SERVICE[system], check=False)
         survivors = [h["name"] for h in f.role("load")]
+        exclude = ()
     else:
         zone = f.p["zones"][0]
         inside = [h for h in f.p["hosts"] if h["zone"] == zone and h["role"] != "control"]
@@ -692,6 +721,10 @@ def fault(f, system, kind):
         def heal():
             f.par(inside, lambda n: f.sh(n, undo, check=False), "zone heal")
         survivors = [h["name"] for h in f.role("load") if h["zone"] != zone]
+        # The surviving clients use the endpoints outside the cut zone, as a
+        # client with health-checked endpoints would: the timeline then shows
+        # the database's failover, not connections hung on unreachable hosts.
+        exclude = {h["internal_ip"] for h in inside}
     if wait_healthy(f, system, "before the fault") is None:
         raise RuntimeError(f"{system}: not healthy before the {kind} fault")
     log(f"{system}: fault {kind}: {desc}; inject at {inject_at}s, heal at {heal_at}s, {secs}s in all")
@@ -699,7 +732,7 @@ def fault(f, system, kind):
     per = threads // len(gens)
     t0 = time.time() + 3
     def one(g):
-        binary, args = sb_args(f, system, per, ignore_all=True)
+        binary, args = sb_args(f, system, per, ignore_all=True, exclude=exclude if g in survivors else ())
         cmd = (f"sleep $(python3 -c 'import time; print(max(0, {t0} - time.time()))'); "
                + " ".join(shlex.quote(x) for x in binary + ["oltp_read_write"] + args +
                           [f"--time={secs}", "--report-interval=1", "run"]) + " 2>&1")
@@ -735,7 +768,7 @@ def fault(f, system, kind):
     after = [s for s in sorted(series) if s > inject_at]
     dip = next((s for s in after if series[s][0] < 0.5 * base), None)
     back = next((s for s in after if dip and s > dip and series[s][0] >= 0.5 * base), None)
-    summary = {"system": system, "kind": kind, "what": desc, "baseline_tps": base, "events": timer,
+    summary = {"system": f.label(system), "kind": kind, "what": desc, "baseline_tps": base, "events": timer,
                "first_low_second": dip, "recovered_second": back,
                "outage_s": (back - dip) if dip and back else (0 if dip is None else None),
                "valid": base > 0}
@@ -793,11 +826,25 @@ def collect_logs(f, system):
 def deploy(f, system):
     {"tarn": deploy_tarn, "tidb": deploy_tidb, "yb": deploy_yb}[system](f)
 
-def whole_system(f, system):
+def whole_system(f, run):
+    """One entry of RUNS: a system's whole share of the run."""
+    system = "tarn" if run.startswith("tarn") else run
+    LABEL.clear()
+    if run == "tarn-fsync":
+        LABEL["tarn"] = run
+        S["tarn_wal"] = "fsync"
+    else:
+        S["tarn_wal"] = env("TARN_WAL", "write")
+    if system == "tarn":
+        f.save("tarn/settings.txt", f"wal_mode={S['tarn_wal']} iproto_threads={S['tarn_iproto_threads']}\n")
     t0 = time.time()
     try:
         deploy(f, system)
         load(f, system)
+        if run == "tarn-fsync":
+            # Only what fsync changes: the writing workloads, default isolation.
+            bench(f, system, VARIANTS[system][0], tests=S["fsync_tests"])
+            return
         bench(f, system, VARIANTS[system][0])
         bench(f, system, VARIANTS[system][1], tests=S["variant_tests"])
         set_variant(f, system, VARIANTS[system][0])
@@ -810,7 +857,16 @@ def whole_system(f, system):
     finally:
         collect_logs(f, system)
         stop(f, system)
-        log(f"{system}: done in {(time.time() - t0) / 60:.0f} min")
+        log(f"{run}: done in {(time.time() - t0) / 60:.0f} min")
+
+def run_seconds(run):
+    """Estimated seconds of one entry of RUNS (see `estimate`)."""
+    n = len(S["threads"])
+    load = S["tables"] * S["size"] / 20000
+    if run == "tarn-fsync":
+        return 180 + load + S["warmup"] + len(S["fsync_tests"]) * n * (S["time"] + 15)
+    return (180 + load + 2 * S["warmup"] + (len(S["tests"]) + len(S["variant_tests"])) * n * (S["time"] + 15)
+            + 2 * (S["fault_time"] + 40))
 
 def estimate():
     n = len(S["threads"])
@@ -822,8 +878,9 @@ def estimate():
     tot = sum(per.values())
     for k, v in per.items():
         print(f"  {k:24s} {v / 60:6.1f} min")
-    print(f"  per system               {tot / 60:6.1f} min; three systems + prepare (~20 min): "
-          f"{(3 * tot + 1200) / 3600:.1f} h")
+    fsync = per["deploy"] + per["load (at 20k rows/s)"] + S["warmup"] + len(S["fsync_tests"]) * n * (S["time"] + 15)
+    print(f"  per system               {tot / 60:6.1f} min (tarn-fsync: {fsync / 60:.1f} min)")
+    print(f"  all: prepare (~20 min) + tarn, tidb, yb + tarn-fsync: {(3 * tot + fsync + 1200) / 3600:.1f} h")
 
 
 def main():
@@ -843,6 +900,7 @@ def main():
         return
     f = Fleet(a.hosts, a.key, a.results)
     sysarg = lambda: a.args[0] if a.args and a.args[0] in SYSTEMS else sys.exit(f"system: one of {SYSTEMS}")
+    runarg = lambda: a.args[0] if a.args and a.args[0] in RUNS else sys.exit(f"system: one of {RUNS}")
     if a.cmd == "prepare":
         prepare(f)
     elif a.cmd == "deploy":
@@ -857,14 +915,19 @@ def main():
     elif a.cmd == "fault":
         fault(f, sysarg(), a.args[1])
     elif a.cmd == "system":
-        whole_system(f, sysarg())
+        whole_system(f, runarg())
     elif a.cmd == "all":
         prepare(f)
-        for s in SYSTEMS:
+        for r in RUNS:
+            left = f.p.get("deadline", time.time() + 10 ** 6) - time.time()
+            if left < run_seconds(r) + 1200:
+                log(f"{r}: SKIPPED: {left / 60:.0f} min to the deadline, it needs about "
+                    f"{run_seconds(r) / 60:.0f} min and 20 min of margin")
+                continue
             try:
-                whole_system(f, s)
+                whole_system(f, r)
             except Exception as e:  # noqa: BLE001 - one system's failure must not end the run
-                log(f"{s}: FAILED: {e}")
+                log(f"{r}: FAILED: {e}")
     elif a.cmd == "status":
         for h in f.p["hosts"]:
             if h["role"] in ("storage", "sql"):
