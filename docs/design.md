@@ -711,8 +711,13 @@ rows per page, F pages in flight and S shards at once):
 | 64 | 2 | 2 (all) | 696 s | 591 s, 4,060 rows/s | 13,207 | 53.2 / 101.4 ms | 45.5 ms |
 | 256 | 1 | 2 (all) | 546 s | 446 s, 5,384 rows/s | 8,089 | 65.7 / 140.8 ms | 64.9 ms |
 | 1,024 | 1 | 1 | 457 s | 360 s, 6,672 rows/s | 6,265 | 57.9 / 176.5 ms | 112.8 ms |
-Every index was exact, and no write was refused. Each faster pace slowed
-the writes about as much as it sped up the fill. From the default to the
+| 256 | 1 | 0 (all) | 522 s | 424 s, 5,656 rows/s | 8,429 | 59.7 / 134.7 ms | 60.9 ms |
+Every index was exact, and no write was refused. The last run is this
+code, its pace read from `cluster.json`. The others ran a build that read
+it from environment variables, as their files note. That run's longest
+write, 1.33 s, waited out WAL writes of up to 1.09 s on three storage nodes
+at once, which share the host's one disk. Each faster pace slowed the
+writes about as much as it sped up the fill. From the default to the
 fastest, the fill went 2.9 times as fast and the writes' p99 2.7 times as
 long, and the session updating the table, which waits for each write,
 made a third as many writes a second. On this host the six storage nodes,
