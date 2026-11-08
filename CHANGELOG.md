@@ -35,6 +35,19 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that renames the kept spaces too late (`BugRenameBeforeKept`). A rename
   along with a new lazy index still builds in place.
 
+- An opt-in profiler of READ COMMITTED transactions on a shard
+  ([#186](https://github.com/cstheorist/tarn/issues/186)): with
+  `TARN_RC_PHASES` set on the storage nodes, `tarn_lock` and
+  `tarn_commit_rc` count each phase's wall time and Lua allocation (the
+  freshness barrier, lock bookkeeping and waits, the row read, the commit's
+  checks and plans, `box.commit`'s WAL, fsync and quorum, the lock
+  release), which `tarn_rc_phases()` returns and `bench/rc_profile.py`
+  records per window (`lua/tarn_phases.lua`, `bench/rc_phases.py`). Off by
+  default; on, it cost 6-13% of the RF3/fsync goodput measured. On RF3 with
+  fsync, without contention, a transaction spent 85-87% of its storage
+  time in two waits, its lock calls' freshness barriers and its commit's
+  WAL write and quorum, and about 13% in Lua work (`bench/RC_PHASES.md`).
+
 - `ALTER TABLE ... ADD UNIQUE` (and `CREATE UNIQUE INDEX`) of a key without
   the shard key builds the key's global index while writes go on
   ([#292](https://github.com/cstheorist/tarn/issues/292)), with no row

@@ -93,7 +93,9 @@ system CPU (gateway/client CPU is excluded).
 Thus this is a current RF3/fsync **baseline and coarse profile**, not the
 complete direct/end-to-end, alternating candidate/control study required
 by #186. The missing cost separation and candidate comparison remain work
-before choosing a production optimization. There is no default-enablement
+before choosing a production optimization. (The cost separation is now in
+[`RC_PHASES.md`](RC_PHASES.md): an opt-in profiler of the two procedures'
+phases.) There is no default-enablement
 claim, open-loop capacity result, physical-host scale claim, or complete
 semantic/fault qualification of either candidate.
 

@@ -534,6 +534,44 @@ fiber.sleep(0.05)
 check('RC commit applies the write and releases the lock',
       r[1] == 'ok' and bal(1, 300) == 999 and got and got[1] == 'ok' and got[3][1][2] == 999, {r, got})
 c[1]:call('tarn_unlock', {'P5'})
+-- The phases of READ COMMITTED transactions (issue #186): counted only with
+-- tarn.cfg.rc_phases; each phase's time includes its waits, and the totals
+-- include the phases within them.
+do
+    -- (rows of their own: the tests below expect 301 and 302 as they are)
+    for id = 390, 391 do
+        c[1]:call('tarn_autocommit', {{{'replace', sid, {id, id, 'r' .. id .. '@x', 1}}}})
+    end
+    local function rc(txid, id, v)
+        local l = lock(1, txid, {k(id)}, 'X', {read = true, timeout = 5})
+        return l, c[1]:call('tarn_commit_rc', {txid, {{'replace', sid, {id, v, 'r' .. id .. '@x', 1}}}, l[2]})
+    end
+    c[1]:call('tarn_rc_phases', {true})
+    rc('PH1', 390, 11)
+    local ph = c[1]:call('tarn_rc_phases', {true})[2]
+    check('no phase is counted while the profiler is off', ph.lock_total[1] == 0 and ph.commit_total[1] == 0, ph)
+    c[1]:eval('tarn.phases.enable(true)')
+    -- (PH3 waits for PH2's lock on 391 until PH2 commits)
+    local l2 = lock(1, 'PH2', {k(391)}, 'X', {})
+    got = nil
+    f = fiber.create(function() got = {rc('PH3', 391, 13)} end)
+    fiber.sleep(0.1)
+    r = c[1]:call('tarn_commit_rc', {'PH2', {{'replace', sid, {391, 12, 'r391@x', 1}}}, l2[2]})
+    for _ = 1, 100 do if got then break end fiber.sleep(0.01) end
+    ph = c[1]:call('tarn_rc_phases', {true})[2]
+    local function n(name) return ph[name][1] end
+    local function t(name) return ph[name][2] end
+    check('with the profiler on, each lock and commit counts its phases',
+          got and got[2][1] == 'ok' and n('lock_total') == 2 and n('lock_begin') == 2 and n('lock_acquire') == 2
+          and n('lock_wait') == 1 and n('lock_read') == 1 and n('commit_total') == 2 and n('commit_checks') == 2
+          and n('commit_wal') == 2 and n('commit_release') == 2 and n('commit_plan') == 2, {ph, got})
+    check('... the wait for the lock is in its acquisition, and both in the lock\'s total',
+          t('lock_wait') >= 0.05 and t('lock_acquire') >= t('lock_wait') and t('lock_total') >= t('lock_acquire')
+          and t('commit_total') >= t('commit_wal') and t('commit_wal') >= t('commit_release'), ph)
+    check('... with the bytes allocated, the probes\' own left out', ph.probe_bytes > 0
+          and ph.commit_total[3] > 0 and ph.commit_total[3] < 1048576, ph)
+    c[1]:eval('tarn.phases.enable(false)')
+end
 -- local deadlock: P6 holds 303 and waits for 304; P7 holds 304 and asks for 303
 lock(1, 'P6', {k(303)}, 'X', {}); lock(1, 'P7', {k(304)}, 'X', {})
 got = nil
