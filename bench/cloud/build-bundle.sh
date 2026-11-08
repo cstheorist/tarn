@@ -76,12 +76,13 @@ build_sysbench() {  # name repo ref
   git -C "$dir" fetch -q --tags origin
   git -C "$dir" checkout -q --force "$ref"
   git -C "$dir" clean -qfdx
-  local patch
-  for patch in "$ROOT"/bench/cloud/patches/"$name"-*.patch; do
-    [ -f "$patch" ] || continue
+  # patches/NAME.patch, exactly (NAME.patch for sysbench must not match
+  # sysbench-yb's).
+  local patch=$ROOT/bench/cloud/patches/$name.patch
+  if [ -f "$patch" ]; then
     git -C "$dir" apply "$patch"
-    echo "$name: patched with $(basename "$patch")" >> "$STAGE/MANIFEST.tmp"
-  done
+    echo "$name: patched with patches/$name.patch ($(sha256sum "$patch" | cut -c1-12))" >> "$STAGE/MANIFEST.tmp"
+  fi
   (cd "$dir" && ./autogen.sh > /dev/null 2>&1 &&
     ./configure --prefix="$PREFIX/opt/$name" --with-mysql --with-pgsql > "$SRC/$name-configure.log" 2>&1 &&
     make -j"$(nproc)" > "$SRC/$name-build.log" 2>&1 &&
