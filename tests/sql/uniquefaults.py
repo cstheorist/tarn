@@ -24,6 +24,11 @@ copy is left on any replica; the key finds rows by value and refuses a
 duplicate in another tenant. The checks read the table as it is: a write
 that a crash left with an unknown outcome is not replayed.
 
+  * A leader crash during the backfill: once the job is in its backfill,
+    the second shard's leader ends itself. The backfill's pages there fail
+    for a transient reason until the shard's new leader takes them, and the
+    build finishes while a session writes. The replica that crashed is
+    started again, and the index is checked as above.
   * A duplicate written during the backfill: once the job is in its
     backfill, a row of the second shard takes the value of a row of the
     first. The ALTER fails with 1062, naming the value, and leaves the
@@ -516,6 +521,61 @@ def main():
     both = sorted(tuple(r) for r in q(c, "SELECT tenant_id, id FROM d WHERE u = %s", (a,)))
     check("the two rows keep the value, and SHOW CREATE TABLE shows no such key",
           both == sorted([(a % TENANTS, a), (other, 8 * FRESH)]) and "`du`" not in shown, {"rows": both})
+
+    # 4. A leader crash during the backfill.
+    print(f"{args.engine}: a leader crash during the backfill", flush=True)
+    populate("b")
+    caught_up()
+    space = f"{DB}.b"
+    before = space_ids(space)
+    crash = {}
+
+    def crash_in_backfill():
+        """Once the job is in its backfill, the second shard's leader ends
+        itself; the backfill's pages there fail until a new leader takes
+        them."""
+        deadline, phase = time.monotonic() + 120, None
+        while time.monotonic() < deadline and phase != "backfill":
+            phase = ev(wait_leader(groups[0]), "local t = box.space._tarn_meta:get{'job:' .. ...} "
+                                               "return t and t.value.phase or box.NULL", [space])
+            time.sleep(0.02)
+        crash["phase"] = phase
+        if phase != "backfill":
+            return
+        victim = wait_leader(groups[1])
+        state = ev(victim, "return {pid = box.info.pid, cwd = require('fio').cwd()}")
+        assert int((work / f"{Path(state['cwd']).name}.pid").read_text()) == state["pid"], state
+        ev(victim, "local pid = ...; assert(box.info.pid == pid); "
+                   "require('fiber').create(function() require('fiber').sleep(.05); "
+                   "local ffi = require('ffi'); ffi.cdef('void _exit(int);'); ffi.C._exit(86) end)",
+           [state["pid"]])
+        crash["victim"] = Path(state["cwd"]).name
+        crash["replacement"] = wait_leader(groups[1], exclude=victim)
+        # (still in the backfill once the shard had its new leader)
+        crash["phase_after"] = ev(wait_leader(groups[0]), "local t = box.space._tarn_meta:get{'job:' .. ...} "
+                                                          "return t and t.value.phase or box.NULL", [space])
+
+    alter.clear()
+    with Writer("b", True, f"{args.engine} backfill crash") as w:
+        time.sleep(0.5)
+        th = threading.Thread(target=crash_in_backfill)
+        th.start()
+        run_alter("b", "bu")
+        th.join(130)
+        time.sleep(1)
+    print(f"  ({args.engine}: {crash.get('victim')} ended itself in the backfill; "
+          f"{crash.get('replacement')} leads now)", flush=True)
+    check("the second shard's leader ended itself during the backfill, which went on once another took over",
+          crash.get("phase") == "backfill" and crash.get("replacement") is not None
+          and crash.get("phase_after") == "backfill", crash)
+    check("the ALTER succeeds, the backfill going on with the shard's new leader", alter.get("ok") is True, alter)
+    check(f"the writes went on through the crash ({w.writes}, {w.faults} refused or unknown), "
+          f"none failing otherwise", w.writes > 0 and not w.errors, w.errors[:5])
+    if crash.get("victim"):
+        subprocess.run([str(ROOT / "scripts/cluster.sh"), "restart", "-d", str(work), crash["victim"]], check=True,
+                       stdin=subprocess.DEVNULL)
+    settle()
+    built("b", "bu", before)
 
     q(connect(args.tarn, db=None), f"DROP DATABASE {DB}")
     print("all ok" if fails == 0 else f"{fails} failed", flush=True)

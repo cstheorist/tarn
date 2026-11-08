@@ -1,9 +1,9 @@
 #!/bin/bash
 # An online build of a global unique index on 2 shards x 3 replicas with
-# fsync, through a leader crash during its copy and a lost reply during its
-# backfill, and one that a duplicate written during its backfill fails
-# (#292, tests/sql/uniquefaults.py), on memtx and on vinyl. Owns every
-# process it starts.
+# fsync, through a leader crash during its copy, a lost reply and a leader
+# crash during its backfill, and one that a duplicate written during its
+# backfill fails (#292, tests/sql/uniquefaults.py), on memtx and on vinyl.
+# Owns every process it starts.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DIR=$(mktemp -d /tmp/tarn-uniquefaults.XXXX)
