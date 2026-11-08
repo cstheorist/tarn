@@ -74,6 +74,9 @@ jobs:
         run: ci/annotate.sh key-paired python3 tests/sql/key_semantics.py --tarn 127.0.0.1:4180 --ref 127.0.0.1:3408 --engine '${{ matrix.engine }}' --output key-evidence/paired.json
       - name: Exact keys through leader loss, movement and restart
         run: ci/annotate.sh key-faults python3 tests/sql/key_semantics_faults.py --tarn 127.0.0.1:4180 --cluster-dir "$RUNNER_TEMP/key-cluster" --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' --output key-evidence/faults.json
+      - name: Name the storage nodes' role changes
+        if: failure()
+        run: ci/raft_transitions.sh keys "$RUNNER_TEMP"/key-cluster/s*.log
       - name: Export cluster and stop owned processes
         if: always()
         run: |
