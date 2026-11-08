@@ -64,7 +64,7 @@ jobs:
           git rev-parse HEAD:lua > /tmp/rc186-build/lua-tree.txt
           rustc -Vv > /tmp/rc186-build/rustc.txt
           sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/rc186-build/binaries.sha256
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: rc186-build-${{ github.run_id }}
@@ -86,7 +86,7 @@ jobs:
         native: ${{ fromJSON(inputs.full_matrix && '["enabled","disabled"]' || '["enabled"]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           name: rc186-build-${{ github.run_id }}
           path: /tmp/rc-cost-build-download
@@ -126,7 +126,7 @@ jobs:
             --seconds 15 --base-port 17300 --sql-port 17400
       - name: Retain complete and failed evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: rc-cost-guards-${{ inputs.driver }}-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
           path: |

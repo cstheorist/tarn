@@ -76,7 +76,7 @@ jobs:
           python3 tests/sql/pushdown_contracts_test.py
           python3 tests/sql/pushdown_contracts.py --oracle-only --mysql-profile \
             --ref 127.0.0.1:3407 --mysql 127.0.0.1:3408 --out /tmp/pushdown-oracles.json
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: pushdown-oracles-${{ github.run_id }}
@@ -99,7 +99,7 @@ jobs:
           git rev-parse HEAD > /tmp/pushdown-build/source.txt
           rustc -Vv > /tmp/pushdown-build/rustc.txt
           sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/pushdown-build/binaries.sha256
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: pushdown-build-${{ github.run_id }}
           path: /tmp/pushdown-build
@@ -219,7 +219,7 @@ jobs:
           python3 bench/stop_pushdown_fixture.py /tmp/pushdown-cluster || status=1
           python3 bench/stop_pushdown_fixture.py /tmp/pushdown-measure || status=1
           exit "$status"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: pushdown-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}

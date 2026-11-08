@@ -63,7 +63,7 @@ jobs:
           done
       - name: Retain every history and storage log
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: outcomes-${{ matrix.engine }}-native-${{ matrix.native }}-${{ github.run_id }}
           path: /tmp/tarn-outcomes-release
