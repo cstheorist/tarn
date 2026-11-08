@@ -1116,6 +1116,9 @@ scripts/cluster.sh add-shard [-d DIR] I           # storage for shard I; prints 
 `-a` turns on ack-on-prepare and `-u` connects the SQL servers to storage
 over Unix sockets. Storage instance *j* of shard *i* listens on
 `BASE + 10·i + j` (default base 3300); SQL server *k* on `SQL_PORT + k − 1`.
+`stop` sends each process SIGTERM, waits up to 10 s for it to exit, then
+sends SIGKILL, and returns once every process is gone; it then removes the
+directory, unless `KEEP=1`.
 
 ## Optional cardinality statistics
 
