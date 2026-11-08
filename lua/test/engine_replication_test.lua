@@ -299,8 +299,12 @@ f:name('engine_rf3_build');f:set_joinable(true);_G.engine_rf3_build_fiber=f
         local f = assert(io.open(work .. '/identity-first.json')); local before = json.decode(f:read('*a')); f:close()
         ok(call(l, 'tarn_alter_build', name, a, gen)); ok(call(l, 'tarn_alter_prepare', name, a, gen))
         local s = state(l)
+        -- (A status change on the new leader may lose the capture again
+        -- between BUILD and PREPARE, which then resumes it once more: at
+        -- least one resume, of the same capture, which a copy started over
+        -- would have replaced.)
         check('promotion resumes the copy from the durable capture and persists PREPARED',
-            s.receipt.phase == 'prepared' and s.receipt.capture == before.receipt.capture and s.receipt.resumes == 1
+            s.receipt.phase == 'prepared' and s.receipt.capture == before.receipt.capture and s.receipt.resumes >= 1
             and s.target_zero and s.target_rows == count + 1 and s.held, s)
         ev(l, "box.space._tarn_meta:replace{'test:engine_rf3_token',...}", {s.receipt.capture})
     elseif stage == 'caught-up' then
