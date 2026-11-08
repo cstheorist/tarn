@@ -20,6 +20,10 @@ shard, above which filling the index behind the table's fence is refused
         and no conflicts space is left on any node;
       - every row is found by its value (a sample);
       - a duplicate in another tenant is refused (1062).
+  * With other new indexes: the same, the statement also adding an index
+    and a unique key with the shard key. It succeeds, and each shard's
+    table has them, each with an entry per row, as built by the step that
+    makes the key enforcing.
   * A large table: `--large-rows` rows (40,000) of about 1 KB, more than
     one statement's query memory budget (64 MiB) holds of what its
     backfill reads. The change succeeds, and the index holds one entry per
@@ -391,6 +395,42 @@ def online(cl, c, endpoint, n):
     cl.replaced(f"{DB}.t", before)
 
 
+def with_indexes(cl, c, endpoint, n):
+    """The statement also adds an index and a unique key with the shard key:
+    the step that makes the key enforcing builds them too (by the copy,
+    before any row of its space, with --copy)."""
+    print("online, with other new indexes, while writes go on")
+    populate(c, "m", n)
+    space = f"{DB}.m"
+    before = cl.space_ids(space)
+    with Writers(endpoint, "m", n, "with indexes") as w:
+        time.sleep(1)
+        t0 = time.monotonic()
+        failed = attempt(c, "ALTER TABLE m ADD INDEX mk (k), ADD UNIQUE KEY mu (u), "
+                            "ADD UNIQUE KEY mt (tenant_id, u)")
+        took = time.monotonic() - t0
+        time.sleep(1)
+    check(f"the change succeeds, with alter_check_rows {LIMIT} below the rows per shard ({took:.1f} s)",
+          failed is None, failed)
+    built(cl, c, w, "m", "mu")
+    shown = q(c, "SHOW CREATE TABLE m")[0][1]
+    check("SHOW CREATE TABLE shows the other indexes", "KEY `mk` (`k`)" in shown
+          and "UNIQUE KEY `mt` (`tenant_id`,`u`)" in shown, shown)
+    # (rows, then the entries of each: a Tarantool index holds every tuple)
+    counts = [ev(cl.leader(g), """
+        local sp = box.space[...]
+        local function count(name) return sp.index[name] and sp.index[name]:count() or -1 end
+        return {sp.index[0]:count(), count('mk'), count('mt')}
+    """, [space]) for g in cl.groups]
+    check("each shard's table has both, each with an entry per row",
+          all(x[1] == x[0] and x[2] == x[0] for x in counts), counts)
+    via = q(c, "SELECT COUNT(*) FROM m FORCE INDEX (mk) WHERE k >= 0")[0][0]
+    rows = q(c, "SELECT COUNT(*) FROM m")[0][0]
+    check(f"a read through the new index finds every row ({rows})", via == rows, {"via": via, "rows": rows})
+    cl.replaced(space, before)
+    q(c, "DROP TABLE m")
+
+
 def large(cl, c, n):
     """A table whose backfill reads more than one statement's memory budget
     would hold (rows of about 1 KB): each of its transactions has a budget
@@ -621,6 +661,7 @@ def main():
                        [LIMIT]) for node in cl.nodes}
     try:
         online(cl, c, endpoints[0], args.rows)
+        with_indexes(cl, c, endpoints[0], args.rows)
         large(cl, c, args.large_rows)
         wide(cl, c)
         duplicates_before(cl, c)

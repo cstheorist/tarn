@@ -510,6 +510,20 @@ CASES = [
     ("SELECT id FROM gu2 WHERE n = 600", "q"),
     ("ALTER TABLE gu2 DROP INDEX kh2, RENAME TO gu", "ddl:gu"),
     ("DELETE FROM gu WHERE id = 23", "dml:gu"),
+    # ... a global unique key built while writes go on along with other
+    # indexes, which the step that makes it enforcing builds (issue #292);
+    # a duplicate fails them all
+    ("ALTER TABLE gci DROP INDEX ue", "ddl:gci"),
+    ("INSERT INTO gci VALUES (10, 'EVE@x'), (11, 'eve@X')", "dml:gci"),
+    ("ALTER TABLE gci ADD INDEX ke (email, id), ADD UNIQUE KEY ue (email), ADD UNIQUE KEY ui (id, email)", "err"),
+    ("DELETE FROM gci WHERE id = 11", "dml:gci"),
+    ("ALTER TABLE gci ADD INDEX ke (email, id), ADD UNIQUE KEY ue (email), ADD UNIQUE KEY ui (id, email)",
+     "ddl:gci"),
+    ("INSERT INTO gci VALUES (11, 'EVE@X')", "err"),
+    ("INSERT INTO gci VALUES (11, 'fay@x')", "dml:gci"),
+    ("SELECT id FROM gci FORCE INDEX (ke) WHERE email >= 'a' ORDER BY id", "q"),
+    ("SELECT id FROM gci WHERE email = 'FAY@X'", "q"),
+    ("ALTER TABLE gci DROP INDEX ke, DROP INDEX ui", "ddl:gci"),
     # session isolation level, lock wait timeout, locking reads (issue #17);
     # the rest of the cases run at READ COMMITTED on both servers
     ("SET SESSION tx_isolation = 'READ-COMMITTED'", "q"),

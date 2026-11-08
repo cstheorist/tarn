@@ -812,11 +812,13 @@ continues (issue #292, [design §1.4](design.md#14-global-unique-indexes));
 `fenced` fills it from the rows behind the table's fence, while writes to
 the table wait, and refuses (1846) a table with more than
 `alter_check_rows` rows on a shard, as every build did before. A statement
-that changes more than its new unique keys, and one on a cluster with a
-replica that does not answer `tarn_uix_building_capabilities` (a storage
-node from before), builds `fenced`. Where `index_build` copies (on a
-cluster with replicated shards, by default), the online build's step that
-makes the key enforcing copies the table, as other index builds do, with
+that changes more than its new unique keys and other new indexes (not lazy
+ones), and one on a cluster with a replica that does not answer
+`tarn_uix_building_capabilities` (a storage node from before), builds
+`fenced`. Where `index_build` copies (on a cluster with replicated shards,
+by default), the online build's step that makes the key enforcing copies
+the table, building the statement's other new indexes too, as other index
+builds do, with
 what such a copy costs (room for a second copy of the table, and a new
 physical space ID); its local index is built in place otherwise. As in
 MariaDB, two rows of one shard that share the key while the copy reads

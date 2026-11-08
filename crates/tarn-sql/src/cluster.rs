@@ -2249,8 +2249,9 @@ impl Cluster {
                 return self.alter_auto_inc(&def, &ch).await;
             }
             let rebuild = self.copy_index_builds(&def, &ch).await;
-            // New unique keys without the shard key, alone: their global
-            // indexes are built online (issue #292), when every replica can.
+            // New unique keys without the shard key, alone or with other
+            // new indexes: their global indexes are built online (issue
+            // #292), when every replica can.
             if !rebuild
                 && self.cfg.global_index_build == GlobalIndexBuild::Online
                 && crate::alter::builds_globals_online(&def, &ch)
