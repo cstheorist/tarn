@@ -49,7 +49,10 @@ queries, rather than a replenishing per-second rate. The backfill of an
 online build of a global unique index (issue #292) is not charged to its
 `ALTER TABLE`: each of its transactions has a query budget of its own,
 released as it commits, so that `query_bytes` does not limit the size of
-the table whose index it builds.
+the table whose index it builds. A server runs at most
+`server_bytes / 2 / query_bytes` of those transactions at once, whatever
+the backfill's pace (`global_index_backfill`, issue #303), so that they
+hold at most half of `server_bytes`.
 
 Execution admission failures return **1041/HY000**, with a message starting
 `Tarn resource limit:`. The statement has not committed any DML. An explicit

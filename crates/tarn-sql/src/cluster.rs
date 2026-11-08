@@ -124,6 +124,9 @@ pub struct ClusterConfig {
     /// `alter_check_rows` rows per shard.
     #[serde(default)]
     pub global_index_build: GlobalIndexBuild,
+    /// The pace of an online build's backfill (issue #303).
+    #[serde(default)]
+    pub global_index_backfill: GlobalIndexBackfill,
     /// How long one call of a copy's BUILD or PREPARE copies before it
     /// returns, to be sent again (seconds; issue #184). A copy of a large
     /// table then takes many calls, each well within `rpc.timeout_secs`.
@@ -201,6 +204,43 @@ pub enum GlobalIndexBuild {
     #[default]
     Online,
     Fenced,
+}
+
+/// `ClusterConfig::global_index_backfill`: the pace of the backfill of an
+/// online build of a global unique index (issue #303). Each page is a
+/// distributed transaction. More rows per page, more pages in flight and
+/// more shards at once each fill faster, and each takes more of the
+/// shards' and the SQL server's work from the other writes (design §1.4 has
+/// the measurements). The defaults are the pace of the builds before these
+/// settings: a page of 64 rows at a time, a shard after another.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GlobalIndexBackfill {
+    /// Rows per page, at most; a page also stops before its rows pass 1 MiB.
+    pub page_rows: u32,
+    /// Pages of a shard in flight at once.
+    pub pages_in_flight: usize,
+    /// Shards backfilled at once (0: all of them).
+    pub shards_at_once: usize,
+}
+
+impl Default for GlobalIndexBackfill {
+    fn default() -> Self {
+        Self {
+            page_rows: 64,
+            pages_in_flight: 1,
+            shards_at_once: 1,
+        }
+    }
+}
+
+/// How many pages of online builds' backfills a server keeps in flight at
+/// once, whatever their pace (issue #303): each page's transaction may hold
+/// up to a statement's memory budget (`query_bytes`) of the server's
+/// (`server_bytes`) while it runs, and the backfills take at most half of
+/// it, so that the server's statements are not refused (1041) meanwhile.
+pub(crate) fn backfill_page_slots(limits: &crate::budget::Limits) -> usize {
+    (limits.server_bytes / 2 / limits.query_bytes.max(1)).max(1) as usize
 }
 
 fn default_move_timeout() -> f64 {
@@ -835,6 +875,9 @@ pub struct Cluster {
     /// `refresh_catalog` calls share one reload.
     pub(crate) reloads: AtomicU64,
     reload_mu: tokio::sync::Mutex<()>,
+    /// Pages of online builds' backfills in flight on this server at once
+    /// (`backfill_page_slots`).
+    pub(crate) backfill_pages: tokio::sync::Semaphore,
     /// Row-lock requests in flight, by transaction (each makes one at a
     /// time): where the cross-shard deadlock detector starts.
     lock_requests: Mutex<HashMap<String, LockRequest>>,
@@ -1246,8 +1289,10 @@ impl Cluster {
             cfg.shards.len(),
         );
         let resources = crate::budget::Pool::new(cfg.resources.clone())?;
+        let backfill_pages = tokio::sync::Semaphore::new(backfill_page_slots(&cfg.resources));
         let c = Arc::new_cyclic(|me| Cluster {
             resources,
+            backfill_pages,
             statistics: crate::statistics::Statistics::default(),
             rpc_global,
             connections,
@@ -3332,6 +3377,23 @@ mod tests {
             config(r#","ddl_step_slice":100,"rpc":{"timeout_secs":120}"#).step_slice(),
             60.0
         );
+        // The backfill's pace (issue #303): its defaults, and each field.
+        let pace = config("").global_index_backfill;
+        assert_eq!((pace.page_rows, pace.pages_in_flight, pace.shards_at_once), (64, 1, 1));
+        let pace = config(r#","global_index_backfill":{"pages_in_flight":3}"#).global_index_backfill;
+        assert_eq!((pace.page_rows, pace.pages_in_flight, pace.shards_at_once), (64, 3, 1));
+        let pace = config(r#","global_index_backfill":{"page_rows":256,"pages_in_flight":2,"shards_at_once":0}"#)
+            .global_index_backfill;
+        assert_eq!((pace.page_rows, pace.pages_in_flight, pace.shards_at_once), (256, 2, 0));
+        assert!(serde_json::from_str::<ClusterConfig>(r#"{"shards":[],"global_index_backfill":{"pages":3}}"#).is_err());
+        // (half of the server's memory budget, in statements' budgets)
+        assert_eq!(backfill_page_slots(&crate::budget::Limits::default()), 4);
+        let small = crate::budget::Limits {
+            server_bytes: 100,
+            query_bytes: 64,
+            ..Default::default()
+        };
+        assert_eq!(backfill_page_slots(&small), 1);
     }
 
     #[test]

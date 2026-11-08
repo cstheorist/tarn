@@ -8,6 +8,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `global_index_backfill` in `cluster.json` sets the pace of an online
+  unique index build's backfill
+  ([#303](https://github.com/cstheorist/tarn/issues/303)): rows per page
+  (`page_rows`, 64), pages of a shard in flight (`pages_in_flight`, 1) and
+  shards at once (`shards_at_once`, 1; 0 for all). The defaults are the
+  pace from before. A shard's stored cursor passes a page once that page
+  and those before it have committed (`tla/GlobalUniqueWrites.tla` keeps
+  two pages in flight, with a control that passes one early,
+  `BugCursorOutOfOrder`), and once a shard's backfill fails, the pages in
+  flight finish before the error is returned. A page whose transaction
+  fails for a transient reason goes on in parts of 16 rows before a part
+  goes a row at a time. On one 2-CPU host for six storage nodes, the
+  fastest pace measured filled 2.9 times as fast, and made the table's
+  writes' p99 2.7 times as long (design §1.4). `scripts/cluster.sh` takes
+  the setting as `TARN_GLOBAL_INDEX_BACKFILL`.
+
 - `ALTER TABLE ... RENAME TO ...` along with index builds copies the table
   on replicated shards too, as other index builds do there (#267), and
   publishes the copy under the new name
