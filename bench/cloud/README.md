@@ -90,7 +90,7 @@ exact, from the merged histograms of all generators), `load.json`,
 - **Faults** run `oltp_read_write` at 64 threads per generator with every
   error ignored and counted, so the timeline continues through the failure,
   and with plain (not prepared) statements, which survive reconnecting.
-  YugabyteDB's sysbench fork has no such option: `patches/` adds
+  YugabyteDB's sysbench fork has no such option: `patches/sysbench-yb.patch` adds
   `--pgsql-ignore-errors=all`. `node-kill` kills shard 1's leader for Tarn and
   the store on `s1r1` for the others. `zone-cut` drops all traffic between
   the first zone and the rest (control excluded) for a third of the run;
