@@ -30,15 +30,25 @@ local function key(sid) return 'engine:' .. sid end
 function M.new(c)
     local E = {stale = true, epoch = 0, capture_epoch = 0, tracks = {}, triggers = {}, records = {},
         excluded = {}, by_space = {}, missing_ids = {}, durable = {}}
-    local mark
+    -- The cut the tickets wait for (c.mark()), in a table's field rather
+    -- than in a local of this function that invalidate_tickets assigns:
+    -- invalidate_tickets runs before this function returns, and a trace
+    -- LuaJIT records then stores into such a local as into an open upvalue,
+    -- without the collector's barrier, and goes on doing so once the
+    -- upvalue has closed. A store between the collector's marking of the
+    -- closed upvalue and its atomic phase left the new cut unmarked: it was
+    -- freed while still referenced, and a later collection crashed on the
+    -- memory reused (issue #160, lua/test/jit_upvalue_test.lua). A table's
+    -- field always takes the barrier.
+    local cut_mark = {}
     local q = require('tarn_lazy_meter').new{cfg = c.cfg, atomic = c.atomic,
         scan = function() return {0, 0, 0, 0} end,
-        cut = function() return mark ~= nil and c.cut(mark) end}
+        cut = function() local m = cut_mark.v; return m ~= nil and c.cut(m) end}
     E.tickets = q -- zero accounting, actual native transaction terminal tickets
     local function invalidate_tickets()
         q.invalidate()
-        mark = nil -- allocation failure while taking the new cut stays UNKNOWN
-        mark = c.mark()
+        cut_mark.v = nil -- allocation failure while taking the new cut stays UNKNOWN
+        cut_mark.v = c.mark()
     end
     invalidate_tickets()
     local function read(fn)

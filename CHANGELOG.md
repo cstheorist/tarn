@@ -213,6 +213,24 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A storage process no longer crashes in Lua's garbage collector after the
+  engine's tickets cut is replaced
+  ([#160](https://github.com/cstheorist/tarn/issues/160)). The engine's
+  constructor called the function that replaces the cut before returning,
+  and that function stored the new cut into a local of the constructor.
+  When LuaJIT happened to trace the function then, the trace stored into
+  the local as into an open upvalue, without the collector's barrier, and
+  it kept doing so after the constructor returned: on each box.status or
+  election change, and each engine copy's cut. A store between the
+  collector's marking of the closed upvalue and its atomic phase left the
+  new cut unmarked, so it was freed while still referenced, and a later
+  collection crashed on the reused memory (`gc_traverse_trace` in the
+  stack). The cut is now held in a table's field, whose store always takes
+  the barrier. `lua/test/jit_upvalue_test.lua` traces eagerly and checks
+  that no trace stores a collectable value through an open upvalue, in the
+  engine's constructor or while the storage module loads; it fails on the
+  old code. `docs/native-gc-investigation.md` has the evidence.
+
 - On vinyl tables, a unique index with a nullable column no longer loses
   rows after an `ALTER TABLE`
   ([#305](https://github.com/cstheorist/tarn/issues/305)). Tarantool's

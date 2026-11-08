@@ -1,8 +1,102 @@
 # Native GC crash investigation (#160)
 
-The original crash remains unexplained. This investigation preserves its
-evidence and runs independent historical/current, native/Lua and JIT
-controls. A green repeat is not a fix or proof of absence.
+Storage processes crashed in Lua's garbage collector. The cause found is
+in Tarn's Lua: the engine's constructor called a function that stored a
+fresh table into one of the constructor's locals, and a LuaJIT trace of
+that function stores without the collector's barrier once the local's
+upvalue has closed. The section "Cause" has the evidence and the fix. The
+sections after it keep the investigation as it stood before: its retained
+crashes, its matrices and its controls.
+
+## Cause
+
+**The runtime defect.** In Tarantool 3.9.0's LuaJIT (`8af934d9`), a trace
+recorded while a function's local is an open upvalue (the function still
+running) stores into it through `UREFO`, with no `OBAR`: an open upvalue
+lives on the stack, which the collector rescans. Nothing in the trace
+checks that the upvalue is still open, so once the function has returned,
+the trace stores into the closed upvalue the same way, with no barrier.
+A table stored after the collector has marked the closed upvalue, and
+before its atomic phase, is never marked: the collector frees it while the
+upvalue still refers to it. Upstream LuaJIT's
+[07b3cd3c](https://github.com/LuaJIT/LuaJIT/commit/07b3cd3cf9b57a3801a1ebc48144767e31671f21)
+guards such traces; this runtime doesn't have it.
+
+[`upvalue-barrier.lua`](../tests/evidence/native-gc-crash/upvalue-barrier.lua)
+reproduces it with Tarantool `3.9.0-0-g8b9a0f5` on Linux x86-64:
+- `make()` declares `mark` and calls `set()`, which stores a new table into
+  it, until `set()` is traced;
+- each trial calls `set()` once at a given step of a GC cycle, then finishes
+  the cycle;
+- a weak table tells whether the collector freed the table `mark` holds.
+
+| `set()` traced | The collector freed the live table |
+|---|---:|
+| while `mark` is open, as the engine's constructor did | 4,783 of 6,125 stores |
+| after `make()` returned | 0 of 5,657 |
+| while open, with `mark` a field of a table, as the fix holds it | 0 of 5,787 |
+
+**Where Tarn hit it.** `lua/tarn_engine.lua`'s constructor called
+`invalidate_tickets()` before returning, and `invalidate_tickets` stored the
+tickets' cut, a fresh table (`c.mark()`), into the constructor's local
+`mark`.
+- If a hotness counter fired during that call, LuaJIT recorded
+  `invalidate_tickets` with `mark` open. Functions share these counters,
+  so that can happen on a single call.
+- The trace then ran on every later invalidation: `M.init`, each
+  `box.status` change, each election change, and each engine copy's cut.
+- A jit.attach handler, preloaded into every tarantool process
+  (`tarantool -l`), reported each compiled trace that stores a collectable
+  value through `UREFO`. It ran over 12 starts of an RF3 shard, with the
+  JIT's hotness threshold lowered to 1, 2 and 3 so that code run only a
+  few times gets traced.
+- In 3 of the 36 storage processes, it found
+  `invalidate_tickets`'s store into `mark` (`tarn_engine.lua:38`, upvalue
+  1). It found nothing else in any process.
+
+**The retained core shows it** (run
+[41524455322](https://github.com/cstheorist/tarn/actions/runs/41524455322),
+native vinyl RF3; analysis in #160's comments):
+- the crashing process held trace 165 of `invalidate_tickets`: the
+  function loaded from the frame, `UREFO` of upvalue 1, a fresh table
+  stored through it, no `OBAR`;
+- `mark` was closed and black, and it held a pointer into the middle of a
+  192-byte node array of another table, a current allocation;
+- the collector crashed while traversing that pointer as an object
+  (`gc_traverse_trace`).
+
+That is the defect's outcome: the cut freed while referenced, its memory
+reused, and the next marking of `mark` reading the reuse. The native
+module plays no part in it, which fits the Lua-only memtx crash too.
+
+**The fix.** The engine holds the cut in a table's field (`cut_mark.v`).
+A store into a table's field always takes the table's barrier, in a trace
+as in the interpreter. `lua/test/jit_upvalue_test.lua` traces eagerly
+(hotloop 1) and inspects every trace compiled:
+- a control function that stores a table into a local of the function
+  calling it is found;
+- the engine's constructor gets `invalidate_tickets` traced, and stores
+  nothing through `UREFO`;
+- loading the storage module stores nothing through `UREFO` either.
+
+The test failed 15 of 15 runs with the old engine, and passed 30 of 30
+with the fix. Over the same 12 starts, the startup audit found nothing in
+the fixed code. Over the main storage tests (`lua/test/run.sh` with
+`storage_test.lua` and the others it runs by default, at the default
+hotness threshold), it found two traces, each storing a table into `last`
+from the callback that `tarn_bucket_rows` hands `M.move.copy_batch`. That
+callback runs only while `tarn_bucket_rows` does, so `last` is open
+whenever the trace runs: it lives on the stack, which the collector
+rescans, and needs no barrier.
+
+**Not established.**
+- The earlier crashes' cores are not available: the original
+  `40753059987`, `41070288089`, the Lua-only `41524455126` and main
+  `b621bb2` (#221). They crashed in the same collector routines, which is
+  consistent with traversing a freed or reused object, but this cause is
+  shown only for the core above.
+- Only this store pattern was audited. Other defects of this runtime's JIT
+  are not excluded.
 
 ## Retained observation
 
