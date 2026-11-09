@@ -19,11 +19,25 @@
  * read-view validation, term watermarks, locks and DDL are separate premises.
  * Raw IPROTO reads have no such barrier; opted-in lazy indexes may still miss
  * matches after base-row freshness. Neither is certified by this invariant.
+ *
+ * Two behaviours of Tarantool 3.9's synchronous queue (txn_limbo.c, raft.c,
+ * applier.cc; issue #314), which the base configurations do not assume:
+ *   PromoteSettles: a new leader's PROMOTE confirms the queue it inherits and
+ *     leaves it empty before box_raft_is_ro() lets the leader write.
+ *   TermBeforeRows: a term's rows follow its PROMOTE in every WAL, and
+ *     preparing that PROMOTE makes its receiver read-only.
+ * With both, a writable owner's queue holds only its own unacknowledged
+ * transactions, and OwnerBarrier (replies and catch-up, without the queue
+ * wait) suffices before a read that checks its role again afterwards.
+ * LockCall is tarn_lock's order: the term is taken after the barrier, when
+ * the call checks that it is writable, and checked again at its end
+ * (writable() and pl_intact). BugNoRecheck drops those checks.
  *)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS WriteQuorum, ReadQuorum, BugRoleOnly, BugReuseBarrier,
-          BugSnapshotBeforeBarrier, BugSkipCatchup, BugSkipSettlement
+          BugSnapshotBeforeBarrier, BugSkipCatchup, BugSkipSettlement,
+          OwnerBarrier, LockCall, PromoteSettles, TermBeforeRows, BugNoRecheck
 
 Nodes == {"A", "B", "C"}
 Writes == {1, 2}
@@ -38,12 +52,20 @@ FaultLinks == {
     {<<"B", "A">>, <<"C", "A">>, <<"B", "C">>, <<"C", "B">>}}
 Leader(t) == IF t = 2 THEN "B" ELSE "A"
 Max(a, b) == IF a >= b THEN a ELSE b
+(* Write w is acknowledged in term w + 1 (AckWrite). *)
+WriteTerm(w) == w + 1
+RowsTerm(S) == IF S = {} THEN 0
+               ELSE CHOOSE t \in {WriteTerm(w) : w \in S} :
+                        \A w \in S : WriteTerm(w) <= t
 Quorums(q) == {Q \in SUBSET Nodes : Cardinality(Q) = q}
 
 ASSUME /\ WriteQuorum \in 1..3 /\ ReadQuorum \in 1..3
        /\ BugRoleOnly \in BOOLEAN /\ BugReuseBarrier \in BOOLEAN
        /\ BugSnapshotBeforeBarrier \in BOOLEAN
        /\ BugSkipCatchup \in BOOLEAN /\ BugSkipSettlement \in BOOLEAN
+       /\ OwnerBarrier \in BOOLEAN /\ LockCall \in BOOLEAN
+       /\ PromoteSettles \in BOOLEAN /\ TermBeforeRows \in BOOLEAN
+       /\ BugNoRecheck \in BOOLEAN
 
 VARIABLES term, observed, writable, wal, settled, acked, links, netStep,
           paused, pauseStep, readId, phase, target, readTerm, need,
@@ -88,6 +110,9 @@ AckWrite(w, Q) ==
                    target, readTerm, need, sent, replied, sample, snapshot,
                    cached, completed>>
 
+(* PromoteSettles: the new leader's PROMOTE confirms what its queue holds
+ * before the leader can write (txn_limbo_promote).
+ *)
 Elect(Q) ==
     LET t == term + 1 n == Leader(t) IN
     /\ term < 3 /\ Q \in Quorums(WriteQuorum) /\ n \in Q
@@ -95,7 +120,9 @@ Elect(Q) ==
     /\ term' = t
     /\ observed' = [v \in Nodes |-> IF v \in Q THEN t ELSE observed[v]]
     /\ writable' = (writable \ Q) \cup {n}
-    /\ UNCHANGED <<wal, settled, acked, links, netStep, paused, pauseStep,
+    /\ settled' = IF PromoteSettles THEN [settled EXCEPT ![n] = wal[n]]
+                   ELSE settled
+    /\ UNCHANGED <<wal, acked, links, netStep, paused, pauseStep,
                    readId, phase, target, readTerm, need, sent, replied,
                    sample, snapshot, cached, completed>>
 
@@ -107,10 +134,19 @@ ObserveTerm(a, b) ==
                    pauseStep, readId, phase, target, readTerm, need, sent,
                    replied, sample, snapshot, cached, completed>>
 
+(* TermBeforeRows: a row of a term newer than b knows follows that term's
+ * PROMOTE, and preparing the PROMOTE makes b read-only (txn_limbo_req_prepare
+ * before the applier's WAL write).
+ *)
 Replicate(a, b) ==
+    LET t == RowsTerm(wal[a] \ wal[b]) IN
     /\ Running(a) /\ Running(b) /\ Link(a, b) /\ ~wal[a] \subseteq wal[b]
     /\ wal' = [wal EXCEPT ![b] = @ \cup wal[a]]
-    /\ UNCHANGED <<term, observed, writable, settled, acked, links, netStep,
+    /\ IF TermBeforeRows /\ t > observed[b]
+       THEN /\ observed' = [observed EXCEPT ![b] = t]
+            /\ writable' = writable \ {b}
+       ELSE UNCHANGED <<observed, writable>>
+    /\ UNCHANGED <<term, settled, acked, links, netStep,
                    paused, pauseStep, readId, phase, target, readTerm, need,
                    sent, replied, sample, snapshot, cached, completed>>
 
@@ -195,17 +231,27 @@ CaughtUp ==
                    netStep, paused, pauseStep, readId, target, readTerm,
                    need, sent, replied, sample, snapshot, cached, completed>>
 
+(* OwnerBarrier skips the queue wait (txn_limbo_wait_last_txn) as
+ * BugSkipSettlement does: only the two premises make that safe. With
+ * LockCall, the call checks that it is writable once the barrier ends and
+ * takes its term then (pl_begin).
+ *)
 Barrier ==
     /\ phase = "settle" /\ Running(target)
-    /\ wal[target] \subseteq settled[target] \/ BugSkipSettlement
+    /\ wal[target] \subseteq settled[target] \/ BugSkipSettlement \/ OwnerBarrier
+    /\ LockCall => (target \in writable \/ BugNoRecheck)
+    /\ readTerm' = IF LockCall THEN observed[target] ELSE readTerm
     /\ phase' = "read" /\ cached' = sample
     /\ UNCHANGED <<term, observed, writable, wal, settled, acked, links,
-                   netStep, paused, pauseStep, readId, target, readTerm,
+                   netStep, paused, pauseStep, readId, target,
                    need, sent, replied, sample, snapshot, completed>>
 
+(* The read, and the role check that follows it (LockCall: writable() and
+ * pl_intact at the end of the call).
+ *)
 FirstRead ==
     /\ phase = "read" /\ Running(target)
-    /\ target \in writable /\ observed[target] = readTerm
+    /\ (target \in writable /\ observed[target] = readTerm) \/ BugNoRecheck
     /\ completed' = completed \cup {
         [required |-> need,
          seen |-> IF BugSnapshotBeforeBarrier THEN snapshot ELSE settled[target]]}

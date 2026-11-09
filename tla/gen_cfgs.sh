@@ -648,7 +648,7 @@ mk_key_batch Bug_KeyBatchTruncatedComplete BugTruncatedComplete
 # reply ownership, and the separate record-expiry timing/policy premises.
 freshness_flags () {
     case "$1" in
-      StrongReadFreshness) echo 'BugRoleOnly BugReuseBarrier BugSnapshotBeforeBarrier BugSkipCatchup BugSkipSettlement' ;;
+      StrongReadFreshness) echo 'BugRoleOnly BugReuseBarrier BugSnapshotBeforeBarrier BugSkipCatchup BugSkipSettlement OwnerBarrier LockCall PromoteSettles TermBeforeRows BugNoRecheck' ;;
       RecordExpiryClock) echo 'BugExcessSkew BugSingleMargin BugClockBackward BugRaiseMaxAge BugFutureTimestamp BugMissingTimestamp' ;;
       RecordExpiryPolicy) echo 'BugNoWatermark BugMutablePolicy BugEntryOnly BugIgnoreHealth' ;;
       StrongStreamCertificate) echo 'BugCertifyLateSnapshot BugMarkBeforeBarrier BugWrongTxnID BugNoCleanup BugIgnoreCap' ;;
@@ -680,7 +680,7 @@ mk_freshness () {
             echo "  ReadQuorum = $read_quorum"
         fi
         for flag in $(freshness_flags "$family"); do
-            value=FALSE; [ "$flag" = "$enabled" ] && value=TRUE
+            value=FALSE; case " $enabled " in *" $flag "*) value=TRUE ;; esac
             echo "  $flag = $value"
         done
         echo "INVARIANTS $inv"
@@ -692,6 +692,17 @@ for flag in RoleOnly ReuseBarrier SnapshotBeforeBarrier SkipCatchup SkipSettleme
     mk_freshness "Bug_StrongRead$flag" StrongReadFreshness "Bug$flag"
 done
 mk_freshness Bug_StrongReadNoIntersection StrongReadFreshness ''
+# tarn_lock's order, and a barrier without the queue wait under the queue's
+# two premises (issue #314).
+mk_freshness StrongReadLockCall StrongReadFreshness LockCall
+owner='OwnerBarrier PromoteSettles TermBeforeRows'
+mk_freshness StrongReadOwnerBarrier StrongReadFreshness "$owner"
+mk_freshness StrongReadOwnerLockCall StrongReadFreshness "$owner LockCall"
+for flag in RoleOnly ReuseBarrier SnapshotBeforeBarrier SkipCatchup NoRecheck; do
+    mk_freshness "Bug_StrongReadOwner$flag" StrongReadFreshness "$owner LockCall Bug$flag"
+done
+mk_freshness Bug_StrongReadOwnerUnsettledPromote StrongReadFreshness 'OwnerBarrier TermBeforeRows LockCall'
+mk_freshness Bug_StrongReadOwnerRowsBeforeTerm StrongReadFreshness 'OwnerBarrier PromoteSettles LockCall'
 mk_freshness RecordExpiryClock RecordExpiryClock ''
 for flag in SingleMargin ExcessSkew ClockBackward RaiseMaxAge FutureTimestamp MissingTimestamp; do
     mk_freshness "Bug_RecordExpiry$flag" RecordExpiryClock "Bug$flag"

@@ -1,0 +1,424 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=42491 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 115 and seed 1413303706626855737 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 27972] (Linux 6.18.44-fc-v310 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-fresh/tla/StrongReadFreshness.tla
+Parsing file /tmp/tlc-17316061817320675119/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-17316061817320675119/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-17316061817320675119/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-17316061817320675119/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-17316061817320675119/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-17316061817320675119/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-17316061817320675119/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module StrongReadFreshness
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module StrongReadFreshness
+Starting... (2026-11-08 19:46:44)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-08 19:46:45.
+Progress(13) at 2026-11-08 19:46:48: 305,336 states generated (305,336 s/min), 77,909 distinct states found (77,909 ds/min), 27,553 states left on queue.
+Error: Invariant StrongReadsSeePriorAcks is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = "idle"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 0
+/\ writable = {"A"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 1, C |-> 1]
+/\ settled = [A |-> {}, B |-> {}, C |-> {}]
+/\ replied = {}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {}
+/\ wal = [A |-> {}, B |-> {}, C |-> {}]
+/\ cached = {}
+/\ term = 1
+/\ acked = {}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 2: <Elect({"B", "C"}) line 118, col 5 to line 127, col 56 of module StrongReadFreshness>
+/\ phase = "idle"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 0
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {}, C |-> {}]
+/\ replied = {}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {}
+/\ wal = [A |-> {}, B |-> {}, C |-> {}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 3: <BeginRead("A") line 190, col 5 to line 200, col 66 of module StrongReadFreshness>
+/\ phase = "collect"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {}, C |-> {}]
+/\ replied = {"A"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A"}
+/\ wal = [A |-> {}, B |-> {}, C |-> {}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 4: <Send("B") line 203, col 5 to line 208, col 81 of module StrongReadFreshness>
+/\ phase = "collect"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {}, C |-> {}]
+/\ replied = {"A"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {}, C |-> {}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 5: <Reply("B") line 211, col 5 to line 217, col 70 of module StrongReadFreshness>
+/\ phase = "collect"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {}, C |-> {}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 6: <AckWrite(1,{"B", "C"}) line 100, col 5 to line 111, col 38 of module StrongReadFreshness>
+/\ phase = "collect"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 7: <Collected line 220, col 5 to line 224, col 77 of module StrongReadFreshness>
+/\ phase = "catchup"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 8: <CaughtUp line 227, col 5 to line 232, col 77 of module StrongReadFreshness>
+/\ phase = "settle"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 9: <Barrier line 240, col 5 to line 247, col 69 of module StrongReadFreshness>
+/\ phase = "read"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 10: <FirstRead line 253, col 5 to line 261, col 66 of module StrongReadFreshness>
+/\ phase = "idle"
+/\ need = {}
+/\ completed = {[required |-> {}, seen |-> {}]}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 11: <BeginRead("A") line 190, col 5 to line 200, col 66 of module StrongReadFreshness>
+/\ phase = "catchup"
+/\ need = {1}
+/\ completed = {[required |-> {}, seen |-> {}]}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 2
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 12: <CaughtUp line 227, col 5 to line 232, col 77 of module StrongReadFreshness>
+/\ phase = "settle"
+/\ need = {1}
+/\ completed = {[required |-> {}, seen |-> {}]}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 2
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 13: <Barrier line 240, col 5 to line 247, col 69 of module StrongReadFreshness>
+/\ phase = "read"
+/\ need = {1}
+/\ completed = {[required |-> {}, seen |-> {}]}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 2
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 14: <FirstRead line 253, col 5 to line 261, col 66 of module StrongReadFreshness>
+/\ phase = "idle"
+/\ need = {1}
+/\ completed = {[required |-> {}, seen |-> {}], [required |-> {1}, seen |-> {}]}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 2
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+615753 states generated, 142201 distinct states found, 36872 states left on queue.
+The depth of the complete state graph search is 14.
+Finished in 05s at (2026-11-08 19:46:50)
+Trace exploration spec path: ./StrongReadFreshness_TTrace_1794185204.tla
