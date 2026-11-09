@@ -8,23 +8,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `TARN_LOCK_BARRIER=owner` on the storage nodes gives READ COMMITTED lock
-  calls (`tarn_lock`, `tarn_lock_range`) a freshness barrier without
-  Tarantool's wait for the newest transaction in the synchronous queue
-  ([#314](https://github.com/cstheorist/tarn/issues/314)). Off by default
-  (`queue`).
-  - In place of an empty `linearizable` transaction, the call waits for a
-    round of `tarn_peer_vclock` calls to the shard's other replicas. The
-    round is shared by the lock calls that began before it.
-  - The local WAL then catches up to their vclocks, and the call checks
-    that it is still writable in the same term, as before.
-  - A replica without `tarn_peer_vclock`, during a rolling upgrade, sends
-    the call to the full barrier.
-  - `tla/StrongReadFreshness.tla` checks it under two premises of
-    Tarantool's queue. `lua/test/owner_barrier.sh` checks it on an RF3
-    shard. `.github/workflows/rc-guard-cost.yml` compares it with the
-    default (hypothesis `lock-barrier`).
-
 - `global_index_backfill` in `cluster.json` sets the pace of an online
   unique index build's backfill
   ([#303](https://github.com/cstheorist/tarn/issues/303)): rows per page
@@ -1275,6 +1258,29 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   snapshot consistency, locks, paging bounds and routing.
 
 ### Changed
+
+- READ COMMITTED lock calls (`tarn_lock`, `tarn_lock_range`) no longer wait
+  for the newest transaction in the shard's synchronous queue before they
+  lock ([#314](https://github.com/cstheorist/tarn/issues/314)). Their
+  freshness barrier was Tarantool's `linearizable` barrier.
+  - Now a round of `tarn_peer_vclock` calls goes to as many of the shard's
+    other replicas as a quorum needs. The round is shared by the lock calls
+    that began before it. The local WAL then catches up to their vclocks.
+  - The call checks, as before, that it is still writable in the same term.
+  - On hosted runners, with unrelated keys in flight, READ COMMITTED
+    transactions committed 20–35% more often and their p99 fell 12–20%.
+    With one client or a hot key they committed about as often. TX CPU per
+    transaction rose by up to 10% (`bench/LOCK_BARRIER.md`).
+  - `tla/StrongReadFreshness.tla` checks it under two premises of
+    Tarantool's queue. `lua/test/owner_barrier.sh` checks it on an RF3
+    shard.
+  - A replica without `tarn_peer_vclock` (during a rolling upgrade), or
+    fewer replicas configured than a quorum needs, sends the call to the
+    full barrier.
+  - `TARN_LOCK_BARRIER=queue` on the storage nodes keeps the full barrier.
+    `auto` runs the full barrier while the queue is empty, and the round
+    otherwise. `.github/workflows/rc-guard-cost.yml` compares them
+    (hypotheses `lock-barrier` and `lock-barrier-auto`).
 
 - An online unique index build's backfill does less work per row
   ([#310](https://github.com/cstheorist/tarn/issues/310)). A page's

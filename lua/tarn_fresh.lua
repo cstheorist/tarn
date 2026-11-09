@@ -258,9 +258,9 @@ function M.new(c)
     -- did, as the relays' vclock sync serves concurrent native barriers. It
     -- asks as many replicas as a quorum needs, those that answered the last
     -- round first, and the others once those haven't answered within a few
-    -- round trips. A replica without tarn_peer_vclock (a rolling upgrade)
-    -- sends the caller to the full barrier. (The state is in fields:
-    -- jit_upvalue_test.lua.)
+    -- round trips. A replica without tarn_peer_vclock (a rolling upgrade),
+    -- or fewer replicas configured than a quorum needs, sends the caller to
+    -- the full barrier. (The state is in fields: jit_upvalue_test.lua.)
     local OB = {started = 0, done = 0, want = 0, result = nil, conns = {}, rounds = 0, fallbacks = 0,
                 asked = 0, prefer = {}, rtt = nil, patience = 0.005, cond = fiber.cond(), wake = fiber.cond()}
     F.ob = OB
@@ -323,6 +323,9 @@ function M.new(c)
             end
         end
         for _, uri in ipairs(later) do peers[#peers + 1] = uri end
+        -- Too few replicas configured for a quorum (no peers in cluster.json,
+        -- say): the full barrier.
+        if #peers < r - 1 then return {failed = 'unsupported'} end
         local replies = fiber.channel(#peers + 1)
         local asked = 0
         local function more(k)

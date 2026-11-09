@@ -281,8 +281,9 @@ require('tarn').init{
     -- Profiling: count the phases of READ COMMITTED row locks and commits
     -- (lua/tarn_phases.lua, tarn_rc_phases).
     rc_phases = env('TARN_RC_PHASES', '') ~= '',
-    -- The lock calls' freshness barrier: queue (default) or owner (issue #314).
-    lock_barrier = env('TARN_LOCK_BARRIER', 'queue'),
+    -- The lock calls' freshness barrier: owner (default), queue or auto
+    -- (issue #314).
+    lock_barrier = env('TARN_LOCK_BARRIER', 'owner'),
     load_window = tonumber(env('TARN_LOAD_WINDOW', '60')),
     move_batch_rows = move_limit('TARN_MOVE_BATCH_ROWS', '512'),
     move_batch_bytes = move_limit('TARN_MOVE_BATCH_BYTES', '1048576'),

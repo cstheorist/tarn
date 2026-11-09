@@ -93,12 +93,12 @@ local M = {
         test_hooks = false,      -- tests: tarn_test_hook may hold yield points
         check_locks = false,     -- tests: the native module's copy of the lock index is checked (BK.ns_check_locks)
         rc_phases = false,       -- profiling: count the phases of tarn_lock and tarn_commit_rc (lua/tarn_phases.lua)
-        -- The freshness barrier of tarn_lock and tarn_lock_range: 'queue',
-        -- Tarantool's linearizable barrier; 'owner', the same without its
-        -- wait for the synchronous queue (lua/tarn_fresh.lua, issue #314);
-        -- or 'auto', 'owner' while the queue holds transactions, which that
-        -- wait would be for, else 'queue'.
-        lock_barrier = 'queue',
+        -- The freshness barrier of tarn_lock and tarn_lock_range: 'owner',
+        -- Tarantool's linearizable barrier without its wait for the
+        -- synchronous queue (lua/tarn_fresh.lua, issue #314); 'queue', the
+        -- full barrier; or 'auto', 'owner' while the queue holds
+        -- transactions, which that wait would be for, else 'queue'.
+        lock_barrier = 'owner',
         -- election_watchdog: seconds without a leader before a candidate
         -- stands itself (nil: three election timeouts; 0: never; see
         -- "Election watchdog").
