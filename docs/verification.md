@@ -98,7 +98,7 @@ of workload, fault budget and options. The names say what is checked:
 | `StreamMarks` | a separate local refinement model of the transaction numbers by which a shard knows that a stream began in its current term and after any `TRUNCATE` of a table it read, and of the premises the native steps rely on |
 | `Handback*` | a separate model of the contract between the SQL server and a native procedure that commits writes: served as the Lua procedure would, or handed back unchanged, never once its commit began, and never sent again after a lost connection (`*_Autocommit`: an autocommit write) |
 | `NativeKeyBatch` | a bounded native full-primary-key batch returns the complete ordered filter-map of one memtx image, checking write claims even on missing keys, or hands the whole request back |
-| `StrongReadFreshness` | a request-specific quorum observation, local WAL catch-up and synchronous-queue settlement precede the first strong snapshot |
+| `StrongReadFreshness` | a request-specific quorum observation, local WAL catch-up and synchronous-queue settlement precede the first strong snapshot; `StrongReadOwner*`: without the settlement, given two premises of Tarantool's queue and a role check after the catch-up (issue #314) |
 | `StrongStreamCertificate` | an owned empty transaction is certified after its first barrier and before any read; later reads require that exact native transaction ID |
 | `StrongStreamCompletion` | a separate final quorum prefix precedes validation of the original caller transaction/read set; neither skipping the prefix nor replacing the read set may commit a fractured view |
 | `LockReplyOwnership` | a yielding locking RPC returns rows only under its original observed role/generation and live session |
@@ -2441,6 +2441,47 @@ result. Native quorum durability, log/term safety, unconfirmed rollback,
 WAL catch-up and queue settlement remain trusted replication premises;
 this model does not implement Tarantool or prove its public C API mapping.
 
+Issue #314 adds two behaviours of Tarantool 3.9's synchronous queue as
+premises, off in the configurations above:
+- **A new leader settles its queue before it writes.** `txn_limbo_promote`
+  waits for a quorum on the entries the queue inherits, and its PROMOTE
+  confirms them and leaves the queue empty. Until then `box_raft_is_ro()`
+  keeps the leader read-only. In the model, an election settles the new
+  leader's WAL (`PromoteSettles`).
+- **A newer term's PROMOTE makes an instance read-only before that term's
+  rows reach its WAL.** Each WAL holds a term's PROMOTE ahead of the rows
+  written in that term, and `txn_limbo_req_prepare` makes the instance
+  read-only before the applier's WAL write of that PROMOTE. In the model,
+  receiving a newer term's write raises the receiver's term and takes its
+  writable role (`TermBeforeRows`).
+
+With both premises, a writable owner's queue holds only its own
+unacknowledged transactions. A barrier without the queue wait, made of the
+reply quorum and the catch-up, then gives `StrongReadsSeePriorAcks`
+(`StrongReadOwnerBarrier`).
+
+`LockCall` follows `tarn_lock`. The call checks that it is writable once
+the barrier ends and takes its term then; at its end it checks both again
+(`writable()` and `pl_intact`). `StrongReadLockCall` checks this with the
+full barrier and `StrongReadOwnerLockCall` with the barrier without the
+queue wait.
+
+Under the barrier without the queue wait and the lock call's checks, seven
+controls each reach a lock call that misses a prior acknowledged write:
+- the role-only read, a reused barrier, a snapshot taken before the
+  barrier, and a skipped catch-up, as above;
+- `BugNoRecheck`, which drops the role checks after the barrier (with the
+  queue wait, those checks aren't needed);
+- `Bug_StrongReadOwnerUnsettledPromote`, without the first premise: A,
+  elected again in term 3, reads without B's term-2 write;
+- `Bug_StrongReadOwnerRowsBeforeTerm`, without the second: a former leader
+  receives B's write without learning B's term, stays writable and reads
+  without it.
+
+The last two show what the barrier without the queue wait relies on. They
+also show why `Bug_StrongReadSkipSettlement` fails when neither premise is
+assumed.
+
 `StrongStreamCertificate.tla` checks a separate provenance obligation.
 Only an owned empty transaction is marked after its first barrier and
 before any read. Later Lua/native reads require the exact current native
@@ -2667,11 +2708,14 @@ and user/protocol writes are atomically durable. It does not establish
 initial clock history, health certification, fault persistence before a
 crash, or native WAL semantics.
 
-The nine positive outcomes are:
+The twelve positive outcomes are:
 
 | Configuration | Distinct states | Depth | Principal invariant |
 |---|---:|---:|---|
 | `StrongReadFreshness` | 2,443,260 | 31 | `StrongReadsSeePriorAcks` |
+| `StrongReadLockCall` | 2,580,420 | 31 | `StrongReadsSeePriorAcks` |
+| `StrongReadOwnerBarrier` | 803,160 | 29 | `StrongReadsSeePriorAcks` |
+| `StrongReadOwnerLockCall` | 876,360 | 29 | `StrongReadsSeePriorAcks` |
 | `StrongStreamCertificate` | 24,180 | 19 | certificate provenance, exact ID, lifetime and capacity |
 | `StrongStreamCompletion` | 3,369 | 19 | `NoFracturedCommit`, `CollectedCoversStartAck` |
 | `LockReplyOwnership` | 184 | 12 | `ReturnedRowsLocked`, `ReplyKeepsEntryGeneration` |
@@ -2681,16 +2725,17 @@ The nine positive outcomes are:
 | `LogicalClockExpiry` | 85,476 | 19 | `LogicalBand`, `NoFalseNO` |
 | `DepartureDependencies` | 564 | 17 | `NoOrphanPrepared`, `NoOrphanStaging`, `NoNewDependencyAfterDrainACK` |
 
-All 42 focused configurations (nine positive and 33 expected controls) are
+All 52 focused configurations (12 positive and 40 expected controls) are
 generated and included in the default list. The first 36 belong to the
 validated 246-case union below; six departure checks passed separately
-through the registered checker with those prior inputs unchanged. This is
+through the registered checker with those prior inputs unchanged, and so
+did the ten issue #314 checks. This is
 not a claim that the entire runtime CI suite passed. Per-control states and violated invariants are
 in the generated [design results table](design.md#51-model-checking).
 Run only these checks with the same outcome checker as CI:
 
 ```sh
-configs=(StrongReadFreshness StrongStreamCertificate StrongStreamCompletion LockReplyOwnership RecordExpiryClock RecordExpiryPolicy CompletionRetention LogicalClockExpiry DepartureDependencies)
+configs=(StrongReadFreshness StrongReadLockCall StrongReadOwnerBarrier StrongReadOwnerLockCall StrongStreamCertificate StrongStreamCompletion LockReplyOwnership RecordExpiryClock RecordExpiryPolicy CompletionRetention LogicalClockExpiry DepartureDependencies)
 for family in StrongRead StrongStream StreamCompletion LockReply RecordExpiry RecordPolicy CompletionRetention LogicalClock Departure; do
   for cfg in tla/Bug_${family}*.cfg; do
     name=${cfg#tla/}

@@ -3098,31 +3098,32 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineCopyTailUnchecked | violates CheckedImage | 137124 | 413836 | 14 | 05s | 14 |
 | Bug_EngineCopyUnbindEarly | violates PreparedImage | 459597 | 1564903 | 17 | 12s | 17 |
 | Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 554 | 898 | 6 | 00s | 6 |
-| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 43487 | 242696 | 12 | 03s | 12 |
-| Bug_EngineCutoverAbortKeepsMade | violates AbortedMadeRetired | 1200 | 3313 | 4 | 01s | 4 |
-| Bug_EngineCutoverAbortRetiresDropped | violates RetiredOnlyUnnamed | 1008 | 2579 | 4 | 01s | 4 |
-| Bug_EngineCutoverAbortRetiresKept | violates KeptLazyAlive | 288 | 468 | 3 | 01s | 3 |
-| Bug_EngineCutoverAbortSkipsMissing | violates AbortedMadeRetired | 5450 | 20321 | 6 | 01s | 6 |
-| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 49386 | 279743 | 13 | 03s | 13 |
-| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 41228 | 235663 | 12 | 04s | 12 |
-| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 15782 | 70057 | 8 | 01s | 8 |
-| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 38 | 38 | 2 | 00s | 2 |
-| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 39 | 39 | 2 | 00s | 2 |
-| Bug_EngineCutoverKeptByNameOnly | violates KeptFound | 15780 | 70055 | 8 | 02s | 8 |
-| Bug_EngineCutoverMadeUnbound | violates MadeBound | 36605 | 199495 | 11 | 03s | 11 |
-| Bug_EngineCutoverNoPendingNew | violates KeptLazyCaptured | 18236 | 102791 | 13 | 02s | 13 |
-| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 41228 | 235663 | 12 | 03s | 12 |
-| Bug_EngineCutoverPendingOnlyKept | violates KeptLazyCaptured | 31211 | 181755 | 13 | 03s | 13 |
-| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 26144 | 122608 | 9 | 02s | 9 |
-| Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 40207 | 212970 | 11 | 03s | 11 |
-| Bug_EngineCutoverPublishBeforeKeptRename | violates KeptNamedAfterCatalog | 30339 | 155590 | 10 | 02s | 10 |
-| Bug_EngineCutoverPublishUnready | violates MadePublished | 36605 | 199495 | 11 | 03s | 11 |
-| Bug_EngineCutoverReadyUnscanned | violates MadePublished | 41875 | 225687 | 11 | 03s | 11 |
-| Bug_EngineCutoverRebindAfterPublish | violates KeptLazyBound | 36605 | 199495 | 11 | 03s | 11 |
-| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 46886 | 279936 | 14 | 04s | 14 |
-| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 41231 | 235670 | 12 | 03s | 12 |
-| Bug_EngineCutoverRetireBeforePublish | violates RetiredOnlyUnnamed | 268 | 414 | 3 | 00s | 3 |
-| Bug_EngineCutoverRetireKept | violates KeptAlive | 41225 | 235660 | 12 | 03s | 12 |
+| Bug_EngineCutoverAbortAfterDecision | violates AbortedUnderOldName | 31500 | 139854 | 8 | 02s | 8 |
+| Bug_EngineCutoverAbortKeepsMade | violates AbortedMadeRetired | 2364 | 6481 | 4 | 01s | 4 |
+| Bug_EngineCutoverAbortRetiresDropped | violates RetiredOnlyUnnamed | 1960 | 4963 | 4 | 01s | 4 |
+| Bug_EngineCutoverAbortRetiresKept | violates KeptLazyAlive | 552 | 876 | 3 | 00s | 3 |
+| Bug_EngineCutoverAbortSkipsMissing | violates AbortedMadeRetired | 10712 | 39773 | 6 | 01s | 6 |
+| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 100481 | 567008 | 13 | 06s | 13 |
+| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 83009 | 473821 | 12 | 05s | 12 |
+| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 31499 | 139822 | 8 | 02s | 8 |
+| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 74 | 74 | 2 | 00s | 2 |
+| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 75 | 75 | 2 | 00s | 2 |
+| Bug_EngineCutoverKeptByNameOnly | violates KeptFound | 31496 | 139819 | 8 | 02s | 8 |
+| Bug_EngineCutoverMadeUnbound | violates MadeBound | 73433 | 399523 | 11 | 04s | 11 |
+| Bug_EngineCutoverNoPendingNew | violates KeptLazyCaptured | 36882 | 208138 | 13 | 03s | 13 |
+| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 83009 | 473821 | 12 | 05s | 12 |
+| Bug_EngineCutoverPendingOnlyKept | violates KeptLazyCaptured | 63097 | 367638 | 13 | 04s | 13 |
+| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 52804 | 246120 | 9 | 03s | 9 |
+| Bug_EngineCutoverPublishBeforeDecision | violates AbortedUnderOldName | 19408 | 79129 | 7 | 01s | 7 |
+| Bug_EngineCutoverPublishBeforeKeptRename | violates KeptNamedAfterCatalog | 60663 | 310806 | 10 | 04s | 10 |
+| Bug_EngineCutoverPublishUnready | violates MadePublished | 73433 | 399523 | 11 | 04s | 11 |
+| Bug_EngineCutoverReadyUnscanned | violates MadePublished | 84203 | 452929 | 11 | 05s | 11 |
+| Bug_EngineCutoverRebindAfterPublish | violates KeptLazyBound | 73433 | 399523 | 11 | 04s | 11 |
+| Bug_EngineCutoverRenameBeforeKept | violates KeptFound | 31864 | 141888 | 8 | 02s | 8 |
+| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 94752 | 567211 | 14 | 05s | 14 |
+| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 83012 | 473828 | 12 | 05s | 12 |
+| Bug_EngineCutoverRetireBeforePublish | violates RetiredOnlyUnnamed | 532 | 822 | 3 | 00s | 3 |
+| Bug_EngineCutoverRetireKept | violates KeptAlive | 83006 | 473818 | 12 | 05s | 12 |
 | Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FairnessPrefix | violates BoundedWait | 1281 | 1281 | 6 | 00s | 6 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
@@ -3297,12 +3298,19 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_StreamMarksRoAfterTermChange | violates CommittedReadsCurrent | 165 | 202 | 5 | 00s | 4 |
 | Bug_StreamMarksValidateNoFenceFresh | violates CommittedReadsCurrent | 70994 | 178466 | 11 | 02s | 9 |
 | Bug_StreamMarksWritableBeforeTrigger | violates CommittedReadsCurrent | 462 | 706 | 6 | 00s | 5 |
-| Bug_StrongReadNoIntersection | violates StrongReadsSeePriorAcks | 11323 | 31467 | 9 | 00s | 8 |
-| Bug_StrongReadReuseBarrier | violates StrongReadsSeePriorAcks | 342886 | 1571900 | 15 | 02s | 14 |
-| Bug_StrongReadRoleOnly | violates StrongReadsSeePriorAcks | 396 | 727 | 6 | 00s | 5 |
-| Bug_StrongReadSkipCatchup | violates StrongReadsSeePriorAcks | 43183 | 148151 | 11 | 00s | 10 |
-| Bug_StrongReadSkipSettlement | violates StrongReadsSeePriorAcks | 38069 | 127663 | 11 | 00s | 11 |
-| Bug_StrongReadSnapshotBeforeBarrier | violates StrongReadsSeePriorAcks | 80486 | 286081 | 12 | 00s | 12 |
+| Bug_StrongReadNoIntersection | violates StrongReadsSeePriorAcks | 11156 | 30943 | 8 | 01s | 8 |
+| Bug_StrongReadOwnerNoRecheck | violates StrongReadsSeePriorAcks | 42078 | 152808 | 11 | 02s | 11 |
+| Bug_StrongReadOwnerReuseBarrier | violates StrongReadsSeePriorAcks | 142201 | 615753 | 14 | 05s | 14 |
+| Bug_StrongReadOwnerRoleOnly | violates StrongReadsSeePriorAcks | 310 | 624 | 5 | 00s | 5 |
+| Bug_StrongReadOwnerRowsBeforeTerm | violates StrongReadsSeePriorAcks | 55772 | 197097 | 11 | 02s | 11 |
+| Bug_StrongReadOwnerSkipCatchup | violates StrongReadsSeePriorAcks | 24166 | 81625 | 10 | 02s | 10 |
+| Bug_StrongReadOwnerSnapshotBeforeBarrier | violates StrongReadsSeePriorAcks | 65610 | 252724 | 12 | 03s | 12 |
+| Bug_StrongReadOwnerUnsettledPromote | violates StrongReadsSeePriorAcks | 38710 | 134860 | 11 | 02s | 11 |
+| Bug_StrongReadReuseBarrier | violates StrongReadsSeePriorAcks | 316141 | 1411510 | 14 | 08s | 14 |
+| Bug_StrongReadRoleOnly | violates StrongReadsSeePriorAcks | 332 | 650 | 5 | 00s | 5 |
+| Bug_StrongReadSkipCatchup | violates StrongReadsSeePriorAcks | 38979 | 130398 | 10 | 01s | 10 |
+| Bug_StrongReadSkipSettlement | violates StrongReadsSeePriorAcks | 49522 | 169305 | 11 | 02s | 11 |
+| Bug_StrongReadSnapshotBeforeBarrier | violates StrongReadsSeePriorAcks | 99441 | 361354 | 12 | 03s | 12 |
 | Bug_StrongStreamCertifyLateSnapshot | violates CertificateBeforeRead | 523 | 893 | 7 | 00s | 6 |
 | Bug_StrongStreamIgnoreCap | violates RegistryBounded | 770 | 1431 | 7 | 00s | 7 |
 | Bug_StrongStreamMarkBeforeBarrier | violates CertificateHasProvenance | 58 | 69 | 5 | 00s | 3 |
@@ -3335,7 +3343,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
 | EngineBuildReentry | no errors | 1500 | 2946 | 14 | 00s |  |
 | EngineCopy | no errors | 1215733 | 4821937 | 35 | 33s |  |
-| EngineCutover | no errors | 70982 | 472752 | 26 | 05s |  |
+| EngineCutover | no errors | 147394 | 993540 | 26 | 08s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |
@@ -3412,7 +3420,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 04min 27s |  |
 | StreamMarks | no errors | 2134412 | 8112746 | 21 | 24s |  |
 | StreamMarks_TwoTables | no errors | 27772812 | 122862175 | 23 | 06min 23s |  |
-| StrongReadFreshness | no errors | 2443260 | 13421587 | 31 | 17s |  |
+| StrongReadFreshness | no errors | 2443260 | 13421587 | 31 | 01min 19s |  |
+| StrongReadLockCall | no errors | 2580420 | 14113724 | 31 | 01min 22s |  |
+| StrongReadOwnerBarrier | no errors | 803160 | 4192013 | 29 | 28s |  |
+| StrongReadOwnerLockCall | no errors | 876360 | 4539960 | 29 | 29s |  |
 | StrongStreamCertificate | no errors | 24180 | 76876 | 19 | 00s |  |
 | StrongStreamCompletion | no errors | 3369 | 7585 | 19 | 00s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 598 | 1108 | 7 | 01s | 7 |

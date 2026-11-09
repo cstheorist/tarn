@@ -42,7 +42,7 @@ for cfg in "$@"; do
     EngineCutover|Bug_EngineCutover*) module=EngineCutover.tla ;;
     EngineSourceDrain|Bug_EngineSourceDrain*) module=EngineSourceDrain.tla ;;
     EngineAlias|EngineAlias_Existing|Bug_EngineAlias*) module=EngineAlias.tla ;;
-    StrongReadFreshness|Bug_StrongRead*) module=StrongReadFreshness.tla ;;
+    StrongReadFreshness|StrongReadLockCall|StrongReadOwner*|Bug_StrongRead*) module=StrongReadFreshness.tla ;;
     RecordExpiryClock|Bug_RecordExpiry*) module=RecordExpiryClock.tla ;;
     RecordExpiryPolicy|Bug_RecordPolicy*) module=RecordExpiryPolicy.tla ;;
     CompletionRetention|Bug_CompletionRetention*) module=CompletionRetention.tla ;;
