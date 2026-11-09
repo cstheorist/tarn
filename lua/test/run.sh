@@ -86,6 +86,9 @@ if [ -z "${TEST:-}" ]; then
     r=${PIPESTATUS[0]}
     [ "$r" -ne 0 ] && rc=$r
   done
+  TARANTOOL="$T" bash "$DIR/test/owner_barrier.sh" "$WORK/owner-barrier" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
   TARANTOOL="$T" bash "$DIR/test/lazy_faults.sh" "$WORK/lazy-faults" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r

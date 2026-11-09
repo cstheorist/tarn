@@ -15,6 +15,7 @@
 #                TARN_DUMP_EVERY=N (checkpoint every N s, putting vinyl rows on disk: tests),
 #                TARN_ELECTION_WATCHDOG=SECS (seconds without a leader before a candidate stands itself),
 #                TARN_LOAD_WINDOW=SECS (the seconds of requests a bucket's load counts),
+#                TARN_LOCK_BARRIER=owner|queue|auto (the lock calls' freshness barrier: issue #314),
 #                TARN_NATIVE=PATH|0 (the native procedures' libtarn_storage.so; default: target/release's),
 #                TARN_QUERY_PUSHDOWN=true|false (opt-in typed reads; default false),
 #                TARN_DDL_JOB_STALE=SECS (ddl_job_stale in cluster.json: tests),

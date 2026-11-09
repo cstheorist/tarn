@@ -131,4 +131,51 @@ Same setup. A vinyl read or plan may yield, so their bytes aren't shown.
   second barrier's wait: up to a fifth of uncontended storage time here.
   But the barrier is what proves that a locked read sees the latest
   committed version on the current leader. Changing it needs a safety
-  argument and a model, and nothing here measures it.
+  argument and a model, and nothing here measures it. (Issue #314 found it
+  unsafe, and measured the barrier without the queue wait below instead.)
+
+## Before and after the barrier without the queue wait (#314)
+
+Lock calls now leave out the barrier's wait for the synchronous queue: a
+round of vclock calls to the shard's other replicas, then the local
+catch-up (design §2.9, `TARN_LOCK_BARRIER=owner`). Same harness, host and
+setup as above, once per setting, with the profiler on. Results:
+`bench/rc-evidence/lock-barrier-20261109/`, source `5cfe148`. (The memtx
+runs record its parent with the change not yet committed. Their
+`lua/tarn.lua` hash is `5cfe148`'s.)
+
+The barrier column is µs per acknowledged transaction, summed over the
+leaders, as is the commit's WAL, fsync and quorum. Goodput and p99 are
+medians of the five windows. Values are full barrier → owner barrier.
+
+memtx:
+
+| Shape | Barrier | Commit's WAL wait | Storage time | Goodput, TPS | p99, ms |
+|---|---:|---:|---:|---:|---:|
+| No contention | 1,144 → 484 | 1,087 → 1,068 | 2,558 → 1,854 | 275 → 367 | 9.8 → 5.7 |
+| Unrelated keys | 3,372 → 1,785 | 1,669 → 2,954 | 5,306 → 5,098 | 929 → 951 | 18.9 → 21.7 |
+| Hot key | 2,417 → 677 | 1,166 → 1,114 | 27,036 → 19,150 | 267 → 374 | 121.1 → 39.0 |
+
+vinyl:
+
+| Shape | Barrier | Commit's WAL wait | Storage time | Goodput, TPS | p99, ms |
+|---|---:|---:|---:|---:|---:|
+| No contention | 1,118 → 543 | 1,131 → 1,196 | 2,588 → 2,121 | 288 → 303 | 17.8 → 6.5 |
+| Unrelated keys | 3,494 → 1,944 | 1,766 → 3,082 | 5,524 → 5,426 | 857 → 839 | 20.0 → 23.0 |
+| Hot key | 2,213 → 679 | 1,173 → 1,142 | 26,784 → 19,442 | 316 → 376 | 120.7 → 37.1 |
+
+- **The barrier fell by half or more.** It is about 250 µs per lock call
+  with one client, against 560 µs for Tarantool's barrier on this host. Its
+  share of storage time fell from 44% to 26% with one client, from 64% to
+  35% with unrelated keys, and from 9% to 3.5% on the hot key.
+- **With unrelated keys, this host's WAL became the wait.** The commit's
+  WAL, fsync and quorum grew by 1.3 ms at about 900 transactions a second,
+  and goodput didn't move. On hosted runners the same shape committed
+  20–35% more often (`bench/LOCK_BARRIER.md`).
+- **On the hot key, the row lock is held for less time.** A transaction's
+  second lock call, barrier included, runs while it holds the first row's
+  lock, so the queue for that lock shortened with the barrier. On hosted
+  runners, whose full barrier is cheaper, the hot key committed about as
+  often as before.
+- These are single runs on one host. `bench/LOCK_BARRIER.md` has the matched
+  comparison: five alternating pairs per shape, with the profiler off.
