@@ -286,6 +286,21 @@ function M.new(c)
         end
         return conn
     end
+    -- A reply's vclock without component 0, or nil if any entry is not a
+    -- replica id and an LSN (the reply then doesn't count).
+    local function vclock_of(v)
+        if type(v) ~= 'table' then return nil end
+        local out = {}
+        for id, lsn in pairs(v) do
+            if type(id) ~= 'number' then return nil end
+            if type(lsn) == 'number' or ffi.istype('int64_t', lsn) or ffi.istype('uint64_t', lsn) then
+                if id ~= 0 then out[id] = lsn end
+            elseif lsn ~= box.NULL then   -- (box.NULL: a hole the encoder left in a sparse array)
+                return nil
+            end
+        end
+        return out
+    end
     local function ask(conn, deadline, replies)
         local ok, res = pcall(conn.call, conn, 'tarn_peer_vclock', {},
                               {timeout = math.max(deadline - clock.monotonic(), 0.001)})
@@ -311,14 +326,12 @@ function M.new(c)
             local m = left > 0 and replies:get(left) or nil
             if m == nil then break end
             local v = m.ok and m.res
-            if type(v) == 'table' and v.replicaset == rs and v.uuid ~= own and members[v.uuid]
-               and not seen[v.uuid] and type(v.vclock) == 'table' then
+            local vclock = type(v) == 'table' and vclock_of(v.vclock)
+            if vclock and v.replicaset == rs and v.uuid ~= own and members[v.uuid] and not seen[v.uuid] then
                 seen[v.uuid] = true
                 got = got + 1
-                for id, lsn in pairs(v.vclock) do
-                    if type(id) == 'number' and id ~= 0 and type(lsn) == 'number' and (joined[id] or 0) < lsn then
-                        joined[id] = lsn
-                    end
+                for id, lsn in pairs(vclock) do
+                    if (joined[id] or 0) < lsn then joined[id] = lsn end
                 end
                 if got + 1 >= r then return {joined = joined} end
             elseif not m.ok and type(m.res) == 'cdata'

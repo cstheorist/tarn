@@ -3,9 +3,9 @@
 -- owner_barrier.sh with TARN_LOCK_BARRIER=owner: a lock call waits for a
 -- round of replies from the other replicas; concurrent barriers share
 -- rounds; one other replica is a quorum of two; no barrier passes without
--- one, on a reply from another replica set, or on one ahead of this
--- instance's WAL; a replica without tarn_peer_vclock sends the call to the
--- full barrier.
+-- one, on a reply from another replica set or with a malformed vclock, or
+-- on one ahead of this instance's WAL; a replica without tarn_peer_vclock
+-- sends the call to the full barrier.
 local net, fiber, ffi, json = require('net.box'), require('fiber'), require('ffi'), require('json')
 io.stdout:setvbuf('no')
 local work, base = assert(os.getenv('OWNER_BARRIER_WORK')), tonumber(assert(os.getenv('OWNER_BARRIER_BASE')))
@@ -117,6 +117,11 @@ signal(f2, 19)
 r = ev(l, barrier, {1})
 signal(f2, 18)
 check('a reply from another replica set does not count', not r.ok, r)
+ev(f1, [[tarn_peer_vclock = function() local v = ob_saved(); v.vclock[1] = 'one'; return v end]])
+signal(f2, 19)
+r = ev(l, barrier, {1})
+signal(f2, 18)
+check('a reply whose vclock has an entry that is not an LSN does not count', not r.ok, r)
 local id = ev(l, 'return box.info.id')
 ev(f1, [[local id = ...
     tarn_peer_vclock = function() local v = ob_saved(); v.vclock[id] = (v.vclock[id] or 0) + 1000000; return v end]], {id})
