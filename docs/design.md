@@ -1704,6 +1704,31 @@ keeps those locks until the transaction ends, as InnoDB does, and its reply
 carries their generation, so that the transaction releases them with its
 others even when it was its first request on that shard.
 
+**A lock call's freshness barrier.** Before `tarn_lock` or `tarn_lock_range`
+takes a lock, it makes sure this leader holds every write that a quorum
+acknowledged before the call began, so that the row it reads under the lock
+is the latest committed one. By default the barrier is an empty
+`linearizable` transaction. Tarantool collects fresh vclocks from a quorum,
+waits until the local WAL has caught up to them, then waits until the last
+transaction in the synchronous queue is settled. With
+`TARN_LOCK_BARRIER=owner` on the storage nodes (off by default, issue #314),
+the barrier leaves out that last wait:
+- a round of `tarn_peer_vclock` calls to the shard's other replicas, made
+  after the round starts and shared by every call that began before it;
+- the replies of `N - Q + 1` replicas, this one included, joined;
+- the local WAL caught up to them.
+
+On a writable queue owner, the queue holds only the owner's own
+transactions whose commits haven't returned. A new leader's PROMOTE settles
+the queue before the leader can write, and a newer term's PROMOTE makes an
+instance read-only before that term's rows reach its WAL. The call checks
+that it is still writable after the barrier, and that its term is unchanged
+at its end. `tla/StrongReadFreshness.tla` checks this under those two
+premises (`StrongReadOwnerLockCall`). Without either premise, TLC finds a
+lock call that misses an acknowledged write. A replica without
+`tarn_peer_vclock`, during a rolling upgrade, sends the call to the full
+barrier.
+
 **A gap between the model and the implementation, found by testing.**
 TarnCommit takes a local commit as one atomic step. In Tarantool,
 `box.commit()` yields until the WAL (and, with synchronous replication, the

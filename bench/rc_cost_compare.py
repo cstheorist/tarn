@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Matched checks-off RF3/fsync pilots for final-plan guard batching.
+"""Matched checks-off RF3/fsync pilots of a READ COMMITTED change.
 
-Copy the fixture sources into an owned temporary directory and apply only
-the guard batching change in the candidate copy. Normal release binaries, admission,
-durability and query histories remain matched. Stop on any failed/unknown
-attempt; keep both original storage state and partial measurements.
+--hypothesis guards: copy the fixture sources into an owned temporary
+directory and apply only the guard batching change in the candidate copy.
+--hypothesis lock-barrier: both copies are the same sources; the candidate's
+storage nodes run TARN_LOCK_BARRIER=owner, the control's queue (#314).
+Normal release binaries, admission, durability and query histories remain
+matched. Stop on any failed/unknown attempt; keep both original storage
+state and partial measurements.
 """
 import argparse
 import json
@@ -23,25 +26,47 @@ import rc_direct
 ROOT = Path(__file__).resolve().parents[1]
 SHAPES = ('uncontended', 'unrelated', 'hot')
 VARIANTS = ('control', 'candidate')
+# Each hypothesis's storage environment per variant.
+VARIANT_ENV = {'guards': {'control': {}, 'candidate': {}},
+               'lock-barrier': {'control': {'TARN_LOCK_BARRIER': 'queue'},
+                                'candidate': {'TARN_LOCK_BARRIER': 'owner'}}}
 
 
-def sources(work):
+def sources(work, hypothesis):
     paths = {}
     for variant in VARIANTS:
         root = work / variant
         for folder in ('lua', 'scripts'):
             shutil.copytree(ROOT / folder, root / folder)
         paths[variant] = root
-    for variant in VARIANTS:
-        rc_guard_candidate.apply(paths[variant], variant)
+    if hypothesis == 'guards':
+        for variant in VARIANTS:
+            rc_guard_candidate.apply(paths[variant], variant)
     control = {str(p.relative_to(paths['control'])): sha(p)
                for p in paths['control'].rglob('*') if p.is_file()}
     candidate = {str(p.relative_to(paths['candidate'])): sha(p)
                  for p in paths['candidate'].rglob('*') if p.is_file()}
     assert control.keys() == candidate.keys()
     changed = {p for p in control if control[p] != candidate[p]}
-    assert changed == {'lua/tarn.lua', 'lua/tarn_fresh.lua'}
+    assert changed == ({'lua/tarn.lua', 'lua/tarn_fresh.lua'} if hypothesis == 'guards' else set())
     return paths
+
+
+# The lock-barrier lane's mechanism, read after its timing: every storage
+# node runs its variant's barrier, and only the candidate's leaders ran
+# rounds of peer replies, none sent to the full barrier.
+BARRIER = """local t = require('tarn')
+return {ro = box.info.ro, barrier = t.cfg.lock_barrier, rounds = t.fresh.ob.rounds, fallbacks = t.fresh.ob.fallbacks}"""
+
+
+def barrier_mechanism(endpoints, variant):
+    nodes = evaluate(endpoints, BARRIER)
+    want = VARIANT_ENV['lock-barrier'][variant]['TARN_LOCK_BARRIER']
+    assert all(n['result']['barrier'] == want for n in nodes), nodes
+    rounds = sum(n['result']['rounds'] for n in nodes)
+    assert all(n['result']['fallbacks'] == 0 for n in nodes), nodes
+    assert (rounds > 0) if variant == 'candidate' else (rounds == 0), nodes
+    return nodes
 
 
 def setup(args):
@@ -115,6 +140,7 @@ def main():
     parser.add_argument('--engine', choices=('memtx', 'vinyl'), required=True)
     parser.add_argument('--native', choices=('enabled', 'disabled'), required=True)
     parser.add_argument('--driver', choices=('sql', 'direct'), default='sql')
+    parser.add_argument('--hypothesis', choices=tuple(VARIANT_ENV), default='guards')
     parser.add_argument('--seconds', type=float, default=15)
     parser.add_argument('--base-port', type=int, default=17300)
     parser.add_argument('--sql-port', type=int, default=17400)
@@ -129,12 +155,13 @@ def main():
     work = args.out / 'work'
     work.mkdir()
     variants = VARIANTS
-    paths = sources(work)
+    paths = sources(work, args.hypothesis)
     native = args.bin.with_name('libtarn_storage.so')
     env = dict(os.environ, TARN_BIN=str(args.bin), TARN_NATIVE=str(native) if args.native == 'enabled' else '0',
                TARN_VINYL_CACHE_MB='0', TARN_CHECK_LOCKS='', TARN_CHECK_YIELDS='')
     receipt = dict(schema=2, complete=False, sessions=[], scope='matched checks-off RF3/fsync cost pilot',
-                   hypothesis='guards', variants=variants,
+                   hypothesis=args.hypothesis, variants=variants,
+                   variant_environment=VARIANT_ENV[args.hypothesis],
                    driver=args.driver,
                    measured_seconds=args.seconds, warmup_seconds=3,
                    source=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
@@ -166,7 +193,8 @@ def main():
                     subprocess.run(['bash', str(script), 'start', '-d', str(cluster), '-n', '2', '-r', '3',
                                     '-w', 'fsync', '-b', str(args.base_port), '-p', str(args.sql_port),
                                     '-s', '1', '-m', '256', '-e', args.engine],
-                                   env=env, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=180)
+                                   env=dict(env, **VARIANT_ENV[args.hypothesis][variant]),
+                                   stdout=log, stderr=subprocess.STDOUT, check=True, timeout=180)
                 config = json.loads((cluster/'cluster.json').read_text())
                 endpoints = [r for s in config['shards'] for r in s['replicas']]
                 session = dict(pair=pair, variant=variant, complete=False, samples=[],
@@ -186,7 +214,9 @@ def main():
                     sample(job, len(session['samples']) + 1, shape, False, endpoints, session_output, session)
                 # Mechanism probes run after this lane's timing, so the injected
                 # hold and helper census cannot precondition a measured fixture.
-                if pair == 0:
+                if args.hypothesis == 'lock-barrier':
+                    session['mechanism'] = barrier_mechanism(endpoints, variant)
+                elif pair == 0:
                     probe_name = 'rc_guard_probe.lua'
                     probes = evaluate(config['shards'][0]['replicas'], 'return {ro=box.info.ro}')
                     leader = next(r['address'] for r in probes if not r['result']['ro'])
@@ -200,6 +230,15 @@ def main():
                 active = None
         receipt['summary'] = summarize(receipt['sessions'], variants)
         receipt['complete'] = True
+        # (the job log carries the result as well as the artifact)
+        for row in receipt['summary']:
+            pairs = row['pairs']
+            print(json.dumps(dict(shape=row['shape'], median_goodput_ratio=round(row['median_goodput_ratio'], 3),
+                                  goodput_ratio_range=[round(x, 3) for x in row['goodput_ratio_range']],
+                                  median_p99_ratio=round(statistics.median(p['p99_ratio'] for p in pairs), 3),
+                                  median_tx_cpu_ratio=round(statistics.median(p['tx_cpu_ratio'] for p in pairs), 3),
+                                  goodput={v: [round(p['controls'][v]['goodput'], 1) for p in pairs]
+                                           for v in variants})), flush=True)
     except BaseException as error:
         receipt['failure'] = repr(error)
         raise

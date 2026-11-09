@@ -1,4 +1,6 @@
 name: READ COMMITTED matched guard cost
+# (and, with hypothesis lock-barrier, the lock calls' barrier without the
+# synchronous queue's wait: #314)
 
 on:
   workflow_dispatch:
@@ -17,6 +19,11 @@ on:
         type: choice
         options: [sql, direct]
         default: sql
+      hypothesis:
+        description: The change compared (guards, #186; lock-barrier, #314)
+        type: choice
+        options: [guards, lock-barrier]
+        default: guards
 
 permissions:
   contents: read
@@ -47,14 +54,25 @@ jobs:
           curl -fsSL -o /tmp/rc-cost-tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
           sha256sum /tmp/rc-cost-tla2tools.jar > /tmp/rc-cost-tla.sha256
           mkdir -p /tmp/rc-cost-models
-          cp tla/PlanGuardBatch.tla tla/PlanGuardScalar.cfg tla/PlanGuardBatch.cfg \
-            tla/Bug_PlanGuardSkipSpace.cfg tla/Bug_PlanGuardYield.cfg /tmp/rc-cost-models/
           cp /tmp/rc-cost-tla2tools.jar tla/tla2tools.jar
           trap 'cp -R tla/out /tmp/rc-cost-models/' EXIT
-          tla/check.sh PlanGuardScalar PlanGuardBatch Bug_PlanGuardSkipSpace Bug_PlanGuardYield
-          for cfg in Bug_PlanGuardSkipSpace Bug_PlanGuardYield; do
-            grep -q 'Invariant NoUnsafeAcceptance is violated' "tla/out/$cfg.out"
-          done
+          if [ '${{ inputs.hypothesis }}' = lock-barrier ]; then
+            cp tla/StrongReadFreshness.tla tla/StrongReadLockCall.cfg tla/StrongReadOwnerLockCall.cfg \
+              tla/Bug_StrongReadOwnerNoRecheck.cfg tla/Bug_StrongReadOwnerUnsettledPromote.cfg \
+              tla/Bug_StrongReadOwnerRowsBeforeTerm.cfg /tmp/rc-cost-models/
+            tla/check.sh StrongReadLockCall StrongReadOwnerLockCall Bug_StrongReadOwnerNoRecheck \
+              Bug_StrongReadOwnerUnsettledPromote Bug_StrongReadOwnerRowsBeforeTerm
+            for cfg in Bug_StrongReadOwnerNoRecheck Bug_StrongReadOwnerUnsettledPromote Bug_StrongReadOwnerRowsBeforeTerm; do
+              grep -q 'Invariant StrongReadsSeePriorAcks is violated' "tla/out/$cfg.out"
+            done
+          else
+            cp tla/PlanGuardBatch.tla tla/PlanGuardScalar.cfg tla/PlanGuardBatch.cfg \
+              tla/Bug_PlanGuardSkipSpace.cfg tla/Bug_PlanGuardYield.cfg /tmp/rc-cost-models/
+            tla/check.sh PlanGuardScalar PlanGuardBatch Bug_PlanGuardSkipSpace Bug_PlanGuardYield
+            for cfg in Bug_PlanGuardSkipSpace Bug_PlanGuardYield; do
+              grep -q 'Invariant NoUnsafeAcceptance is violated' "tla/out/$cfg.out"
+            done
+          fi
       - name: Build unchanged production release artifacts
         run: |
           cargo build --release --locked -p tarn-server -p tarn-storage
@@ -122,13 +140,13 @@ jobs:
           df -h > /tmp/rc-cost-results/disk-before.txt
           python3 bench/rc_cost_compare.py --bin /tmp/rc186-build/tarn-server --out /tmp/rc-cost-results/paired \
             --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' \
-            --driver '${{ inputs.driver }}' \
+            --driver '${{ inputs.driver }}' --hypothesis '${{ inputs.hypothesis }}' \
             --seconds 15 --base-port 17300 --sql-port 17400
       - name: Retain complete and failed evidence
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: rc-cost-guards-${{ inputs.driver }}-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
+          name: rc-cost-${{ inputs.hypothesis }}-${{ inputs.driver }}-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
           path: |
             /tmp/rc-cost-results
             /tmp/rc186-build/source.txt

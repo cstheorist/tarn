@@ -49,9 +49,14 @@ class Candidate(unittest.TestCase):
         new_body, new_suffix = tail.split(end, 1)
         self.assertEqual(new_prefix, old_prefix, 'mode, controls and clock code changed')
         self.assertEqual(new_suffix, old_suffix, 'native/stream/barrier code changed')
-        self.assertTrue(new_body.startswith(old_body.removeprefix(b'        local mode = F.mode()\n')),
+        # (the scalar F.space_in repeats F.space's checks with its caller's mode)
+        old_space, old_space_in = old_body.split(b'    -- F.space with the mode a caller read', 1)
+        self.assertTrue(new_body.startswith(old_space.removeprefix(b'        local mode = F.mode()\n')),
                         'every original per-space check must remain exact')
+        self.assertIn(old_space.removeprefix(b'        local mode = F.mode()\n').removesuffix(b'    end\n'),
+                      old_space_in, 'the scalar F.space_in makes the same per-space checks')
         self.assertIn(b'function F.space(sp) return space_mode(sp, F.mode()) end', new_body)
+        self.assertIn(b'function F.space_in(sp, mode) return space_mode(sp, mode) end', new_body)
         self.assertRegex(new_body, rb'function F\.plans\(plans, space_pos\)\n'
                          rb'        local mode = F\.controls\(\)\n'
                          rb'        c\.writable\(\)\n'

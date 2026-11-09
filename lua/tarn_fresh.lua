@@ -4,6 +4,8 @@
 -- for either engine; direct LINEARIZABLE Vinyl access is unsupported.
 local ffi = require('ffi')
 local fiber = require('fiber')
+local clock = require('clock')
+local net_box = require('net.box')
 ffi.cdef[[
 int box_txn_set_isolation(uint32_t level);
 int64_t box_txn_id(void);
@@ -240,6 +242,153 @@ function M.new(c)
         begin(timeout or c.cfg.read_freshness_timeout, recovery)
         -- No data was read, and confirmed prefixes survive this rollback.
         box.rollback()
+    end
+    -- The lock calls' barrier without the synchronous queue's wait (issue
+    -- #314; tla/StrongReadFreshness.tla, OwnerBarrier with LockCall): the
+    -- vclocks of a quorum of the shard's replicas, asked after the call
+    -- began, joined, and the local WAL caught up to them. The queue's wait
+    -- (txn_limbo_wait_last_txn) adds nothing on its writable owner: a new
+    -- leader's PROMOTE settles the queue before the leader can write, and a
+    -- newer term's PROMOTE makes an instance read-only before that term's
+    -- rows reach its WAL (PromoteSettles, TermBeforeRows). The queue then
+    -- holds only the owner's own transactions whose commits haven't
+    -- returned. The caller checks that it is still writable afterwards
+    -- (pl_begin, pl_intact).
+    -- One round of calls serves every barrier that began before the round
+    -- did, as the relays' vclock sync serves concurrent native barriers. A
+    -- replica without tarn_peer_vclock (a rolling upgrade) sends the caller
+    -- to the full barrier. (The state is in fields: jit_upvalue_test.lua.)
+    local OB = {started = 0, done = 0, want = 0, result = nil, conns = {}, rounds = 0, fallbacks = 0,
+                cond = fiber.cond(), wake = fiber.cond()}
+    F.ob = OB
+    -- The read quorum counting this instance (F.mode: N - Q + 1, or the
+    -- configured number) and the replica set's registered members.
+    local function read_quorum()
+        local members, n = {}, 0
+        for id, r in pairs(box.info.replication) do
+            if type(id) == 'number' and id > 0 and r.uuid ~= nil then members[r.uuid] = true; n = n + 1 end
+        end
+        local r = box.cfg.replication_linearizable_quorum
+        if type(r) ~= 'number' then r = n - box.info.synchro.quorum + 1 end
+        return r, members
+    end
+    local function connection(uri)
+        local conn = OB.conns[uri]
+        if conn ~= nil and (conn.state == 'error' or conn.state == 'closed') then
+            pcall(conn.close, conn)
+            conn = nil
+        end
+        if conn == nil then
+            conn = net_box.connect(c.cfg.resolve_uri and c.cfg.resolve_uri(uri) or uri,
+                                   {fetch_schema = false, user = c.cfg.user, password = c.cfg.password,
+                                    wait_connected = false, reconnect_after = 0.5})
+            OB.conns[uri] = conn
+        end
+        return conn
+    end
+    local function ask(conn, deadline, replies)
+        local ok, res = pcall(conn.call, conn, 'tarn_peer_vclock', {},
+                              {timeout = math.max(deadline - clock.monotonic(), 0.001)})
+        replies:put({ok = ok, res = res}, 0)
+    end
+    -- One round: {joined = vclock} from a quorum, or {failed = reason}.
+    local function round(deadline)
+        local r, members = read_quorum()
+        if r <= 1 then return {joined = {}} end
+        local own, rs = box.info.uuid, box.info.replicaset.uuid
+        local listen = c.own_uris and c.own_uris() or {}
+        local uris, asked = c.peers and c.peers() or {}, 0
+        local replies = fiber.channel(#uris + 1)
+        for _, uri in ipairs(uris) do
+            if not listen[(uri:gsub('^[^@]*@', ''))] then
+                fiber.new(ask, connection(uri), deadline, replies)
+                asked = asked + 1
+            end
+        end
+        local seen, got, joined, unsupported = {}, 0, {}, false
+        for _ = 1, asked do
+            local left = deadline - clock.monotonic()
+            local m = left > 0 and replies:get(left) or nil
+            if m == nil then break end
+            local v = m.ok and m.res
+            if type(v) == 'table' and v.replicaset == rs and v.uuid ~= own and members[v.uuid]
+               and not seen[v.uuid] and type(v.vclock) == 'table' then
+                seen[v.uuid] = true
+                got = got + 1
+                for id, lsn in pairs(v.vclock) do
+                    if type(id) == 'number' and id ~= 0 and type(lsn) == 'number' and (joined[id] or 0) < lsn then
+                        joined[id] = lsn
+                    end
+                end
+                if got + 1 >= r then return {joined = joined} end
+            elseif not m.ok and type(m.res) == 'cdata'
+                   and (m.res.code == box.error.NO_SUCH_PROC or m.res.code == box.error.ACCESS_DENIED) then
+                unsupported = true
+            end
+        end
+        return {failed = unsupported and 'unsupported' or 'timeout'}
+    end
+    local function rounds()
+        while true do
+            if OB.want > OB.done then
+                local n = OB.done + 1
+                OB.started = n
+                local ok, res = pcall(round, clock.monotonic() + c.cfg.read_freshness_timeout)
+                OB.result = ok and res or {failed = 'error'}
+                OB.done = n
+                OB.rounds = OB.rounds + 1
+                OB.cond:broadcast()
+            else
+                OB.wake:wait()
+            end
+        end
+    end
+    local function covered(joined)
+        local v = box.info.vclock
+        for id, lsn in pairs(joined) do
+            if (v[id] or 0) < lsn then return false end
+        end
+        return true
+    end
+    function F.owner_barrier(timeout, recovery)
+        c.writable()
+        if box.is_in_txn() then unavailable('freshness barrier cannot replace an ambient transaction') end
+        if not recovery then F.clock_check() end
+        local deadline = clock.monotonic() + (timeout or c.cfg.read_freshness_timeout)
+        if F.controls() == 2 then
+            local res
+            repeat
+                -- A round that starts after now (a failed one: the next).
+                local need = OB.started + 1
+                if OB.want < need then OB.want = need end
+                if OB.worker == nil or OB.worker:status() == 'dead' then
+                    OB.worker = fiber.new(rounds)
+                    OB.worker:name('tarn_owner_barrier')
+                end
+                OB.wake:signal()
+                while OB.done < need do
+                    local left = deadline - clock.monotonic()
+                    if left <= 0 then box.error(box.error.TIMEOUT) end
+                    OB.cond:wait(left)
+                end
+                res = OB.result
+                if res.failed == 'unsupported' then
+                    OB.fallbacks = OB.fallbacks + 1
+                    return F.barrier(math.max(deadline - clock.monotonic(), 0.001), recovery)
+                end
+                if res.joined == nil then
+                    if clock.monotonic() + 0.01 >= deadline then box.error(box.error.TIMEOUT) end
+                    fiber.sleep(0.01)
+                end
+            until res.joined ~= nil
+            while not covered(res.joined) do
+                if clock.monotonic() >= deadline then box.error(box.error.TIMEOUT) end
+                fiber.sleep(0.001)
+            end
+        end
+        if not recovery then F.clock_check() end
+        F.controls() -- schema/configuration may have changed while waiting
+        c.writable()
     end
     function F.begin_stream()
         c.writable()

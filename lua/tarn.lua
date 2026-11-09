@@ -93,6 +93,10 @@ local M = {
         test_hooks = false,      -- tests: tarn_test_hook may hold yield points
         check_locks = false,     -- tests: the native module's copy of the lock index is checked (BK.ns_check_locks)
         rc_phases = false,       -- profiling: count the phases of tarn_lock and tarn_commit_rc (lua/tarn_phases.lua)
+        -- The freshness barrier of tarn_lock and tarn_lock_range: 'queue',
+        -- Tarantool's linearizable barrier, or 'owner', the same without its
+        -- wait for the synchronous queue (lua/tarn_fresh.lua, issue #314).
+        lock_barrier = 'queue',
         -- election_watchdog: seconds without a leader before a candidate
         -- stands itself (nil: three election timeouts; 0: never; see
         -- "Election watchdog").
@@ -418,7 +422,8 @@ local function writable()
     if box.info.ro then box.error(box.error.READONLY) end
 end
 M.fresh = require('tarn_fresh').new{cfg = M.cfg, writable = writable,
-    movement = function() return BK.physical_gen, BK.partial > 0 end}
+    movement = function() return BK.physical_gen, BK.partial > 0 end,
+    peers = function() return BK.shard_replicas() end, own_uris = function() return BK.own_uris() end}
 
 -- All lock records visible under one isolation level (no yields: memtx
 -- scans and a read-only commit do not yield).
@@ -2570,7 +2575,7 @@ end
 -- the deadline of the request.
 local function pl_begin(txid, opts)
     local b0, b1, b2 = M.phases.start()
-    M.fresh.barrier()
+    if M.cfg.lock_barrier == 'owner' then M.fresh.owner_barrier() else M.fresh.barrier() end
     M.phases.stop('lock_barrier', b0, b1, b2)
     writable()
     lk_fresh()
@@ -5044,6 +5049,17 @@ local function shard_uris(shard)
         if m.id == shard then return m.replicas or {} end
     end
     return {}
+end
+-- This shard's replicas, and this instance's own addresses among them (the
+-- owner barrier's rounds, lua/tarn_fresh.lua).
+function BK.shard_replicas() return shard_uris(M.cfg.shard_id) end
+function BK.own_uris()
+    local own, listen = {}, M.cfg.production and M.cfg.production.public_uri or box.cfg.listen
+    if type(listen) ~= 'table' then listen = {listen} end
+    for _, uri in ipairs(listen) do
+        if type(uri) == 'string' then own[(uri:gsub('^[^@]*@', ''))] = true end
+    end
+    return own
 end
 
 -- The wait after n failures in a row (RV.wait, RV.down).
@@ -8350,6 +8366,8 @@ function M.init(cfg)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
+    assert(M.cfg.lock_barrier == 'queue' or M.cfg.lock_barrier == 'owner',
+           'lock_barrier must be queue or owner, not ' .. tostring(M.cfg.lock_barrier))
     M.phases.enable(M.cfg.rc_phases)
     M.move.limits() -- validate on every replica, before setup or admission
     BK.ns_status = BK.ns ~= nil and 'ready' or (M.cfg.native and 'pending' or 'disabled')
@@ -8589,9 +8607,16 @@ BK.production_functions = {
         'tarn_validate',
         'tarn_vinyl_stats',
         'tarn_role',
+        'tarn_peer_vclock',
         'tarn_deployment_status',
 }
 function tarn_role() return box.info.ro end
+-- A replica's answer to a round of the owner barrier (lua/tarn_fresh.lua),
+-- read once the request has arrived: a quorum of them covers every write
+-- that a quorum acknowledged before the round began.
+function tarn_peer_vclock()
+    return {uuid = box.info.uuid, replicaset = box.info.replicaset.uuid, vclock = box.info.vclock}
+end
 function tarn_deployment_status()
     local p = M.cfg.production
     local rf = p and #p.replicas or (type(box.cfg.replication) == 'table' and #box.cfg.replication or 1)

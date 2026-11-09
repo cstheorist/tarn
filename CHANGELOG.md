@@ -8,6 +8,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `TARN_LOCK_BARRIER=owner` on the storage nodes gives READ COMMITTED lock
+  calls (`tarn_lock`, `tarn_lock_range`) a freshness barrier without
+  Tarantool's wait for the newest transaction in the synchronous queue
+  ([#314](https://github.com/cstheorist/tarn/issues/314)). Off by default
+  (`queue`).
+  - In place of an empty `linearizable` transaction, the call waits for a
+    round of `tarn_peer_vclock` calls to the shard's other replicas. The
+    round is shared by the lock calls that began before it.
+  - The local WAL then catches up to their vclocks, and the call checks
+    that it is still writable in the same term, as before.
+  - A replica without `tarn_peer_vclock`, during a rolling upgrade, sends
+    the call to the full barrier.
+  - `tla/StrongReadFreshness.tla` checks it under two premises of
+    Tarantool's queue. `lua/test/owner_barrier.sh` checks it on an RF3
+    shard. `.github/workflows/rc-guard-cost.yml` compares it with the
+    default (hypothesis `lock-barrier`).
+
 - `global_index_backfill` in `cluster.json` sets the pace of an online
   unique index build's backfill
   ([#303](https://github.com/cstheorist/tarn/issues/303)): rows per page
