@@ -91,6 +91,41 @@ r = ev(l, [[
     return {ok = ok, rounds = F.ob.rounds - before}]])
 check('forty concurrent barriers share their rounds', r.ok == 40 and r.rounds >= 1 and r.rounds < 40, r)
 
+-- A round asks as many replicas as a quorum needs while they answer.
+r = ev(l, [[
+    local F = require('tarn').fresh
+    local rounds, asked = F.ob.rounds, F.ob.asked
+    for _ = 1, 20 do F.owner_barrier() end
+    return {rounds = F.ob.rounds - rounds, asked = F.ob.asked - asked}]])
+check('twenty barriers in turn ask fewer than two replicas a round', r.rounds == 20 and r.asked < 2 * r.rounds, r)
+
+-- auto: the full barrier while the queue is empty, rounds while it isn't.
+r = ev(l, [[
+    local t, fiber = require('tarn'), require('fiber')
+    local F, s = t.fresh, box.space.ob_t
+    t.cfg.lock_barrier = 'auto'
+    local ok, out = pcall(function()
+        local before = F.ob.rounds
+        local idle = tarn_lock('ob-2', {{s.id, 0, {1}}}, 'X', {read = true})
+        tarn_unlock('ob-2')
+        local idle_rounds = F.ob.rounds - before
+        local done = fiber.channel(40)
+        for i = 1, 40 do fiber.new(function() pcall(s.replace, s, {100 + i, 'w'}); done:put(true) end) end
+        fiber.yield()   -- (the writes wait for their quorum)
+        local queued = box.info.synchro.queue.len
+        before = F.ob.rounds
+        local busy = tarn_lock('ob-3', {{s.id, 0, {1}}}, 'X', {read = true})
+        tarn_unlock('ob-3')
+        local busy_rounds = F.ob.rounds - before
+        for _ = 1, 40 do done:get(10) end
+        return {idle = idle[1], idle_rounds = idle_rounds, queued = queued, busy = busy[1], busy_rounds = busy_rounds}
+    end)
+    t.cfg.lock_barrier = 'owner'
+    if not ok then error(out) end
+    return out]])
+check('auto: no round with an empty queue, a round with writes in it', r.idle == 'ok' and r.idle_rounds == 0
+      and r.queued > 0 and r.busy == 'ok' and r.busy_rounds >= 1, r)
+
 local barrier = [[
     local clock = require('clock')
     local t0 = clock.monotonic()

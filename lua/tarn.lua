@@ -94,8 +94,10 @@ local M = {
         check_locks = false,     -- tests: the native module's copy of the lock index is checked (BK.ns_check_locks)
         rc_phases = false,       -- profiling: count the phases of tarn_lock and tarn_commit_rc (lua/tarn_phases.lua)
         -- The freshness barrier of tarn_lock and tarn_lock_range: 'queue',
-        -- Tarantool's linearizable barrier, or 'owner', the same without its
-        -- wait for the synchronous queue (lua/tarn_fresh.lua, issue #314).
+        -- Tarantool's linearizable barrier; 'owner', the same without its
+        -- wait for the synchronous queue (lua/tarn_fresh.lua, issue #314);
+        -- or 'auto', 'owner' while the queue holds transactions, which that
+        -- wait would be for, else 'queue'.
         lock_barrier = 'queue',
         -- election_watchdog: seconds without a leader before a candidate
         -- stands itself (nil: three election timeouts; 0: never; see
@@ -2575,7 +2577,12 @@ end
 -- the deadline of the request.
 local function pl_begin(txid, opts)
     local b0, b1, b2 = M.phases.start()
-    if M.cfg.lock_barrier == 'owner' then M.fresh.owner_barrier() else M.fresh.barrier() end
+    local lb = M.cfg.lock_barrier
+    if lb == 'owner' or (lb == 'auto' and box.info.synchro.queue.len > 0) then
+        M.fresh.owner_barrier()
+    else
+        M.fresh.barrier()
+    end
     M.phases.stop('lock_barrier', b0, b1, b2)
     writable()
     lk_fresh()
@@ -8366,8 +8373,8 @@ function M.init(cfg)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
-    assert(M.cfg.lock_barrier == 'queue' or M.cfg.lock_barrier == 'owner',
-           'lock_barrier must be queue or owner, not ' .. tostring(M.cfg.lock_barrier))
+    assert(M.cfg.lock_barrier == 'queue' or M.cfg.lock_barrier == 'owner' or M.cfg.lock_barrier == 'auto',
+           'lock_barrier must be queue, owner or auto, not ' .. tostring(M.cfg.lock_barrier))
     M.phases.enable(M.cfg.rc_phases)
     M.move.limits() -- validate on every replica, before setup or admission
     BK.ns_status = BK.ns ~= nil and 'ready' or (M.cfg.native and 'pending' or 'disabled')

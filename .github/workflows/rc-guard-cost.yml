@@ -20,9 +20,9 @@ on:
         options: [sql, direct]
         default: sql
       hypothesis:
-        description: The change compared (guards, #186; lock-barrier, #314)
+        description: The change compared (guards, #186; lock-barrier and lock-barrier-auto, #314)
         type: choice
-        options: [guards, lock-barrier]
+        options: [guards, lock-barrier, lock-barrier-auto]
         default: guards
 
 permissions:
@@ -56,7 +56,7 @@ jobs:
           mkdir -p /tmp/rc-cost-models
           cp /tmp/rc-cost-tla2tools.jar tla/tla2tools.jar
           trap 'cp -R tla/out /tmp/rc-cost-models/' EXIT
-          if [ '${{ inputs.hypothesis }}' = lock-barrier ]; then
+          if [ '${{ inputs.hypothesis }}' != guards ]; then
             cp tla/StrongReadFreshness.tla tla/StrongReadLockCall.cfg tla/StrongReadOwnerLockCall.cfg \
               tla/Bug_StrongReadOwnerNoRecheck.cfg tla/Bug_StrongReadOwnerUnsettledPromote.cfg \
               tla/Bug_StrongReadOwnerRowsBeforeTerm.cfg /tmp/rc-cost-models/

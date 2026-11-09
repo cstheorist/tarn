@@ -4,7 +4,8 @@
 --hypothesis guards: copy the fixture sources into an owned temporary
 directory and apply only the guard batching change in the candidate copy.
 --hypothesis lock-barrier: both copies are the same sources; the candidate's
-storage nodes run TARN_LOCK_BARRIER=owner, the control's queue (#314).
+storage nodes run TARN_LOCK_BARRIER=owner, the control's queue (#314);
+lock-barrier-auto: the same with auto.
 Normal release binaries, admission, durability and query histories remain
 matched. Stop on any failed/unknown attempt; keep both original storage
 state and partial measurements.
@@ -29,7 +30,9 @@ VARIANTS = ('control', 'candidate')
 # Each hypothesis's storage environment per variant.
 VARIANT_ENV = {'guards': {'control': {}, 'candidate': {}},
                'lock-barrier': {'control': {'TARN_LOCK_BARRIER': 'queue'},
-                                'candidate': {'TARN_LOCK_BARRIER': 'owner'}}}
+                                'candidate': {'TARN_LOCK_BARRIER': 'owner'}},
+               'lock-barrier-auto': {'control': {'TARN_LOCK_BARRIER': 'queue'},
+                                     'candidate': {'TARN_LOCK_BARRIER': 'auto'}}}
 
 
 def sources(work, hypothesis):
@@ -59,9 +62,9 @@ BARRIER = """local t = require('tarn')
 return {ro = box.info.ro, barrier = t.cfg.lock_barrier, rounds = t.fresh.ob.rounds, fallbacks = t.fresh.ob.fallbacks}"""
 
 
-def barrier_mechanism(endpoints, variant):
+def barrier_mechanism(endpoints, hypothesis, variant):
     nodes = evaluate(endpoints, BARRIER)
-    want = VARIANT_ENV['lock-barrier'][variant]['TARN_LOCK_BARRIER']
+    want = VARIANT_ENV[hypothesis][variant]['TARN_LOCK_BARRIER']
     assert all(n['result']['barrier'] == want for n in nodes), nodes
     rounds = sum(n['result']['rounds'] for n in nodes)
     assert all(n['result']['fallbacks'] == 0 for n in nodes), nodes
@@ -214,8 +217,8 @@ def main():
                     sample(job, len(session['samples']) + 1, shape, False, endpoints, session_output, session)
                 # Mechanism probes run after this lane's timing, so the injected
                 # hold and helper census cannot precondition a measured fixture.
-                if args.hypothesis == 'lock-barrier':
-                    session['mechanism'] = barrier_mechanism(endpoints, variant)
+                if args.hypothesis.startswith('lock-barrier'):
+                    session['mechanism'] = barrier_mechanism(endpoints, args.hypothesis, variant)
                 elif pair == 0:
                     probe_name = 'rc_guard_probe.lua'
                     probes = evaluate(config['shards'][0]['replicas'], 'return {ro=box.info.ro}')

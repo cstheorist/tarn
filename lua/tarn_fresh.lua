@@ -255,19 +255,20 @@ function M.new(c)
     -- returned. The caller checks that it is still writable afterwards
     -- (pl_begin, pl_intact).
     -- One round of calls serves every barrier that began before the round
-    -- did, as the relays' vclock sync serves concurrent native barriers. A
-    -- replica without tarn_peer_vclock (a rolling upgrade) sends the caller
-    -- to the full barrier. (The state is in fields: jit_upvalue_test.lua.)
+    -- did, as the relays' vclock sync serves concurrent native barriers. It
+    -- asks as many replicas as a quorum needs, those that answered the last
+    -- round first, and the others once those haven't answered within a few
+    -- round trips. A replica without tarn_peer_vclock (a rolling upgrade)
+    -- sends the caller to the full barrier. (The state is in fields:
+    -- jit_upvalue_test.lua.)
     local OB = {started = 0, done = 0, want = 0, result = nil, conns = {}, rounds = 0, fallbacks = 0,
-                cond = fiber.cond(), wake = fiber.cond()}
+                asked = 0, prefer = {}, rtt = nil, patience = 0.005, cond = fiber.cond(), wake = fiber.cond()}
     F.ob = OB
     -- The read quorum counting this instance (F.mode: N - Q + 1, or the
     -- configured number) and the replica set's registered members.
     local function read_quorum()
         local members, n = {}, 0
-        for id, r in pairs(box.info.replication) do
-            if type(id) == 'number' and id > 0 and r.uuid ~= nil then members[r.uuid] = true; n = n + 1 end
-        end
+        for _, t in box.space._cluster:pairs() do members[t[2]] = true; n = n + 1 end
         local r = box.cfg.replication_linearizable_quorum
         if type(r) ~= 'number' then r = n - box.info.synchro.quorum + 1 end
         return r, members
@@ -301,42 +302,73 @@ function M.new(c)
         end
         return out
     end
-    local function ask(conn, deadline, replies)
-        local ok, res = pcall(conn.call, conn, 'tarn_peer_vclock', {},
-                              {timeout = math.max(deadline - clock.monotonic(), 0.001)})
-        replies:put({ok = ok, res = res}, 0)
+    local function ask(uri, deadline, replies)
+        local ok, res = pcall(function()
+            local conn = connection(uri)
+            return conn:call('tarn_peer_vclock', {}, {timeout = math.max(deadline - clock.monotonic(), 0.001)})
+        end)
+        replies:put({uri = uri, ok = ok, res = res}, 0)
     end
     -- One round: {joined = vclock} from a quorum, or {failed = reason}.
     local function round(deadline)
         local r, members = read_quorum()
         if r <= 1 then return {joined = {}} end
-        local own, rs = box.info.uuid, box.info.replicaset.uuid
+        OB.own = OB.own or box.info.uuid
+        OB.rs = OB.rs or box.info.replicaset.uuid
         local listen = c.own_uris and c.own_uris() or {}
-        local uris, asked = c.peers and c.peers() or {}, 0
-        local replies = fiber.channel(#uris + 1)
-        for _, uri in ipairs(uris) do
+        local peers, later = {}, {}
+        for _, uri in ipairs(c.peers and c.peers() or {}) do
             if not listen[(uri:gsub('^[^@]*@', ''))] then
-                fiber.new(ask, connection(uri), deadline, replies)
-                asked = asked + 1
+                table.insert(OB.prefer[uri] and peers or later, uri)
             end
         end
-        local seen, got, joined, unsupported = {}, 0, {}, false
-        for _ = 1, asked do
-            local left = deadline - clock.monotonic()
+        for _, uri in ipairs(later) do peers[#peers + 1] = uri end
+        local replies = fiber.channel(#peers + 1)
+        local asked = 0
+        local function more(k)
+            for _ = 1, k do
+                if asked >= #peers then return end
+                asked = asked + 1
+                OB.asked = OB.asked + 1
+                fiber.new(ask, peers[asked], deadline, replies)
+            end
+        end
+        local start = clock.monotonic()
+        more(r - 1)
+        local seen, got, joined, unsupported, received, from = {}, 0, {}, false, 0, {}
+        while received < asked do
+            local now = clock.monotonic()
+            local left = deadline - now
+            if asked < #peers then left = math.min(left, start + OB.patience - now) end
             local m = left > 0 and replies:get(left) or nil
-            if m == nil then break end
-            local v = m.ok and m.res
-            local vclock = type(v) == 'table' and vclock_of(v.vclock)
-            if vclock and v.replicaset == rs and v.uuid ~= own and members[v.uuid] and not seen[v.uuid] then
-                seen[v.uuid] = true
-                got = got + 1
-                for id, lsn in pairs(vclock) do
-                    if (joined[id] or 0) < lsn then joined[id] = lsn end
+            if m == nil then
+                if asked >= #peers or clock.monotonic() >= deadline then break end
+                more(#peers)   -- those asked are slow: ask the rest
+            else
+                received = received + 1
+                local v = m.ok and m.res
+                local vclock = type(v) == 'table' and vclock_of(v.vclock)
+                if vclock and v.replicaset == OB.rs and v.uuid ~= OB.own and members[v.uuid] and not seen[v.uuid] then
+                    seen[v.uuid] = true
+                    got = got + 1
+                    from[m.uri] = true
+                    for id, lsn in pairs(vclock) do
+                        if (joined[id] or 0) < lsn then joined[id] = lsn end
+                    end
+                    if got + 1 >= r then
+                        local rtt = clock.monotonic() - start
+                        OB.rtt = OB.rtt and 0.8 * OB.rtt + 0.2 * rtt or rtt
+                        OB.patience = math.min(math.max(4 * OB.rtt, 0.002), 0.02)
+                        OB.prefer = from
+                        return {joined = joined}
+                    end
+                else
+                    if not m.ok and type(m.res) == 'cdata'
+                       and (m.res.code == box.error.NO_SUCH_PROC or m.res.code == box.error.ACCESS_DENIED) then
+                        unsupported = true
+                    end
+                    more(1)   -- in its place
                 end
-                if got + 1 >= r then return {joined = joined} end
-            elseif not m.ok and type(m.res) == 'cdata'
-                   and (m.res.code == box.error.NO_SUCH_PROC or m.res.code == box.error.ACCESS_DENIED) then
-                unsupported = true
             end
         end
         return {failed = unsupported and 'unsupported' or 'timeout'}
