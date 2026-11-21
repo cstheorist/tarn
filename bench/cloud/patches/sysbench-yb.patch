@@ -1,0 +1,81 @@
+diff --git a/src/drivers/pgsql/drv_pgsql.c b/src/drivers/pgsql/drv_pgsql.c
+index 5800e47..a2fb140 100644
+--- a/src/drivers/pgsql/drv_pgsql.c
++++ b/src/drivers/pgsql/drv_pgsql.c
+@@ -28,6 +28,7 @@
+ #endif
+ 
+ #include <libpq-fe.h>
++#include <unistd.h>
+ 
+ #include "sb_options.h"
+ #include "db_driver.h"
+@@ -47,6 +48,9 @@ static sb_arg_t pgsql_drv_args[] =
+   SB_OPT("pgsql-user", "PostgreSQL user", "sbtest", STRING),
+   SB_OPT("pgsql-password", "PostgreSQL password", "", STRING),
+   SB_OPT("pgsql-db", "PostgreSQL database name", "sbtest", STRING),
++  SB_OPT("pgsql-ignore-errors", "'all': ignore (count) every error and "
++         "re-establish lost connections, so that a run goes on through a "
++         "failure (needs --db-ps-mode=disable)", "", STRING),
+ 
+   SB_OPT_END
+ };
+@@ -59,6 +63,7 @@ typedef struct
+   char               *user;
+   char               *password;
+   char               *db;
++  int                ignore_all;
+ } pgsql_drv_args_t;
+ 
+ /* Structure used for DB-to-PgSQL bind types map */
+@@ -188,6 +193,11 @@ int pgsql_drv_init(void)
+   args.user = sb_get_value_string("pgsql-user");
+   args.password = sb_get_value_string("pgsql-password");
+   args.db = sb_get_value_string("pgsql-db");
++  {
++    /* (An unset string option reads as NULL.) */
++    const char *ignore = sb_get_value_string("pgsql-ignore-errors");
++    args.ignore_all = ignore != NULL && !strcmp(ignore, "all");
++  }
+ 
+   use_ps = 0;
+   pgsql_drv_caps.prepared_statements = 1;
+@@ -585,8 +595,12 @@ static db_error_t pgsql_check_status(db_conn_t *con, PGresult *pgres,
+     xfree(con->sql_state);
+     xfree(con->sql_errmsg);
+ 
+-    con->sql_state = strdup(PQresultErrorField(pgres, PG_DIAG_SQLSTATE));
+-    con->sql_errmsg = strdup(PQresultErrorField(pgres, PG_DIAG_MESSAGE_PRIMARY));
++    {
++      const char *state = PQresultErrorField(pgres, PG_DIAG_SQLSTATE);
++      const char *msg = PQresultErrorField(pgres, PG_DIAG_MESSAGE_PRIMARY);
++      con->sql_state = strdup(state != NULL ? state : "08006");
++      con->sql_errmsg = strdup(msg != NULL ? msg : PQerrorMessage(pgcon));
++    }
+ 
+     if (!strcmp(con->sql_state, "40P01") /* deadlock_detected */ ||
+         !strcmp(con->sql_state, "23505") /* unique violation */ ||
+@@ -597,6 +611,23 @@ static db_error_t pgsql_check_status(db_conn_t *con, PGresult *pgres,
+       PQclear(tmp);
+       rc = DB_ERROR_IGNORABLE;
+     }
++    else if (args.ignore_all)
++    {
++      /* Count the error and go on: roll back, or reconnect if the
++         connection is gone (pausing, so a down server is not spun on). */
++      if (PQstatus(pgcon) != CONNECTION_OK)
++      {
++        PQreset(pgcon);
++        if (PQstatus(pgcon) != CONNECTION_OK)
++          usleep(100000);
++      }
++      else
++      {
++        PGresult *tmp = PQexec(pgcon, "ROLLBACK");
++        PQclear(tmp);
++      }
++      rc = DB_ERROR_IGNORABLE;
++    }
+     else
+     {
+       log_text(LOG_FATAL, "%s() failed: %d %s", funcname, status,
